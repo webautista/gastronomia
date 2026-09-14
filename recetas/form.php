@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errores[] = 'No se pudo guardar la receta. Intenta de nuevo.';
         }
     } else {
-        // Conservar lo que el usuario escribió si hubo errores de validación.
+        // Conservar lo que el usuario escribió si hubo errores de validación. Un cambio
         $ingredientes = $ingredientesNuevos ?: $ingredientes;
     }
 }
