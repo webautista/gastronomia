@@ -1,6 +1,11 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'eventos', 'editar', $base);
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
@@ -16,16 +21,17 @@ if (!$evento) {
 }
 
 $stmt = db()->prepare(
-    'SELECT * FROM recetas
-     WHERE id NOT IN (SELECT receta_id FROM evento_receta WHERE evento_id = ?)
-     ORDER BY nombre ASC'
+    'SELECT r.*, cr.nombre AS categoria
+     FROM recetas r
+     JOIN categorias_receta cr ON cr.id = r.categoria_id
+     WHERE r.id NOT IN (SELECT receta_id FROM evento_receta WHERE evento_id = ?)
+     ORDER BY r.nombre ASC'
 );
 $stmt->execute([$id]);
 $disponibles = $stmt->fetchAll();
 
 $pageTitle = 'Agregar recetas';
 $activeNav = 'eventos';
-$base = '..';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $id . '">' . e($evento['nombre']) . '</a> &nbsp;/&nbsp; <b>Agregar recetas</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>

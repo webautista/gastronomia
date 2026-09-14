@@ -1,12 +1,26 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
 
+$base = '..';
+$usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
-$estados = ['Planificado', 'En curso', 'Finalizado'];
+requirePermission($usuarioActual, 'eventos', $id ? 'editar' : 'crear', $base);
+
+$estados = db()->query('SELECT * FROM estados_evento WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+$estadoPorDefecto = null;
+foreach ($estados as $es) {
+    if ($es['nombre'] === 'Planificado') {
+        $estadoPorDefecto = (int) $es['id'];
+        break;
+    }
+}
+$estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
+
 $evento = [
     'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '',
-    'presupuesto' => '', 'cuota' => '', 'porciones' => '', 'estado' => 'Planificado',
+    'presupuesto' => '', 'cuota' => '', 'porciones' => '', 'estado_id' => $estadoPorDefecto,
 ];
 $errores = [];
 
@@ -29,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $evento['presupuesto'] = (float) ($_POST['presupuesto'] ?? 0);
     $evento['cuota']       = (float) ($_POST['cuota'] ?? 0);
     $evento['porciones']   = intOrNull($_POST['porciones'] ?? null) ?? 0;
-    $evento['estado']      = $_POST['estado'] ?? 'Planificado';
+    $evento['estado_id']   = intOrNull($_POST['estado_id'] ?? null);
 
     if ($evento['nombre'] === '') {
         $errores[] = 'El nombre del evento es obligatorio.';
@@ -37,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$evento['fecha'] || !strtotime($evento['fecha'])) {
         $errores[] = 'La fecha no es válida.';
     }
-    if (!in_array($evento['estado'], $estados, true)) {
+    if (!in_array($evento['estado_id'], array_column($estados, 'id'), true)) {
         $errores[] = 'Estado no válido.';
     }
     if ($evento['porciones'] < 1) {
@@ -46,13 +60,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, presupuesto=?, cuota=?, porciones=?, estado=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, presupuesto=?, cuota=?, porciones=?, estado_id=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, presupuesto, cuota, porciones, estado) VALUES (?,?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, presupuesto, cuota, porciones, estado_id) VALUES (?,?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -62,7 +76,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = $id ? 'Editar evento' : 'Nuevo evento';
 $activeNav = 'eventos';
-$base = '..';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <b>' . e($pageTitle) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -110,10 +123,10 @@ require __DIR__ . '/../includes/layout_top.php';
         <input type="number" id="porciones" name="porciones" min="1" required value="<?= e((string) $evento['porciones']) ?>">
       </div>
       <div class="field">
-        <label for="estado">Estado</label>
-        <select id="estado" name="estado">
+        <label for="estado_id">Estado</label>
+        <select id="estado_id" name="estado_id">
           <?php foreach ($estados as $es): ?>
-            <option value="<?= e($es) ?>" <?= $es === $evento['estado'] ? 'selected' : '' ?>><?= e($es) ?></option>
+            <option value="<?= (int) $es['id'] ?>" <?= (int) $es['id'] === (int) $evento['estado_id'] ? 'selected' : '' ?>><?= e($es['nombre']) ?></option>
           <?php endforeach; ?>
         </select>
       </div>

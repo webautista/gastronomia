@@ -1,8 +1,17 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'eventos', 'ver', $base);
+$puedeEditar = can($usuarioActual, 'eventos', 'editar');
+$puedeCrear = can($usuarioActual, 'eventos', 'crear');
+$puedeEliminar = can($usuarioActual, 'eventos', 'eliminar');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
+    requirePermission($usuarioActual, 'eventos', 'eliminar', $base);
     csrfCheck();
     $id = intOrNull($_POST['id'] ?? null);
     if ($id) {
@@ -14,11 +23,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 
 $busqueda = trim($_GET['q'] ?? '');
 
-$sql = 'SELECT ev.*,
+$sql = 'SELECT ev.*, es.nombre AS estado,
           (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id) AS gastado,
           (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
           (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id AND ee.pagado = 1) AS num_pagados
-        FROM eventos ev';
+        FROM eventos ev
+        JOIN estados_evento es ON es.id = ev.estado_id';
 $params = [];
 if ($busqueda !== '') {
     $sql .= ' WHERE ev.nombre LIKE ?';
@@ -32,7 +42,6 @@ $eventos = $stmt->fetchAll();
 
 $pageTitle = 'Eventos';
 $activeNav = 'eventos';
-$base = '..';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
 
@@ -41,7 +50,9 @@ require __DIR__ . '/../includes/layout_top.php';
     <h1>Eventos</h1>
     <p>Presupuesto, cuota y estado de cada evento.</p>
   </div>
-  <a class="btn btn-primary" href="form.php"><?= icon('plus') ?> Nuevo evento</a>
+  <?php if ($puedeCrear): ?>
+    <a class="btn btn-primary" href="form.php"><?= icon('plus') ?> Nuevo evento</a>
+  <?php endif; ?>
 </div>
 
 <div class="toolbar">
@@ -86,15 +97,21 @@ require __DIR__ . '/../includes/layout_top.php';
         </div>
         <div class="row-actions" style="justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
           <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>
-          <div class="row-actions">
-            <a class="icon-btn" href="form.php?id=<?= (int) $ev['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-            <form method="post" action="index.php" data-confirm="¿Eliminar el evento &quot;<?= e($ev['nombre']) ?>&quot;? Se perderán sus estudiantes asignados, recetas y gastos registrados.">
-              <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-              <input type="hidden" name="accion" value="eliminar">
-              <input type="hidden" name="id" value="<?= (int) $ev['id'] ?>">
-              <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-            </form>
-          </div>
+          <?php if ($puedeEditar || $puedeEliminar): ?>
+            <div class="row-actions">
+              <?php if ($puedeEditar): ?>
+                <a class="icon-btn" href="form.php?id=<?= (int) $ev['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+              <?php endif; ?>
+              <?php if ($puedeEliminar): ?>
+                <form method="post" action="index.php" data-confirm="¿Eliminar el evento &quot;<?= e($ev['nombre']) ?>&quot;? Se perderán sus estudiantes asignados, recetas y gastos registrados.">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="eliminar">
+                  <input type="hidden" name="id" value="<?= (int) $ev['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                </form>
+              <?php endif; ?>
+            </div>
+          <?php endif; ?>
         </div>
       </div>
     <?php endforeach; ?>

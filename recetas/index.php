@@ -1,8 +1,17 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'recetas', 'ver', $base);
+$puedeEditar = can($usuarioActual, 'recetas', 'editar');
+$puedeCrear = can($usuarioActual, 'recetas', 'crear');
+$puedeEliminar = can($usuarioActual, 'recetas', 'eliminar');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
+    requirePermission($usuarioActual, 'recetas', 'eliminar', $base);
     csrfCheck();
     $id = intOrNull($_POST['id'] ?? null);
     if ($id) {
@@ -14,10 +23,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 
 $busqueda = trim($_GET['q'] ?? '');
 
-$sql = 'SELECT r.*,
+$sql = 'SELECT r.*, cr.nombre AS categoria,
                (SELECT COUNT(*) FROM ingredientes i WHERE i.receta_id = r.id) AS num_ingredientes,
                (SELECT COUNT(*) FROM evento_receta er WHERE er.receta_id = r.id) AS num_eventos
-        FROM recetas r';
+        FROM recetas r
+        JOIN categorias_receta cr ON cr.id = r.categoria_id';
 $params = [];
 if ($busqueda !== '') {
     $sql .= ' WHERE r.nombre LIKE ?';
@@ -43,7 +53,6 @@ if ($recetas) {
 
 $pageTitle = 'Recetas';
 $activeNav = 'recetas';
-$base = '..';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
 
@@ -52,7 +61,9 @@ require __DIR__ . '/../includes/layout_top.php';
     <h1>Recetas</h1>
     <p>Catálogo de recetas e ingredientes base por porción.</p>
   </div>
-  <a class="btn btn-primary" href="form.php"><?= icon('plus') ?> Nueva receta</a>
+  <?php if ($puedeCrear): ?>
+    <a class="btn btn-primary" href="form.php"><?= icon('plus') ?> Nueva receta</a>
+  <?php endif; ?>
 </div>
 
 <div class="toolbar">
@@ -77,15 +88,21 @@ require __DIR__ . '/../includes/layout_top.php';
             <h3><?= e($rc['nombre']) ?></h3>
             <div class="cell-muted"><?= e($rc['categoria']) ?></div>
           </div>
-          <div class="row-actions">
-            <a class="icon-btn" href="form.php?id=<?= (int) $rc['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-            <form method="post" action="index.php" data-confirm="¿Eliminar la receta &quot;<?= e($rc['nombre']) ?>&quot;? También se quitará de los eventos que la usan.">
-              <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-              <input type="hidden" name="accion" value="eliminar">
-              <input type="hidden" name="id" value="<?= (int) $rc['id'] ?>">
-              <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-            </form>
-          </div>
+          <?php if ($puedeEditar || $puedeEliminar): ?>
+            <div class="row-actions">
+              <?php if ($puedeEditar): ?>
+                <a class="icon-btn" href="form.php?id=<?= (int) $rc['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+              <?php endif; ?>
+              <?php if ($puedeEliminar): ?>
+                <form method="post" action="index.php" data-confirm="¿Eliminar la receta &quot;<?= e($rc['nombre']) ?>&quot;? También se quitará de los eventos que la usan.">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="eliminar">
+                  <input type="hidden" name="id" value="<?= (int) $rc['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                </form>
+              <?php endif; ?>
+            </div>
+          <?php endif; ?>
         </div>
         <div class="event-meta">
           <span><?= icon('portion') ?> Base: <?= (int) $rc['porciones_base'] ?> porciones</span>

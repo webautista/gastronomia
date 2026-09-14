@@ -1,6 +1,11 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'gastos', 'crear', $base);
 
 $eventoId = intOrNull($_GET['evento_id'] ?? null);
 if (!$eventoId) {
@@ -15,18 +20,22 @@ if (!$evento) {
     redirect('index.php');
 }
 
-$categorias = ['Ingredientes', 'Alquiler de espacio', 'Transporte', 'Decoración', 'Personal de apoyo', 'Otro'];
-$gasto = ['categoria' => 'Ingredientes', 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d')];
+$categorias = db()->query('SELECT * FROM categorias_gasto WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+$categoriaPorDefecto = $categorias[0]['id'] ?? null;
+$gasto = ['categoria_id' => $categoriaPorDefecto, 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d')];
 $errores = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
-    $gasto['categoria']   = $_POST['categoria'] ?? 'Otro';
-    $gasto['descripcion'] = trim($_POST['descripcion'] ?? '');
-    $gasto['proveedor']   = trim($_POST['proveedor'] ?? '');
-    $gasto['monto']       = (float) ($_POST['monto'] ?? 0);
-    $gasto['fecha']       = $_POST['fecha'] ?? '';
+    $gasto['categoria_id'] = intOrNull($_POST['categoria_id'] ?? null);
+    $gasto['descripcion']  = trim($_POST['descripcion'] ?? '');
+    $gasto['proveedor']    = trim($_POST['proveedor'] ?? '');
+    $gasto['monto']        = (float) ($_POST['monto'] ?? 0);
+    $gasto['fecha']        = $_POST['fecha'] ?? '';
 
+    if (!in_array($gasto['categoria_id'], array_column($categorias, 'id'), true)) {
+        $errores[] = 'Categoría no válida.';
+    }
     if ($gasto['descripcion'] === '') {
         $errores[] = 'La descripción es obligatoria.';
     }
@@ -38,8 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errores) {
-        $stmt = db()->prepare('INSERT INTO gastos (evento_id, categoria, descripcion, proveedor, monto, fecha) VALUES (?,?,?,?,?,?)');
-        $stmt->execute([$eventoId, $gasto['categoria'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $gasto['fecha']]);
+        $stmt = db()->prepare('INSERT INTO gastos (evento_id, categoria_id, descripcion, proveedor, monto, fecha) VALUES (?,?,?,?,?,?)');
+        $stmt->execute([$eventoId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $gasto['fecha']]);
         flash('Gasto registrado.');
         redirect('detalle.php?id=' . $eventoId . '&tab=gastos');
     }
@@ -47,7 +56,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = 'Registrar gasto';
 $activeNav = 'eventos';
-$base = '..';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $eventoId . '">' . e($evento['nombre']) . '</a> &nbsp;/&nbsp; <b>Registrar gasto</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -64,10 +72,10 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field-row">
       <div class="field">
-        <label for="categoria">Categoría</label>
-        <select id="categoria" name="categoria">
+        <label for="categoria_id">Categoría</label>
+        <select id="categoria_id" name="categoria_id">
           <?php foreach ($categorias as $cat): ?>
-            <option value="<?= e($cat) ?>" <?= $cat === $gasto['categoria'] ? 'selected' : '' ?>><?= e($cat) ?></option>
+            <option value="<?= (int) $cat['id'] ?>" <?= (int) $cat['id'] === (int) $gasto['categoria_id'] ? 'selected' : '' ?>><?= e($cat['nombre']) ?></option>
           <?php endforeach; ?>
         </select>
       </div>

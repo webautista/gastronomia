@@ -1,14 +1,19 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
 
+$base = '..';
+$usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
-$receta = ['nombre' => '', 'categoria' => 'Plato fuerte', 'porciones_base' => '', 'preparacion' => ''];
-$ingredientes = [['nombre' => '', 'cantidad' => '', 'unidad' => '', 'costo_unitario' => '']];
-$errores = [];
-$categorias = ['Plato fuerte', 'Postre', 'Aperitivo', 'Panadería', 'Bebida'];
+requirePermission($usuarioActual, 'recetas', $id ? 'editar' : 'crear', $base);
 
-$unidades = db()->query('SELECT * FROM unidades_medida ORDER BY orden ASC, nombre ASC')->fetchAll();
+$receta = ['nombre' => '', 'categoria_id' => '', 'porciones_base' => '', 'preparacion' => ''];
+$ingredientes = [['nombre' => '', 'cantidad' => '', 'unidad_id' => '', 'costo_unitario' => '']];
+$errores = [];
+
+$categorias = db()->query('SELECT * FROM categorias_receta WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+$unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 
 if ($id) {
     $stmt = db()->prepare('SELECT * FROM recetas WHERE id = ?');
@@ -31,14 +36,17 @@ if ($id) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
     $receta['nombre']         = trim($_POST['nombre'] ?? '');
-    $receta['categoria']      = $_POST['categoria'] ?? 'Plato fuerte';
+    $receta['categoria_id']   = intOrNull($_POST['categoria_id'] ?? null);
     $receta['porciones_base'] = intOrNull($_POST['porciones_base'] ?? null);
     $receta['preparacion']    = trim($_POST['preparacion'] ?? '');
 
     $ingNombres  = $_POST['ing_nombre'] ?? [];
     $ingCantidad = $_POST['ing_cantidad'] ?? [];
-    $ingUnidad   = $_POST['ing_unidad'] ?? [];
+    $ingUnidad   = $_POST['ing_unidad_id'] ?? [];
     $ingCosto    = $_POST['ing_costo'] ?? [];
+
+    $unidadesValidas = array_column($unidades, 'id');
+    $unidadPorDefecto = $unidadesValidas[0] ?? null;
 
     $ingredientesNuevos = [];
     foreach ($ingNombres as $i => $nombreIng) {
@@ -46,10 +54,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($nombreIng === '') {
             continue;
         }
+        $unidadId = intOrNull($ingUnidad[$i] ?? null);
+        if (!in_array($unidadId, $unidadesValidas, true)) {
+            $unidadId = $unidadPorDefecto;
+        }
         $ingredientesNuevos[] = [
             'nombre'         => $nombreIng,
             'cantidad'       => (float) ($ingCantidad[$i] ?? 0),
-            'unidad'         => trim($ingUnidad[$i] ?? '') ?: 'unid',
+            'unidad_id'      => $unidadId,
             'costo_unitario' => (float) ($ingCosto[$i] ?? 0),
         ];
     }
@@ -60,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$receta['porciones_base'] || $receta['porciones_base'] < 1) {
         $errores[] = 'Las porciones base deben ser un número mayor a 0.';
     }
-    if (!$categorias || !in_array($receta['categoria'], $categorias, true)) {
+    if (!in_array($receta['categoria_id'], array_column($categorias, 'id'), true)) {
         $errores[] = 'Categoría no válida.';
     }
 
@@ -69,18 +81,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
         try {
             if ($id) {
-                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, categoria=?, porciones_base=?, preparacion=? WHERE id=?');
-                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $id]);
+                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, categoria_id=?, porciones_base=?, preparacion=? WHERE id=?');
+                $stmt->execute([$receta['nombre'], $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $id]);
                 $pdo->prepare('DELETE FROM ingredientes WHERE receta_id = ?')->execute([$id]);
             } else {
-                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, categoria, porciones_base, preparacion) VALUES (?,?,?,?)');
-                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null]);
+                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?)');
+                $stmt->execute([$receta['nombre'], $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null]);
                 $id = (int) $pdo->lastInsertId();
             }
 
-            $stmtIng = $pdo->prepare('INSERT INTO ingredientes (receta_id, nombre, cantidad, unidad, costo_unitario, orden) VALUES (?,?,?,?,?,?)');
+            $stmtIng = $pdo->prepare('INSERT INTO ingredientes (receta_id, nombre, cantidad, unidad_id, costo_unitario, orden) VALUES (?,?,?,?,?,?)');
             foreach ($ingredientesNuevos as $orden => $ing) {
-                $stmtIng->execute([$id, $ing['nombre'], $ing['cantidad'], $ing['unidad'], $ing['costo_unitario'], $orden]);
+                $stmtIng->execute([$id, $ing['nombre'], $ing['cantidad'], $ing['unidad_id'], $ing['costo_unitario'], $orden]);
             }
 
             $pdo->commit();
@@ -98,7 +110,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = $id ? 'Editar receta' : 'Nueva receta';
 $activeNav = 'recetas';
-$base = '..';
 $breadcrumb = '<a href="index.php">Recetas</a> &nbsp;/&nbsp; <b>' . e($pageTitle) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -120,12 +131,15 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field-row">
       <div class="field">
-        <label for="categoria">Categoría</label>
-        <select id="categoria" name="categoria">
+        <label for="categoria_id">Categoría</label>
+        <select id="categoria_id" name="categoria_id">
           <?php foreach ($categorias as $cat): ?>
-            <option value="<?= e($cat) ?>" <?= $cat === $receta['categoria'] ? 'selected' : '' ?>><?= e($cat) ?></option>
+            <option value="<?= (int) $cat['id'] ?>" <?= (int) $cat['id'] === (int) $receta['categoria_id'] ? 'selected' : '' ?>><?= e($cat['nombre']) ?></option>
           <?php endforeach; ?>
         </select>
+        <?php if (can($usuarioActual, 'configuracion', 'ver')): ?>
+          <div class="hint">¿Falta una categoría? Agrégala en <a href="../configuracion/catalogos.php?tipo=categorias_receta">Configuración</a>.</div>
+        <?php endif; ?>
       </div>
       <div class="field">
         <label for="porciones_base">Porciones base</label>
@@ -140,9 +154,9 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="ing-row" data-ing-row>
             <input type="text" name="ing_nombre[]" placeholder="Ingrediente" value="<?= e($ing['nombre']) ?>">
             <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" value="<?= e((string) $ing['cantidad']) ?>">
-            <select name="ing_unidad[]">
+            <select name="ing_unidad_id[]">
               <?php foreach ($unidades as $u): ?>
-                <option value="<?= e($u['abreviatura']) ?>" <?= $u['abreviatura'] === $ing['unidad'] ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+                <option value="<?= (int) $u['id'] ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
               <?php endforeach; ?>
             </select>
             <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" value="<?= e((string) $ing['costo_unitario']) ?>">
@@ -171,9 +185,9 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="ing-row" data-ing-row>
     <input type="text" name="ing_nombre[]" placeholder="Ingrediente">
     <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad">
-    <select name="ing_unidad[]">
+    <select name="ing_unidad_id[]">
       <?php foreach ($unidades as $u): ?>
-        <option value="<?= e($u['abreviatura']) ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+        <option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
       <?php endforeach; ?>
     </select>
     <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$">

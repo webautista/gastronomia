@@ -1,18 +1,30 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'eventos', 'ver', $base);
+$puedeEditarEvento = can($usuarioActual, 'eventos', 'editar');
+$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
+$puedeCrearGasto = can($usuarioActual, 'gastos', 'crear');
+$puedeEliminarGasto = can($usuarioActual, 'gastos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
     redirect('index.php');
 }
 
-$tabsValidos = ['resumen', 'estudiantes', 'recetas', 'gastos'];
+$tabsValidos = ['resumen', 'estudiantes', 'recetas'];
+if ($puedeVerGastos) {
+    $tabsValidos[] = 'gastos';
+}
 $tab = in_array($_GET['tab'] ?? '', $tabsValidos, true) ? $_GET['tab'] : 'resumen';
 
 function cargarEvento(int $id): ?array
 {
-    $stmt = db()->prepare('SELECT * FROM eventos WHERE id = ?');
+    $stmt = db()->prepare('SELECT ev.*, es.nombre AS estado FROM eventos ev JOIN estados_evento es ON es.id = ev.estado_id WHERE ev.id = ?');
     $stmt->execute([$id]);
     $ev = $stmt->fetch();
     return $ev ?: null;
@@ -31,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pdo = db();
 
     if ($accion === 'toggle_pago') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         if ($estudianteId) {
             $stmt = $pdo->prepare('SELECT pagado FROM evento_estudiante WHERE evento_id=? AND estudiante_id=?');
@@ -42,11 +55,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$nuevoPagado, $fechaPago, $id, $estudianteId]);
         }
     } elseif ($accion === 'quitar_estudiante') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         if ($estudianteId) {
             $pdo->prepare('DELETE FROM evento_estudiante WHERE evento_id=? AND estudiante_id=?')->execute([$id, $estudianteId]);
         }
     } elseif ($accion === 'asignar_estudiantes') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $ids = array_map('intval', $_POST['estudiante_ids'] ?? []);
         $stmt = $pdo->prepare('INSERT IGNORE INTO evento_estudiante (evento_id, estudiante_id, pagado) VALUES (?,?,0)');
         foreach ($ids as $eid) {
@@ -55,11 +70,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'quitar_receta') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         if ($recetaId) {
             $pdo->prepare('DELETE FROM evento_receta WHERE evento_id=? AND receta_id=?')->execute([$id, $recetaId]);
         }
     } elseif ($accion === 'asignar_recetas') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $ids = array_map('intval', $_POST['receta_ids'] ?? []);
         $stmt = $pdo->prepare('INSERT IGNORE INTO evento_receta (evento_id, receta_id, porciones_necesarias) VALUES (?,?,?)');
         foreach ($ids as $rid) {
@@ -68,6 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'actualizar_porciones') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         $porciones = intOrNull($_POST['porciones_necesarias'] ?? null);
         if ($recetaId && $porciones && $porciones > 0) {
@@ -75,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$porciones, $id, $recetaId]);
         }
     } elseif ($accion === 'quitar_gasto') {
+        requirePermission($usuarioActual, 'gastos', 'eliminar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         if ($gastoId) {
             $pdo->prepare('DELETE FROM gastos WHERE id=? AND evento_id=?')->execute([$gastoId, $id]);
@@ -86,26 +105,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /* ---------------- Datos para mostrar ---------------- */
 $stmt = db()->prepare(
-    'SELECT ee.pagado, ee.fecha_pago, es.* FROM evento_estudiante ee
-     JOIN estudiantes es ON es.id = ee.estudiante_id
-     WHERE ee.evento_id = ? ORDER BY es.nombre ASC'
+    'SELECT ee.pagado, ee.fecha_pago, est.*, ge.nombre AS grupo FROM evento_estudiante ee
+     JOIN estudiantes est ON est.id = ee.estudiante_id
+     LEFT JOIN grupos_estudiante ge ON ge.id = est.grupo_id
+     WHERE ee.evento_id = ? ORDER BY est.nombre ASC'
 );
 $stmt->execute([$id]);
 $estudiantesEvento = $stmt->fetchAll();
 
 $stmt = db()->prepare(
-    'SELECT er.porciones_necesarias, r.* FROM evento_receta er
+    'SELECT er.porciones_necesarias, r.*, cr.nombre AS categoria FROM evento_receta er
      JOIN recetas r ON r.id = er.receta_id
+     JOIN categorias_receta cr ON cr.id = r.categoria_id
      WHERE er.evento_id = ? ORDER BY r.nombre ASC'
 );
 $stmt->execute([$id]);
 $recetasEvento = $stmt->fetchAll();
 
-$stmt = db()->prepare('SELECT * FROM gastos WHERE evento_id = ? ORDER BY fecha DESC, id DESC');
-$stmt->execute([$id]);
-$gastosEvento = $stmt->fetchAll();
+// El total gastado alimenta el medidor de presupuesto del resumen, que se
+// muestra a todos los roles con acceso al evento; los renglones detallados
+// (categoría, proveedor, descripción) solo se cargan si el rol puede ver
+// el módulo de gastos.
+$stmtSumaGastos = db()->prepare('SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ?');
+$stmtSumaGastos->execute([$id]);
+$gastado = (float) $stmtSumaGastos->fetchColumn();
 
-$gastado = array_sum(array_column($gastosEvento, 'monto'));
+$gastosEvento = [];
+if ($puedeVerGastos) {
+    $stmt = db()->prepare(
+        'SELECT g.*, cg.nombre AS categoria FROM gastos g
+         JOIN categorias_gasto cg ON cg.id = g.categoria_id
+         WHERE g.evento_id = ? ORDER BY g.fecha DESC, g.id DESC'
+    );
+    $stmt->execute([$id]);
+    $gastosEvento = $stmt->fetchAll();
+}
+
 $pct = $evento['presupuesto'] > 0 ? round($gastado / $evento['presupuesto'] * 100) : 0;
 $numPagados = count(array_filter($estudiantesEvento, fn($a) => (int) $a['pagado'] === 1));
 $esperado = count($estudiantesEvento) * $evento['cuota'];
@@ -114,7 +149,6 @@ $pctPago = $esperado > 0 ? round($recaudado / $esperado * 100) : 0;
 
 $pageTitle = $evento['nombre'];
 $activeNav = 'eventos';
-$base = '..';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <b>' . e($evento['nombre']) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -128,7 +162,9 @@ require __DIR__ . '/../includes/layout_top.php';
       <span class="chip <?= chipEstadoClase($evento['estado']) ?>"><?= e($evento['estado']) ?></span>
     </div>
   </div>
-  <a class="btn btn-secondary" href="form.php?id=<?= (int) $evento['id'] ?>"><?= icon('edit') ?> Editar</a>
+  <?php if ($puedeEditarEvento): ?>
+    <a class="btn btn-secondary" href="form.php?id=<?= (int) $evento['id'] ?>"><?= icon('edit') ?> Editar</a>
+  <?php endif; ?>
 </div>
 
 <div class="summary-grid">
@@ -155,7 +191,9 @@ require __DIR__ . '/../includes/layout_top.php';
   <a class="tab <?= $tab === 'resumen' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=resumen">Resumen</a>
   <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
   <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas e ingredientes</a>
-  <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
+  <?php if ($puedeVerGastos): ?>
+    <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
+  <?php endif; ?>
 </div>
 
 <?php if ($tab === 'resumen'):
@@ -167,7 +205,8 @@ require __DIR__ . '/../includes/layout_top.php';
   $pendientes = count($estudiantesEvento) - $numPagados;
   $maxPay = max(1, $numPagados, $pendientes);
 ?>
-  <div class="summary-grid" style="grid-template-columns:1fr 1fr;">
+  <div class="summary-grid" style="grid-template-columns:<?= $puedeVerGastos ? '1fr 1fr' : '1fr' ?>;">
+    <?php if ($puedeVerGastos): ?>
     <div class="card card-pad">
       <h2 class="section-title">Gastos por categoría</h2>
       <?php if (!$catTotales): ?>
@@ -184,6 +223,7 @@ require __DIR__ . '/../includes/layout_top.php';
         </div>
       <?php endif; ?>
     </div>
+    <?php endif; ?>
     <div class="card card-pad">
       <h2 class="section-title">Estado de pagos</h2>
       <div class="bar-list">
@@ -197,7 +237,9 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php elseif ($tab === 'estudiantes'): ?>
   <div class="toolbar">
     <div class="cell-muted"><?= $numPagados ?> de <?= count($estudiantesEvento) ?> estudiantes pagados · <span class="mono"><?= money($recaudado) ?></span> de <span class="mono"><?= money($esperado) ?></span> recaudado</div>
-    <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
+    <?php if ($puedeEditarEvento): ?>
+      <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
+    <?php endif; ?>
   </div>
   <div class="card">
     <div class="table-wrap">
@@ -221,18 +263,20 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php endif; ?>
             </td>
             <td class="row-actions">
-              <form method="post">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="toggle_pago">
-                <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                <button class="btn btn-sm <?= $a['pagado'] ? 'btn-secondary' : 'btn-primary' ?>" type="submit"><?= $a['pagado'] ? 'Marcar pendiente' : 'Marcar pagado' ?></button>
-              </form>
-              <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="quitar_estudiante">
-                <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                <button class="icon-btn" type="submit" title="Quitar del evento"><?= icon('x') ?></button>
-              </form>
+              <?php if ($puedeEditarEvento): ?>
+                <form method="post">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="toggle_pago">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <button class="btn btn-sm <?= $a['pagado'] ? 'btn-secondary' : 'btn-primary' ?>" type="submit"><?= $a['pagado'] ? 'Marcar pendiente' : 'Marcar pagado' ?></button>
+                </form>
+                <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="quitar_estudiante">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Quitar del evento"><?= icon('x') ?></button>
+                </form>
+              <?php endif; ?>
             </td>
           </tr>
         <?php endforeach; ?>
@@ -244,7 +288,9 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php elseif ($tab === 'recetas'): ?>
   <div class="toolbar">
     <div class="cell-muted">Las cantidades se recalculan según las porciones que necesitas preparar.</div>
-    <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
+    <?php if ($puedeEditarEvento): ?>
+      <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
+    <?php endif; ?>
   </div>
   <?php if (!$recetasEvento): ?>
     <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
@@ -254,7 +300,11 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
   <?php foreach ($recetasEvento as $rc):
     $porcionesBase = max(1, (int) $rc['porciones_base']);
-    $stmtIng = db()->prepare('SELECT * FROM ingredientes WHERE receta_id = ? ORDER BY orden ASC, id ASC');
+    $stmtIng = db()->prepare(
+        'SELECT i.*, um.abreviatura AS unidad FROM ingredientes i
+         JOIN unidades_medida um ON um.id = i.unidad_id
+         WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
+    );
     $stmtIng->execute([$rc['id']]);
     $ingredientesReceta = $stmtIng->fetchAll();
     $factor = $rc['porciones_necesarias'] / $porcionesBase;
@@ -266,22 +316,26 @@ require __DIR__ . '/../includes/layout_top.php';
           <h4><?= e($rc['nombre']) ?></h4>
           <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones</div>
         </div>
-        <form method="post" style="display:flex;align-items:center;gap:14px;">
-          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-          <input type="hidden" name="accion" value="actualizar_porciones">
-          <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
-          <div class="portion-control">
-            <span>Porciones a preparar</span>
-            <input type="number" min="1" name="porciones_necesarias" value="<?= (int) $rc['porciones_necesarias'] ?>" data-role="porciones-input">
-          </div>
-          <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
-        </form>
-        <form method="post" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
-          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-          <input type="hidden" name="accion" value="quitar_receta">
-          <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
-          <button class="icon-btn" type="submit" title="Quitar receta"><?= icon('trash') ?></button>
-        </form>
+        <?php if ($puedeEditarEvento): ?>
+          <form method="post" style="display:flex;align-items:center;gap:14px;">
+            <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+            <input type="hidden" name="accion" value="actualizar_porciones">
+            <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
+            <div class="portion-control">
+              <span>Porciones a preparar</span>
+              <input type="number" min="1" name="porciones_necesarias" value="<?= (int) $rc['porciones_necesarias'] ?>" data-role="porciones-input">
+            </div>
+            <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
+          </form>
+          <form method="post" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
+            <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+            <input type="hidden" name="accion" value="quitar_receta">
+            <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
+            <button class="icon-btn" type="submit" title="Quitar receta"><?= icon('trash') ?></button>
+          </form>
+        <?php else: ?>
+          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
+        <?php endif; ?>
       </div>
       <div class="table-wrap">
       <table class="table">
@@ -321,7 +375,9 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
   <div class="toolbar">
     <div class="cell-muted"><?= count($gastosEvento) ?> gasto<?= count($gastosEvento) === 1 ? '' : 's' ?> registrado<?= count($gastosEvento) === 1 ? '' : 's' ?></div>
-    <a class="btn btn-secondary btn-sm" href="gasto_form.php?evento_id=<?= $id ?>"><?= icon('plus') ?> Registrar gasto</a>
+    <?php if ($puedeCrearGasto): ?>
+      <a class="btn btn-secondary btn-sm" href="gasto_form.php?evento_id=<?= $id ?>"><?= icon('plus') ?> Registrar gasto</a>
+    <?php endif; ?>
   </div>
   <div class="card">
     <div class="table-wrap">
@@ -339,12 +395,14 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-muted"><?= e($g['proveedor']) ?></td>
             <td class="mono"><?= money($g['monto']) ?></td>
             <td class="row-actions">
+              <?php if ($puedeEliminarGasto): ?>
               <form method="post" data-confirm="¿Eliminar este gasto?">
                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                 <input type="hidden" name="accion" value="quitar_gasto">
                 <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
                 <button class="icon-btn" type="submit"><?= icon('trash') ?></button>
               </form>
+              <?php endif; ?>
             </td>
           </tr>
         <?php endforeach; ?>

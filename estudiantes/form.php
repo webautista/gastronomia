@@ -1,9 +1,16 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
 
+$base = '..';
+$usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
-$estudiante = ['nombre' => '', 'telefono' => '', 'email' => '', 'grupo' => ''];
+requirePermission($usuarioActual, 'estudiantes', $id ? 'editar' : 'crear', $base);
+
+$grupos = db()->query('SELECT * FROM grupos_estudiante WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+
+$estudiante = ['nombre' => '', 'telefono' => '', 'email' => '', 'grupo_id' => null, 'grupo_nuevo' => ''];
 $errores = [];
 
 if ($id) {
@@ -15,14 +22,16 @@ if ($id) {
         redirect('index.php');
     }
     $estudiante = $encontrado;
+    $estudiante['grupo_nuevo'] = '';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
-    $estudiante['nombre']   = trim($_POST['nombre'] ?? '');
-    $estudiante['telefono'] = trim($_POST['telefono'] ?? '');
-    $estudiante['email']    = trim($_POST['email'] ?? '');
-    $estudiante['grupo']    = trim($_POST['grupo'] ?? '');
+    $estudiante['nombre']      = trim($_POST['nombre'] ?? '');
+    $estudiante['telefono']    = trim($_POST['telefono'] ?? '');
+    $estudiante['email']       = trim($_POST['email'] ?? '');
+    $estudiante['grupo_id']    = intOrNull($_POST['grupo_id'] ?? null);
+    $estudiante['grupo_nuevo'] = trim($_POST['grupo_nuevo'] ?? '');
 
     if ($estudiante['nombre'] === '') {
         $errores[] = 'El nombre es obligatorio.';
@@ -31,14 +40,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'El email no tiene un formato válido.';
     }
 
+    $grupoIdFinal = null;
+    if ($estudiante['grupo_nuevo'] !== '') {
+        // El grupo nuevo escrito a mano tiene prioridad sobre el seleccionado.
+        $stmtIns = db()->prepare('INSERT IGNORE INTO grupos_estudiante (nombre) VALUES (?)');
+        $stmtIns->execute([$estudiante['grupo_nuevo']]);
+        $stmtSel = db()->prepare('SELECT id FROM grupos_estudiante WHERE nombre = ?');
+        $stmtSel->execute([$estudiante['grupo_nuevo']]);
+        $grupoIdFinal = (int) $stmtSel->fetchColumn();
+    } elseif ($estudiante['grupo_id']) {
+        if (!in_array($estudiante['grupo_id'], array_column($grupos, 'id'), true)) {
+            $errores[] = 'Grupo no válido.';
+        } else {
+            $grupoIdFinal = $estudiante['grupo_id'];
+        }
+    }
+
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE estudiantes SET nombre=?, telefono=?, email=?, grupo=? WHERE id=?');
-            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $estudiante['grupo'], $id]);
+            $stmt = db()->prepare('UPDATE estudiantes SET nombre=?, telefono=?, email=?, grupo_id=? WHERE id=?');
+            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $grupoIdFinal, $id]);
             flash('Estudiante actualizado.');
         } else {
-            $stmt = db()->prepare('INSERT INTO estudiantes (nombre, telefono, email, grupo) VALUES (?,?,?,?)');
-            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $estudiante['grupo']]);
+            $stmt = db()->prepare('INSERT INTO estudiantes (nombre, telefono, email, grupo_id) VALUES (?,?,?,?)');
+            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $grupoIdFinal]);
             flash('Estudiante agregado.');
         }
         redirect('index.php');
@@ -47,7 +72,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $pageTitle = $id ? 'Editar estudiante' : 'Nuevo estudiante';
 $activeNav = 'estudiantes';
-$base = '..';
 $breadcrumb = '<a href="index.php">Estudiantes</a> &nbsp;/&nbsp; <b>' . e($pageTitle) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -75,9 +99,19 @@ require __DIR__ . '/../includes/layout_top.php';
         <input type="text" id="telefono" name="telefono" placeholder="809-555-0100" value="<?= e($estudiante['telefono']) ?>">
       </div>
       <div class="field">
-        <label for="grupo">Grupo / clase</label>
-        <input type="text" id="grupo" name="grupo" placeholder="Ej. Repostería Avanzada" value="<?= e($estudiante['grupo']) ?>">
+        <label for="grupo_id">Grupo / clase</label>
+        <select id="grupo_id" name="grupo_id">
+          <option value="">— Sin grupo —</option>
+          <?php foreach ($grupos as $gr): ?>
+            <option value="<?= (int) $gr['id'] ?>" <?= (int) $gr['id'] === (int) $estudiante['grupo_id'] ? 'selected' : '' ?>><?= e($gr['nombre']) ?></option>
+          <?php endforeach; ?>
+        </select>
       </div>
+    </div>
+
+    <div class="field">
+      <label for="grupo_nuevo">O escribe un grupo nuevo</label>
+      <input type="text" id="grupo_nuevo" name="grupo_nuevo" placeholder="Ej. Repostería Avanzada" value="<?= e($estudiante['grupo_nuevo']) ?>">
     </div>
 
     <div class="field">

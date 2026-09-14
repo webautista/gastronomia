@@ -11,18 +11,28 @@
  *   $breadcrumb (string HTML, opcional) — si no se define, se usa $pageTitle
  */
 require_once __DIR__ . '/icons.php';
+require_once __DIR__ . '/auth.php';
 
 $base = $base ?? '.';
 $activeNav = $activeNav ?? 'panel';
 $pageTitle = $pageTitle ?? 'Fogón Eventos';
 $breadcrumb = $breadcrumb ?? ('<b>' . e($pageTitle) . '</b>');
 
-$navItems = [
-    'panel'       => ['label' => 'Panel',       'icon' => 'grid',     'href' => $base . '/index.php'],
-    'eventos'     => ['label' => 'Eventos',     'icon' => 'calendar', 'href' => $base . '/eventos/index.php'],
-    'estudiantes' => ['label' => 'Estudiantes', 'icon' => 'users',    'href' => $base . '/estudiantes/index.php'],
-    'recetas'     => ['label' => 'Recetas',     'icon' => 'book',     'href' => $base . '/recetas/index.php'],
+// Cada página protegida ya llamó a requireLogin() antes de llegar aquí,
+// así que debería haber un usuario — currentUser() vuelve a leerlo de
+// sesión (cacheado, no repite la consulta).
+$usuarioActual = currentUser();
+
+$todosLosNavItems = [
+    'panel'        => ['label' => 'Panel',              'icon' => 'grid',     'href' => $base . '/panel.php'],
+    'eventos'      => ['label' => 'Eventos',             'icon' => 'calendar', 'href' => $base . '/eventos/index.php'],
+    'estudiantes'  => ['label' => 'Estudiantes',         'icon' => 'users',    'href' => $base . '/estudiantes/index.php'],
+    'recetas'      => ['label' => 'Recetas',             'icon' => 'book',     'href' => $base . '/recetas/index.php'],
+    'configuracion'=> ['label' => 'Configuración',       'icon' => 'settings', 'href' => $base . '/configuracion/catalogos.php'],
+    'usuarios'     => ['label' => 'Usuarios y roles',    'icon' => 'shield',   'href' => $base . '/usuarios/index.php'],
 ];
+// El menú solo muestra los módulos que el rol del usuario puede ver.
+$navItems = array_filter($todosLosNavItems, fn ($clave) => can($usuarioActual, $clave, 'ver'), ARRAY_FILTER_USE_KEY);
 
 $flash = flashGet();
 
@@ -59,10 +69,12 @@ $cssVersion = @filemtime(__DIR__ . '/../assets/css/app.css') ?: '1';
         </a>
       <?php endforeach; ?>
     </nav>
-    <div class="sidebar-foot">
-      Fogón Eventos &middot; Jardín de Novias
-      <!-- Marcador temporal para verificar despliegues — bórralo cuando confirmes que los cambios sí llegan al sitio en vivo -->
-      <div style="margin-top:4px;color:var(--copper);font-weight:600;">🔧 Sitio en construcción</div>
+    <div class="sidebar-foot user-foot">
+      <div class="user-foot-info">
+        <div class="user-foot-name"><?= e($usuarioActual['nombre'] ?? '') ?></div>
+        <div class="user-foot-rol"><?= e($usuarioActual['rol_nombre'] ?? '') ?></div>
+      </div>
+      <a class="icon-btn" href="<?= e($base) ?>/logout.php" title="Cerrar sesión"><?= icon('logout') ?></a>
     </div>
   </aside>
 

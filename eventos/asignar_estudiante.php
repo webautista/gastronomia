@@ -1,6 +1,11 @@
 <?php
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'eventos', 'editar', $base);
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
@@ -16,16 +21,17 @@ if (!$evento) {
 }
 
 $stmt = db()->prepare(
-    'SELECT * FROM estudiantes
-     WHERE id NOT IN (SELECT estudiante_id FROM evento_estudiante WHERE evento_id = ?)
-     ORDER BY nombre ASC'
+    'SELECT e.*, ge.nombre AS grupo
+     FROM estudiantes e
+     LEFT JOIN grupos_estudiante ge ON ge.id = e.grupo_id
+     WHERE e.id NOT IN (SELECT estudiante_id FROM evento_estudiante WHERE evento_id = ?)
+     ORDER BY e.nombre ASC'
 );
 $stmt->execute([$id]);
 $disponibles = $stmt->fetchAll();
 
 $pageTitle = 'Agregar estudiantes';
 $activeNav = 'eventos';
-$base = '..';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $id . '">' . e($evento['nombre']) . '</a> &nbsp;/&nbsp; <b>Agregar estudiantes</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -47,7 +53,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php foreach ($disponibles as $st): ?>
           <label class="check-row">
             <input type="checkbox" name="estudiante_ids[]" value="<?= (int) $st['id'] ?>">
-            <span><span class="cname"><?= e($st['nombre']) ?></span><br><span class="csub"><?= e($st['grupo']) ?></span></span>
+            <span><span class="cname"><?= e($st['nombre']) ?></span><br><span class="csub"><?= e($st['grupo'] ?? '—') ?></span></span>
           </label>
         <?php endforeach; ?>
       </div>
