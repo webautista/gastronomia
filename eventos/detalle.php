@@ -305,6 +305,12 @@ require __DIR__ . '/../includes/layout_top.php';
         </tfoot>
       </table>
       </div>
+      <?php if (trim((string) ($rc['preparacion'] ?? '')) !== ''): ?>
+        <details class="prep-details">
+          <summary><?= icon('book') ?> Ver preparación</summary>
+          <div class="prep-text"><?= nl2br(e($rc['preparacion'])) ?></div>
+        </details>
+      <?php endif; ?>
     </div>
   <?php endforeach; ?>
 

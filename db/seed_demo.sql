@@ -25,11 +25,11 @@ INSERT INTO estudiantes (id, nombre, telefono, email, grupo) VALUES
 (9,  'Yolanda Beatriz Núñez', '809-555-0734', 'yolanda.nunez@correo.com',  'Panadería Artesanal'),
 (10, 'Rafael Antonio Cabrera','849-555-0845', 'rafael.cabrera@correo.com', 'Cocina Internacional');
 
-INSERT INTO recetas (id, nombre, categoria, porciones_base) VALUES
-(1, 'Mousse de Chocolate', 'Postre', 10),
-(2, 'Pollo al Curry con Arroz Basmati', 'Plato fuerte', 20),
-(3, 'Pan Baguette Artesanal', 'Panadería', 12),
-(4, 'Canapés de Salmón Ahumado', 'Aperitivo', 25);
+INSERT INTO recetas (id, nombre, categoria, porciones_base, preparacion) VALUES
+(1, 'Mousse de Chocolate', 'Postre', 10, '1. Derretir el chocolate a baño María.\n2. Batir la crema de leche a punto de nieve suave.\n3. Separar las claras de las yemas y batir las claras a punto de nieve.\n4. Incorporar las yemas y el azúcar al chocolate derretido.\n5. Añadir la crema batida con movimientos envolventes.\n6. Incorporar las claras con cuidado para no bajar el aire.\n7. Refrigerar mínimo 4 horas antes de servir.'),
+(2, 'Pollo al Curry con Arroz Basmati', 'Plato fuerte', 20, '1. Cortar el pollo en cubos y sellar en sartén caliente.\n2. Sofreír la cebolla hasta transparentar.\n3. Agregar el curry en polvo y cocinar 1 minuto para liberar aroma.\n4. Incorporar la leche de coco y cocinar a fuego medio 20 minutos.\n5. Cocinar el arroz basmati aparte según indicaciones del paquete.\n6. Servir el pollo sobre el arroz.'),
+(3, 'Pan Baguette Artesanal', 'Panadería', 12, '1. Disolver la levadura en el agua tibia.\n2. Mezclar con la harina y la sal hasta formar una masa homogénea.\n3. Amasar 10 minutos hasta que quede elástica.\n4. Dejar reposar tapada 1 hora o hasta doblar su tamaño.\n5. Dividir, formar los baguettes y dejar fermentar 30 minutos más.\n6. Hornear a 220°C por 20-25 minutos con vapor.'),
+(4, 'Canapés de Salmón Ahumado', 'Aperitivo', 25, '1. Cortar el pan baguette en rebanadas finas y tostar ligeramente.\n2. Untar cada rebanada con queso crema.\n3. Colocar una porción de salmón ahumado encima.\n4. Decorar con eneldo fresco picado.\n5. Servir frío.');
 
 INSERT INTO ingredientes (receta_id, nombre, cantidad, unidad, costo_unitario, orden) VALUES
 (1, 'Chocolate oscuro 70%', 400, 'g', 0.45, 1),

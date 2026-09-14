@@ -20,6 +20,37 @@ CREATE TABLE IF NOT EXISTS estudiantes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
+-- Unidades de medida (catálogo maestro para el dropdown de ingredientes)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS unidades_medida (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(40) NOT NULL,
+    abreviatura VARCHAR(10) NOT NULL,
+    orden INT UNSIGNED NOT NULL DEFAULT 0,
+    UNIQUE KEY uq_unidades_medida_nombre (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden) VALUES
+('Unidad',       'unid',  10),
+('Gramo',        'g',     20),
+('Kilogramo',    'kg',    30),
+('Miligramo',    'mg',    40),
+('Libra',        'lb',    50),
+('Onza',         'oz',    60),
+('Litro',        'l',     70),
+('Mililitro',    'ml',    80),
+('Taza',         'taza',  90),
+('Cucharada',    'cda',   100),
+('Cucharadita',  'cdta',  110),
+('Pizca',        'pizca', 120),
+('Diente',       'diente',130),
+('Rama',         'rama',  140),
+('Rebanada',     'rebanada', 150),
+('Manojo',       'manojo',160),
+('Lata',         'lata',  170),
+('Paquete',      'paq',   180);
+
+-- ---------------------------------------------------------------------
 -- Recetas (catálogo maestro)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS recetas (
@@ -27,12 +58,15 @@ CREATE TABLE IF NOT EXISTS recetas (
     nombre VARCHAR(150) NOT NULL,
     categoria VARCHAR(60) NOT NULL DEFAULT 'Plato fuerte',
     porciones_base INT UNSIGNED NOT NULL DEFAULT 1,
+    preparacion TEXT NULL,
     creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_recetas_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Ingredientes base de cada receta (cantidad para "porciones_base" porciones)
+-- Ingredientes base de cada receta (cantidad para "porciones_base" porciones).
+-- "unidad" guarda la abreviatura elegida del catálogo unidades_medida
+-- (se deja como texto, no como llave foránea, para no romper datos existentes).
 CREATE TABLE IF NOT EXISTS ingredientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     receta_id INT UNSIGNED NOT NULL,

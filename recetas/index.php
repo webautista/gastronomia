@@ -95,6 +95,12 @@ require __DIR__ . '/../includes/layout_top.php';
           <?= e(implode(', ', array_slice($nombresIng, 0, 4))) ?><?= count($nombresIng) > 4 ? '…' : '' ?>
         </div>
         <div class="mini-row"><span>Usada en</span><span><?= (int) $rc['num_eventos'] ?> evento<?= $rc['num_eventos'] == 1 ? '' : 's' ?></span></div>
+        <?php if (trim((string) ($rc['preparacion'] ?? '')) !== ''): ?>
+          <details class="prep-details">
+            <summary><?= icon('book') ?> Ver preparación</summary>
+            <div class="prep-text"><?= nl2br(e($rc['preparacion'])) ?></div>
+          </details>
+        <?php endif; ?>
       </div>
     <?php endforeach; ?>
   </div>

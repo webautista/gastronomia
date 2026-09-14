@@ -26,6 +26,30 @@ function ejecutarArchivoSql(PDO $pdo, string $ruta): int
     return $ejecutadas;
 }
 
+/**
+ * Migraciones puntuales para bases de datos que ya existían antes de que
+ * se agregara determinada columna/tabla. CREATE TABLE IF NOT EXISTS no
+ * modifica una tabla que ya existe, así que estas columnas nuevas se
+ * agregan aquí a mano, comprobando primero si ya están (seguro de
+ * ejecutar varias veces).
+ */
+function migrarColumnasNuevas(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'recetas' AND COLUMN_NAME = 'preparacion'"
+    );
+    $stmt->execute();
+    if ((int) $stmt->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE recetas ADD COLUMN preparacion TEXT NULL AFTER porciones_base");
+        $mensajes[] = 'Columna "preparacion" agregada a la tabla recetas.';
+    }
+
+    return $mensajes;
+}
+
 $mensajes = [];
 $error = null;
 $hecho = false;
@@ -36,6 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
         $n1 = ejecutarArchivoSql($pdo, __DIR__ . '/db/schema.sql');
         $mensajes[] = "Esquema creado/verificado correctamente ($n1 sentencias ejecutadas).";
+
+        $mensajes = array_merge($mensajes, migrarColumnasNuevas($pdo));
 
         if (!empty($_POST['con_datos_ejemplo'])) {
             $n2 = ejecutarArchivoSql($pdo, __DIR__ . '/db/seed_demo.sql');

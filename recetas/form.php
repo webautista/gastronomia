@@ -3,10 +3,12 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
 
 $id = intOrNull($_GET['id'] ?? null);
-$receta = ['nombre' => '', 'categoria' => 'Plato fuerte', 'porciones_base' => ''];
+$receta = ['nombre' => '', 'categoria' => 'Plato fuerte', 'porciones_base' => '', 'preparacion' => ''];
 $ingredientes = [['nombre' => '', 'cantidad' => '', 'unidad' => '', 'costo_unitario' => '']];
 $errores = [];
 $categorias = ['Plato fuerte', 'Postre', 'Aperitivo', 'Panadería', 'Bebida'];
+
+$unidades = db()->query('SELECT * FROM unidades_medida ORDER BY orden ASC, nombre ASC')->fetchAll();
 
 if ($id) {
     $stmt = db()->prepare('SELECT * FROM recetas WHERE id = ?');
@@ -31,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $receta['nombre']         = trim($_POST['nombre'] ?? '');
     $receta['categoria']      = $_POST['categoria'] ?? 'Plato fuerte';
     $receta['porciones_base'] = intOrNull($_POST['porciones_base'] ?? null);
+    $receta['preparacion']    = trim($_POST['preparacion'] ?? '');
 
     $ingNombres  = $_POST['ing_nombre'] ?? [];
     $ingCantidad = $_POST['ing_cantidad'] ?? [];
@@ -66,12 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
         try {
             if ($id) {
-                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, categoria=?, porciones_base=? WHERE id=?');
-                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base'], $id]);
+                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, categoria=?, porciones_base=?, preparacion=? WHERE id=?');
+                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $id]);
                 $pdo->prepare('DELETE FROM ingredientes WHERE receta_id = ?')->execute([$id]);
             } else {
-                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, categoria, porciones_base) VALUES (?,?,?)');
-                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base']]);
+                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, categoria, porciones_base, preparacion) VALUES (?,?,?,?)');
+                $stmt->execute([$receta['nombre'], $receta['categoria'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null]);
                 $id = (int) $pdo->lastInsertId();
             }
 
@@ -137,14 +140,24 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="ing-row" data-ing-row>
             <input type="text" name="ing_nombre[]" placeholder="Ingrediente" value="<?= e($ing['nombre']) ?>">
             <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" value="<?= e((string) $ing['cantidad']) ?>">
-            <input type="text" name="ing_unidad[]" placeholder="Unidad" value="<?= e($ing['unidad']) ?>">
+            <select name="ing_unidad[]">
+              <?php foreach ($unidades as $u): ?>
+                <option value="<?= e($u['abreviatura']) ?>" <?= $u['abreviatura'] === $ing['unidad'] ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+              <?php endforeach; ?>
+            </select>
             <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" value="<?= e((string) $ing['costo_unitario']) ?>">
             <button type="button" class="icon-btn" onclick="this.closest('[data-ing-row]').remove()"><?= icon('x') ?></button>
           </div>
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Cantidad, unidad (g, ml, unid) y costo por unidad son opcionales para el cálculo estimado de costo.</div>
+      <div class="hint">Cantidad y costo por unidad son opcionales para el cálculo estimado de costo. La unidad se elige del catálogo de medidas.</div>
+    </div>
+
+    <div class="field">
+      <label for="preparacion">Preparación (pasos a seguir)</label>
+      <textarea id="preparacion" name="preparacion" rows="8" placeholder="1. Precalentar el horno a...&#10;2. Mezclar...&#10;3. ..."><?= e($receta['preparacion']) ?></textarea>
+      <div class="hint">Opcional. Describe los pasos en el orden en que se deben seguir.</div>
     </div>
 
     <div class="form-actions">
@@ -158,7 +171,11 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="ing-row" data-ing-row>
     <input type="text" name="ing_nombre[]" placeholder="Ingrediente">
     <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad">
-    <input type="text" name="ing_unidad[]" placeholder="Unidad">
+    <select name="ing_unidad[]">
+      <?php foreach ($unidades as $u): ?>
+        <option value="<?= e($u['abreviatura']) ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+      <?php endforeach; ?>
+    </select>
     <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$">
     <button type="button" class="icon-btn" onclick="this.closest('[data-ing-row]').remove()"><?= icon('x') ?></button>
   </div>
