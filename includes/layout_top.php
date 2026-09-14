@@ -25,6 +25,11 @@ $navItems = [
 ];
 
 $flash = flashGet();
+
+// "Cache buster": la versión cambia sola cada vez que se modifica app.css,
+// para forzar a navegadores y cachés (CDN, LiteSpeed, etc.) a pedir la
+// version más reciente en vez de servir una copia vieja guardada.
+$cssVersion = @filemtime(__DIR__ . '/../assets/css/app.css') ?: '1';
 ?>
 <!doctype html>
 <html lang="es">
@@ -34,7 +39,7 @@ $flash = flashGet();
 <title><?= e($pageTitle) ?> · Fogón Eventos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="<?= e($base) ?>/assets/css/app.css">
+<link rel="stylesheet" href="<?= e($base) ?>/assets/css/app.css?v=<?= e((string) $cssVersion) ?>">
 </head>
 <body>
 <div class="app">
