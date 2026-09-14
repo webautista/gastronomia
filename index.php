@@ -44,24 +44,24 @@ require __DIR__ . '/includes/layout_top.php';
 </div>
 
 <div class="stat-grid">
-  <div class="stat-tile">
+  <div class="stat-tile stat-tile--wine">
     <div class="stat-label">Eventos activos</div>
     <div class="stat-value"><?= count($activos) ?></div>
     <div class="stat-hint">de <?= count($eventos) ?> en total</div>
   </div>
-  <div class="stat-tile">
+  <div class="stat-tile stat-tile--gold">
     <div class="stat-label">Próximo evento</div>
     <div class="stat-value" style="font-size:1.05rem;"><?= $proximo ? e($proximo['nombre']) : '—' ?></div>
     <div class="stat-hint"><?= $proximo ? fmtDate($proximo['fecha']) : 'Sin eventos programados' ?></div>
   </div>
-  <div class="stat-tile">
+  <div class="stat-tile stat-tile--sage">
     <div class="stat-label">Estudiantes registrados</div>
     <div class="stat-value"><?= $numEstudiantes ?></div>
     <div class="stat-hint">lista maestra reutilizable</div>
   </div>
-  <div class="stat-tile">
+  <div class="stat-tile stat-tile--terracotta">
     <div class="stat-label">Pagos pendientes</div>
-    <div class="stat-value num" style="color:var(--warning)"><?= $pendCount ?></div>
+    <div class="stat-value num"><?= $pendCount ?></div>
     <div class="stat-hint"><?= money($pendMonto) ?> por cobrar</div>
   </div>
 </div>
