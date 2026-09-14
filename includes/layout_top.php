@@ -54,7 +54,11 @@ $flash = flashGet();
         </a>
       <?php endforeach; ?>
     </nav>
-    <div class="sidebar-foot">Fogón Eventos &middot; Jardín de Novias</div>
+    <div class="sidebar-foot">
+      Fogón Eventos &middot; Jardín de Novias
+      <!-- Marcador temporal para verificar despliegues — bórralo cuando confirmes que los cambios sí llegan al sitio en vivo -->
+      <div style="margin-top:4px;color:var(--copper);font-weight:600;">🔧 Sitio en construcción</div>
+    </div>
   </aside>
 
   <div class="main">
