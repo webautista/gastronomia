@@ -1,0 +1,7 @@
+# Configuración con credenciales reales — nunca se sube al repositorio.
+config.php
+
+# Archivos comunes de sistema/editor
+.DS_Store
+Thumbs.db
+*.log
