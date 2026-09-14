@@ -57,6 +57,21 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "preparacion" agregada a la tabla recetas.';
     }
 
+    // unidades_medida pudo haber existido desde antes (de una versión previa
+    // del catálogo de unidades) sin las columnas "activo"/"orden" que el
+    // esquema actual espera. CREATE TABLE IF NOT EXISTS no las agrega porque
+    // la tabla ya existe, así que se agregan aquí a mano.
+    if (columnaExiste($pdo, 'unidades_medida', 'id')) {
+        if (!columnaExiste($pdo, 'unidades_medida', 'activo')) {
+            $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1');
+            $mensajes[] = 'Columna "activo" agregada a la tabla unidades_medida (catálogo ya existente).';
+        }
+        if (!columnaExiste($pdo, 'unidades_medida', 'orden')) {
+            $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN orden INT UNSIGNED NOT NULL DEFAULT 0');
+            $mensajes[] = 'Columna "orden" agregada a la tabla unidades_medida (catálogo ya existente).';
+        }
+    }
+
     return $mensajes;
 }
 
