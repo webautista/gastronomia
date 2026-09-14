@@ -1,34 +1,35 @@
 /* Fogón Eventos — hoja de estilos de la aplicación */
 
 :root{
-  --bg:#F2F4EF;
+  --bg:#FAF5F0;
   --surface:#FFFFFF;
-  --surface-2:#E8ECE4;
-  --border:#D9DFD3;
-  --text:#20241E;
-  --text-secondary:#5B6459;
-  --text-tertiary:#8B9385;
-  --accent:#2F6F5A;
-  --accent-strong:#1E4D3D;
-  --accent-soft:#DCEAE2;
-  --copper:#B5652D;
-  --success:#2E7D4F;
-  --success-soft:#E1F2E6;
-  --warning:#A9700E;
-  --warning-soft:#FBEDD2;
-  --danger:#B3402C;
-  --danger-soft:#F8DFD9;
-  --shadow: 0 1px 2px rgba(20,30,20,.04), 0 8px 24px -12px rgba(20,30,20,.12);
+  --surface-2:#F4E6DD;
+  --border:#E6D2C3;
+  --text:#2A1B17;
+  --text-secondary:#6B5347;
+  --text-tertiary:#9C8577;
+  --accent:#7A1F2E;
+  --accent-strong:#59141F;
+  --accent-soft:#F2DCDE;
+  --copper:#B9853A;
+  --copper-soft:#F5E7CE;
+  --success:#3F7D52;
+  --success-soft:#E3F0E4;
+  --warning:#B9853A;
+  --warning-soft:#F5E7CE;
+  --danger:#A63A2E;
+  --danger-soft:#F7E1DA;
+  --shadow: 0 1px 2px rgba(42,27,23,.05), 0 8px 24px -12px rgba(42,27,23,.16);
   --radius-lg:16px;
   --radius-md:12px;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#131C17; --surface:#1B2620; --surface-2:#233029; --border:#334438;
-    --text:#EAEFE8; --text-secondary:#AAB6A4; --text-tertiary:#7C8A78;
-    --accent:#5FBF9C; --accent-strong:#84D8B4; --accent-soft:#20372E;
-    --copper:#E08A4C; --success:#4FBE7C; --success-soft:#1B3626;
-    --warning:#E0A83D; --warning-soft:#3A2E14; --danger:#E2685A; --danger-soft:#3B211C;
+    --bg:#1D1512; --surface:#2B1E1A; --surface-2:#372722; --border:#4C382F;
+    --text:#F3E7DE; --text-secondary:#C7AD9D; --text-tertiary:#98816F;
+    --accent:#D0707C; --accent-strong:#E69AA3; --accent-soft:#3E1E23;
+    --copper:#D9A857; --copper-soft:#3D2E17; --success:#6FBF82; --success-soft:#1F3423;
+    --warning:#D9A857; --warning-soft:#3D2E17; --danger:#D9695A; --danger-soft:#3B211C;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -12px rgba(0,0,0,.5);
   }
 }
