@@ -132,3 +132,21 @@ function intOrNull($valor): ?int
     $filtrado = filter_var($valor, FILTER_VALIDATE_INT);
     return $filtrado === false ? null : $filtrado;
 }
+
+/**
+ * Costo de un ingrediente del catálogo por su "unidad de uso" (la unidad en
+ * que se escribe la cantidad dentro de una receta), a partir de cómo se
+ * compra realmente: precio_compra / contenido_por_compra. Ejemplo: un
+ * cartón de huevos (unidad de compra) cuesta RD$194.95 y trae 30 huevos
+ * (contenido_por_compra), así que cada huevo (unidad de uso) sale a
+ * RD$6.50. Cuando se compra igual que se usa, contenido_por_compra es 1 y
+ * el costo es el mismo precio_compra.
+ */
+function costoPorUnidadUso(array $ingredienteCatalogo): float
+{
+    $contenido = (float) ($ingredienteCatalogo['contenido_por_compra'] ?? 0);
+    if ($contenido <= 0) {
+        return 0.0;
+    }
+    return ((float) ($ingredienteCatalogo['precio_compra'] ?? 0)) / $contenido;
+}

@@ -83,13 +83,18 @@ require __DIR__ . '/../includes/layout_top.php';
     <?php foreach ($recetas as $rc): ?>
       <?php $nombresIng = $ingredientesPorReceta[$rc['id']] ?? []; ?>
       <div class="event-card">
+        <?php if (!empty($rc['foto'])): ?>
+          <a href="ver.php?id=<?= (int) $rc['id'] ?>">
+            <img src="<?= e($base . '/' . $rc['foto']) ?>" alt="Foto de <?= e($rc['nombre']) ?>" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius-md);margin-bottom:10px;">
+          </a>
+        <?php endif; ?>
         <div class="event-card-top">
           <div>
             <h3><?= e($rc['nombre']) ?></h3>
             <div class="cell-muted"><?= e($rc['categoria']) ?></div>
           </div>
-          <?php if ($puedeEditar || $puedeEliminar): ?>
-            <div class="row-actions">
+          <div class="row-actions">
+            <a class="icon-btn" href="ver.php?id=<?= (int) $rc['id'] ?>" title="Ver receta"><?= icon('eye') ?></a>
               <?php if ($puedeEditar): ?>
                 <a class="icon-btn" href="form.php?id=<?= (int) $rc['id'] ?>" title="Editar"><?= icon('edit') ?></a>
               <?php endif; ?>
@@ -102,7 +107,6 @@ require __DIR__ . '/../includes/layout_top.php';
                 </form>
               <?php endif; ?>
             </div>
-          <?php endif; ?>
         </div>
         <div class="event-meta">
           <span><?= icon('portion') ?> Base: <?= (int) $rc['porciones_base'] ?> porciones</span>

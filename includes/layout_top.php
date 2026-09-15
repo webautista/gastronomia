@@ -28,6 +28,7 @@ $todosLosNavItems = [
     'eventos'      => ['label' => 'Eventos',             'icon' => 'calendar', 'href' => $base . '/eventos/index.php'],
     'estudiantes'  => ['label' => 'Estudiantes',         'icon' => 'users',    'href' => $base . '/estudiantes/index.php'],
     'recetas'      => ['label' => 'Recetas',             'icon' => 'book',     'href' => $base . '/recetas/index.php'],
+    'ingredientes' => ['label' => 'Ingredientes',         'icon' => 'basket',   'href' => $base . '/ingredientes/index.php'],
     'configuracion'=> ['label' => 'Configuración',       'icon' => 'settings', 'href' => $base . '/configuracion/catalogos.php'],
     'usuarios'     => ['label' => 'Usuarios y roles',    'icon' => 'shield',   'href' => $base . '/usuarios/index.php'],
 ];

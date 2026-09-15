@@ -72,6 +72,27 @@ function migrarColumnasNuevas(PDO $pdo): array
         }
     }
 
+    // Catálogo maestro de ingredientes (nuevo): la tabla "ingredientes" (el
+    // detalle de ingredientes de cada receta) ya existía antes de que
+    // existiera ingredientes_catalogo, así que la columna que la enlaza con
+    // el catálogo se agrega aquí a mano. Es NULL a propósito: los
+    // ingredientes ya escritos como texto libre siguen funcionando igual,
+    // y solo se vinculan al catálogo cuando alguien los vuelve a guardar
+    // eligiéndolos del selector.
+    if (columnaExiste($pdo, 'ingredientes', 'id') && !columnaExiste($pdo, 'ingredientes', 'ingrediente_id')) {
+        $pdo->exec('ALTER TABLE ingredientes ADD COLUMN ingrediente_id INT UNSIGNED NULL AFTER receta_id');
+        if (columnaExiste($pdo, 'ingredientes_catalogo', 'id')) {
+            $pdo->exec('ALTER TABLE ingredientes ADD CONSTRAINT fk_ingredientes_catalogo FOREIGN KEY (ingrediente_id) REFERENCES ingredientes_catalogo(id)');
+        }
+        $mensajes[] = 'Columna "ingrediente_id" agregada a la tabla ingredientes (enlace al catálogo maestro).';
+    }
+
+    // Foto de referencia de la receta terminada.
+    if (columnaExiste($pdo, 'recetas', 'id') && !columnaExiste($pdo, 'recetas', 'foto')) {
+        $pdo->exec('ALTER TABLE recetas ADD COLUMN foto VARCHAR(255) NULL AFTER preparacion');
+        $mensajes[] = 'Columna "foto" agregada a la tabla recetas.';
+    }
+
     return $mensajes;
 }
 
