@@ -81,6 +81,28 @@ function migrarColumnasNuevas(PDO $pdo): array
             $pdo->exec("UPDATE unidades_medida SET es_entera = 1 WHERE nombre IN ('Unidad','Diente','Rama','Rebanada','Manojo','Lata','Paquete')");
             $mensajes[] = 'Columna "es_entera" agregada a unidades_medida (se marcaron por defecto Unidad, Diente, Rama, Rebanada, Manojo, Lata y Paquete como "se compra completa").';
         }
+        // Conversión automática entre unidades compatibles (ej. Onza <-> Gramo)
+        // al cambiar la unidad de una línea de receta, para que el costo por
+        // unidad se recalcule solo y no quede multiplicando una cantidad en
+        // una unidad por un costo que en realidad es de otra unidad distinta
+        // (el bug real que motivó esto: un ingrediente con precio de catálogo
+        // por Onza, usado en una receta en Gramo, arrastraba el costo por
+        // Onza sin convertir). Se siembra una sola vez, igual que es_entera.
+        if (!columnaExiste($pdo, 'unidades_medida', 'tipo_medida')) {
+            $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN tipo_medida VARCHAR(10) NULL');
+            $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN factor_base DECIMAL(12,6) NULL');
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='masa', factor_base=1 WHERE nombre='Gramo'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='masa', factor_base=1000 WHERE nombre='Kilogramo'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='masa', factor_base=0.001 WHERE nombre='Miligramo'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='masa', factor_base=453.592 WHERE nombre='Libra'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='masa', factor_base=28.349523 WHERE nombre='Onza'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='volumen', factor_base=1 WHERE nombre='Mililitro'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='volumen', factor_base=1000 WHERE nombre='Litro'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='volumen', factor_base=240 WHERE nombre='Taza'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='volumen', factor_base=15 WHERE nombre='Cucharada'");
+            $pdo->exec("UPDATE unidades_medida SET tipo_medida='volumen', factor_base=5 WHERE nombre='Cucharadita'");
+            $mensajes[] = 'Columnas "tipo_medida" y "factor_base" agregadas a unidades_medida (permiten convertir el costo automáticamente entre unidades de masa entre sí —Gramo, Kilogramo, Miligramo, Libra, Onza— y entre unidades de volumen entre sí —Mililitro, Litro, Taza, Cucharada, Cucharadita— al cambiar la unidad de una línea de receta).';
+        }
     }
 
     // Catálogo maestro de ingredientes (nuevo): la tabla "ingredientes" (el

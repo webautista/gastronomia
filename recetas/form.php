@@ -17,8 +17,17 @@ $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY
 // Mapa unidad_id -> ¿se compra completa? (ej. no se puede comprar medio
 // huevo ni media lata). Lo usa el JS para redondear el monto por línea.
 $unidadesEnteras = [];
+// Mapa unidad_id -> tipo_medida/factor_base, para que el JS pueda convertir
+// el costo automáticamente cuando se cambia la unidad de una línea a otra
+// compatible (ej. Onza -> Gramo), en vez de dejar el costo de la unidad
+// vieja multiplicando una cantidad en la unidad nueva.
+$unidadesInfo = [];
 foreach ($unidades as $u) {
     $unidadesEnteras[(int) $u['id']] = (bool) ($u['es_entera'] ?? false);
+    $unidadesInfo[(int) $u['id']] = [
+        'tipo_medida' => $u['tipo_medida'] ?? null,
+        'factor_base' => $u['factor_base'] !== null ? (float) $u['factor_base'] : null,
+    ];
 }
 $categoriasIngrediente = db()->query('SELECT * FROM categorias_ingrediente WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $catalogoIngredientes = db()->query(
@@ -249,7 +258,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off" value="<?= e($ing['nombre']) ?>">
             <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="<?= e((string) ($ing['ingrediente_id'] ?? '')) ?>">
             <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= e((string) $ing['cantidad']) ?>">
-            <select name="ing_unidad_id[]" data-role="ing-unidad">
+            <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="<?= (int) ($ing['unidad_id'] ?? 0) ?>">
               <?php foreach ($unidades as $u): ?>
                 <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
               <?php endforeach; ?>
@@ -262,7 +271,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
+      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
       <div class="ing-total">Costo total estimado de la receta: <span class="mono" id="ingCostoTotal">RD$ 0</span></div>
     </div>
 
@@ -290,7 +299,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off">
     <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="">
     <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad">
-    <select name="ing_unidad_id[]" data-role="ing-unidad">
+    <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="">
       <?php foreach ($unidades as $u): ?>
         <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
       <?php endforeach; ?>
@@ -363,6 +372,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
   (function () {
     var CATALOGO = <?= json_encode($catalogoPorNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    var UNIDADES_INFO = <?= json_encode($unidadesInfo, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
     var datalist = document.getElementById('catalogoIngredientesList');
     var modal = document.getElementById('modalNuevoIngrediente');
     var modalNombre = document.getElementById('modalIngNombre');
@@ -387,6 +397,42 @@ require __DIR__ . '/../includes/layout_top.php';
     function cantidadDeCompra(cantidad, esEntera) {
       if (!(cantidad > 0)) return 0;
       return esEntera ? Math.ceil(cantidad - 0.0000001) : cantidad;
+    }
+
+    // Igual que convertirCostoPorUnidad() en includes/helpers.php: convierte
+    // un costo por unidad (ej. RD$/Onza) a su equivalente en otra unidad
+    // (ej. RD$/Gramo) cuando ambas son del mismo tipo de medida (masa o
+    // volumen) y tienen su factor de conversión cargado. Devuelve null si no
+    // son convertibles automáticamente (ej. una es masa y la otra es una
+    // unidad de conteo como Unidad o Lata) — ahí el costo se ajusta a mano.
+    function convertirCostoPorUnidad(costoPorUnidadOrigen, idOrigen, idDestino) {
+      if (!idOrigen || !idDestino) return null;
+      if (idOrigen === idDestino) return costoPorUnidadOrigen;
+      var uo = UNIDADES_INFO[idOrigen], ud = UNIDADES_INFO[idDestino];
+      if (!uo || !ud || !uo.tipo_medida || !ud.tipo_medida || uo.tipo_medida !== ud.tipo_medida) return null;
+      if (!uo.factor_base || !ud.factor_base) return null;
+      return costoPorUnidadOrigen * (ud.factor_base / uo.factor_base);
+    }
+
+    // Se dispara al cambiar la unidad de una fila: si la fila tiene un
+    // costo cargado (del catálogo o ajustado a mano) para la unidad
+    // anterior (data-prev), lo convierte a la unidad nueva para que
+    // "cantidad × costo" siga siendo correcto en vez de arrastrar el costo
+    // de la unidad vieja sin más. Si la conversión no es posible (unidades
+    // no compatibles), deja el costo tal cual para que se ajuste a mano.
+    function ajustarCostoPorCambioDeUnidad(selectUnidad) {
+      var idAnterior = parseInt(selectUnidad.getAttribute('data-prev'), 10) || null;
+      var idNuevo = parseInt(selectUnidad.value, 10) || null;
+      var fila = selectUnidad.closest('[data-ing-row]');
+      var inputCosto = fila ? fila.querySelector('[data-role="ing-costo"]') : null;
+      if (inputCosto && idAnterior && idNuevo && idAnterior !== idNuevo) {
+        var costoActual = parseFloat(inputCosto.value) || 0;
+        var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo);
+        if (costoConvertido !== null) {
+          inputCosto.value = costoConvertido.toFixed(2);
+        }
+      }
+      selectUnidad.setAttribute('data-prev', idNuevo || '');
     }
 
     function recalcularFila(fila) {
@@ -416,7 +462,10 @@ require __DIR__ . '/../includes/layout_top.php';
       var inputCosto = fila.querySelector('input[name="ing_costo[]"]');
       if (datos) {
         if (hiddenId) hiddenId.value = datos.id;
-        if (selectUnidad) selectUnidad.value = datos.unidad_id;
+        if (selectUnidad) {
+          selectUnidad.value = datos.unidad_id;
+          selectUnidad.setAttribute('data-prev', datos.unidad_id);
+        }
         if (inputCosto) inputCosto.value = datos.costo_unitario;
       } else if (hiddenId) {
         hiddenId.value = '';
@@ -439,7 +488,9 @@ require __DIR__ . '/../includes/layout_top.php';
     });
 
     document.addEventListener('change', function (e) {
-      if (e.target.closest('[data-role="ing-unidad"]')) {
+      var selectUnidad = e.target.closest('[data-role="ing-unidad"]');
+      if (selectUnidad) {
+        ajustarCostoPorCambioDeUnidad(selectUnidad);
         recalcularTotal();
       }
     });

@@ -29,11 +29,6 @@ CREATE TABLE IF NOT EXISTS unidades_medida (
     abreviatura VARCHAR(10) NOT NULL,
     orden INT UNSIGNED NOT NULL DEFAULT 0,
     activo TINYINT(1) NOT NULL DEFAULT 1,
-    -- Si esta unidad se tiene que comprar completa aunque la receta pida una
-    -- fracción (ej. la receta necesita media manzana o medio huevo, pero se
-    -- compra una manzana o un huevo enteros). Se usa para calcular el monto
-    -- real de compra por línea, redondeando la cantidad hacia arriba.
-    es_entera TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_unidades_medida_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -44,11 +39,27 @@ INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden) VALUES
 ('Diente','diente',130),('Rama','rama',140),('Rebanada','rebanada',150),('Manojo','manojo',160),
 ('Lata','lata',170),('Paquete','paq',180);
 
--- El seed de "es_entera" (qué unidades se compran completas) lo hace
--- setup.php una sola vez, justo cuando agrega la columna (ver
--- migrarColumnasNuevas) — así corre tanto en una instalación nueva como en
--- una que ya existía, y nunca pisa un ajuste manual hecho después desde
--- Configuración en una corrida posterior de setup.php.
+-- Dos columnas más se agregan siempre desde setup.php (migrarColumnasNuevas),
+-- nunca aquí en el CREATE TABLE: si vivieran en el CREATE TABLE, en una
+-- instalación totalmente nueva la tabla nacería ya con la columna y
+-- columnaExiste() la vería como "ya migrada", así que el UPDATE que siembra
+-- sus valores por defecto nunca correría (esto realmente pasó: es la razón
+-- por la que se sacaron de aquí). Manteniendo el ALTER + UPDATE únicamente
+-- en setup.php, corren igual en una instalación nueva que en una que ya
+-- existía, y una corrida posterior nunca pisa un ajuste manual hecho desde
+-- Configuración:
+-- - es_entera TINYINT(1): si esta unidad se tiene que comprar completa
+--   aunque la receta pida una fracción (ej. media manzana, medio huevo).
+--   Se usa para redondear hacia arriba el monto de compra por línea.
+-- - tipo_medida VARCHAR(10) / factor_base DECIMAL(12,6): para convertir el
+--   costo automáticamente entre unidades compatibles al cambiar la unidad
+--   de una línea de receta (ej. un ingrediente con precio de catálogo por
+--   Onza, anotado en la receta en Gramo). tipo_medida agrupa unidades de
+--   la misma magnitud ('masa', 'volumen') y factor_base es cuánto vale 1
+--   unidad de esa fila en la unidad base de su tipo (gramos para masa,
+--   mililitros para volumen). Las unidades "de conteo" (Unidad, Lata,
+--   Diente, etc.) quedan con ambos campos en NULL: no son convertibles
+--   entre sí automáticamente.
 
 -- Categorías de receta
 CREATE TABLE IF NOT EXISTS categorias_receta (

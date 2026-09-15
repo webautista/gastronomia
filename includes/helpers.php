@@ -176,3 +176,40 @@ function montoLineaReceta(float $cantidad, float $costoUnitario, bool $esEntera)
 {
     return cantidadDeCompra($cantidad, $esEntera) * $costoUnitario;
 }
+
+/**
+ * Convierte un costo por unidad (ej. RD$/Onza) a su equivalente en otra
+ * unidad (ej. RD$/Gramo), cuando ambas miden lo mismo. Se usa al cambiar la
+ * unidad de una línea de receta: si el ingrediente venía con el costo
+ * calculado para una unidad y se cambia a otra, hay que recalcular el
+ * costo para que "cantidad × costo" siga siendo correcto — de lo
+ * contrario se termina multiplicando gramos por un precio que en realidad
+ * es por onza (el bug real que motivó esta función).
+ *
+ * $unidadOrigen / $unidadDestino son filas de unidades_medida (o null).
+ * Devuelve null cuando no son convertibles automáticamente: unidades de
+ * conteo (Unidad, Lata, Diente...) sin tipo_medida/factor_base, o cuando
+ * una es de masa y la otra de volumen. En ese caso el costo se debe
+ * ajustar a mano — no hay forma de saber, por ejemplo, cuántos gramos
+ * "es" media lata.
+ */
+function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrigen, ?array $unidadDestino): ?float
+{
+    if (!$unidadOrigen || !$unidadDestino) {
+        return null;
+    }
+    if ((int) $unidadOrigen['id'] === (int) $unidadDestino['id']) {
+        return $costoPorUnidadOrigen;
+    }
+    $tipoOrigen = $unidadOrigen['tipo_medida'] ?? null;
+    $tipoDestino = $unidadDestino['tipo_medida'] ?? null;
+    if (!$tipoOrigen || !$tipoDestino || $tipoOrigen !== $tipoDestino) {
+        return null;
+    }
+    $factorOrigen = (float) ($unidadOrigen['factor_base'] ?? 0);
+    $factorDestino = (float) ($unidadDestino['factor_base'] ?? 0);
+    if ($factorOrigen <= 0 || $factorDestino <= 0) {
+        return null;
+    }
+    return $costoPorUnidadOrigen * ($factorDestino / $factorOrigen);
+}
