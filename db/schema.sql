@@ -255,6 +255,21 @@ INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id
 ('Galleta María', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍪', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 70.00, 'Para bases de cheesecake'),
 ('Cereza marrasquino', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍒', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 180.00, 'Frasco, para decorar');
 
+-- Tercera tanda: variedad de pescados y mariscos, y yogur griego, a pedido
+-- — mismos criterios (precios de referencia investigados en supermercados
+-- dominicanos vía comparador SupermercadosRD, septiembre de 2026).
+INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra) VALUES
+('Tilapia (filete)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐟', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 200.00, 'Filete congelado'),
+('Salmón (filete)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐟', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 599.00, 'Filete congelado importado'),
+('Bacalao (filete salado)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐟', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 257.90, 'Se vende salado en paquetes de 8 oz (226.8 g) a RD$128.95; precio ajustado a libra'),
+('Mero (filete)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐟', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 679.00, 'Filete congelado'),
+('Atún (filete)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐟', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 866.70, 'Filete congelado importado, precio premium (el atún enlatado está en Enlatado y conserva)'),
+('Calamar (anillas)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🦑', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 199.95, 'Anillas congeladas'),
+('Mejillones (carne)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🦪', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 225.00, 'Carne de mejillón sin concha'),
+('Pulpo (fresco)', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🐙', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 399.00, 'Pulpo fresco criollo'),
+('Masa de cangrejo', (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'), '🦀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 479.00, 'Masa de cangrejo criollo'),
+('Yogur griego natural', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🥛', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 907.2, 699.95, 'Envase de 907 g (32 oz), natural/sin azúcar, marca Oikos');
+
 -- Módulos del sistema (pantallas/funcionalidades sobre las que se
 -- otorgan permisos por rol)
 CREATE TABLE IF NOT EXISTS modulos (
