@@ -126,6 +126,24 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "foto" agregada a la tabla recetas.';
     }
 
+    // Banner del evento: se muestra al entrar al detalle del evento y en la
+    // página pública, igual que la foto de referencia de una receta.
+    if (columnaExiste($pdo, 'eventos', 'id') && !columnaExiste($pdo, 'eventos', 'banner')) {
+        $pdo->exec('ALTER TABLE eventos ADD COLUMN banner VARCHAR(255) NULL AFTER lugar');
+        $mensajes[] = 'Columna "banner" agregada a la tabla eventos.';
+    }
+
+    // Presupuesto proyectado vs. gasto confirmado: un gasto nace "proyectado"
+    // (todavía no se ha pagado, es solo una previsión) y con un clic pasa a
+    // "confirmado" (ya se pagó, cuenta como gasto real contra el
+    // presupuesto). Los gastos que ya existían antes de esta columna se
+    // marcan "confirmado" por defecto porque ya representaban dinero
+    // efectivamente gastado, no una proyección.
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'estado')) {
+        $pdo->exec("ALTER TABLE gastos ADD COLUMN estado VARCHAR(12) NOT NULL DEFAULT 'confirmado' AFTER monto");
+        $mensajes[] = 'Columna "estado" (proyectado/confirmado) agregada a la tabla gastos; los gastos existentes quedaron marcados "confirmado".';
+    }
+
     return $mensajes;
 }
 

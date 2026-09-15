@@ -22,7 +22,7 @@ if (!$evento) {
 
 $categorias = db()->query('SELECT * FROM categorias_gasto WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $categoriaPorDefecto = $categorias[0]['id'] ?? null;
-$gasto = ['categoria_id' => $categoriaPorDefecto, 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d')];
+$gasto = ['categoria_id' => $categoriaPorDefecto, 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d'), 'estado' => 'proyectado'];
 $errores = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -32,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $gasto['proveedor']    = trim($_POST['proveedor'] ?? '');
     $gasto['monto']        = (float) ($_POST['monto'] ?? 0);
     $gasto['fecha']        = $_POST['fecha'] ?? '';
+    $gasto['estado']       = ($_POST['estado'] ?? '') === 'confirmado' ? 'confirmado' : 'proyectado';
 
     if (!in_array($gasto['categoria_id'], array_column($categorias, 'id'), true)) {
         $errores[] = 'Categoría no válida.';
@@ -47,9 +48,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errores) {
-        $stmt = db()->prepare('INSERT INTO gastos (evento_id, categoria_id, descripcion, proveedor, monto, fecha) VALUES (?,?,?,?,?,?)');
-        $stmt->execute([$eventoId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $gasto['fecha']]);
-        flash('Gasto registrado.');
+        $stmt = db()->prepare('INSERT INTO gastos (evento_id, categoria_id, descripcion, proveedor, monto, fecha, estado) VALUES (?,?,?,?,?,?,?)');
+        $stmt->execute([$eventoId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $gasto['fecha'], $gasto['estado']]);
+        flash($gasto['estado'] === 'confirmado' ? 'Gasto registrado.' : 'Partida proyectada agregada.');
         redirect('detalle.php?id=' . $eventoId . '&tab=gastos');
     }
 }
@@ -70,6 +71,15 @@ require __DIR__ . '/../includes/layout_top.php';
   <form method="post">
     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
 
+    <div class="field">
+      <label for="estado">¿Ya se pagó, o es una previsión?</label>
+      <select id="estado" name="estado">
+        <option value="proyectado" <?= $gasto['estado'] === 'proyectado' ? 'selected' : '' ?>>Proyectado — todavía no se ha pagado, es lo que prevemos que costará</option>
+        <option value="confirmado" <?= $gasto['estado'] === 'confirmado' ? 'selected' : '' ?>>Confirmado — ya se pagó, cuenta como gasto real</option>
+      </select>
+      <div class="hint">Una partida proyectada se puede confirmar más adelante con un clic, desde la lista de Gastos, cuando ya se haya pagado.</div>
+    </div>
+
     <div class="field-row">
       <div class="field">
         <label for="categoria_id">Categoría</label>
@@ -87,7 +97,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field">
       <label for="descripcion">Descripción</label>
-      <input type="text" id="descripcion" name="descripcion" required placeholder="Ej. Compra de ingredientes" value="<?= e($gasto['descripcion']) ?>">
+      <input type="text" id="descripcion" name="descripcion" required placeholder="Ej. Alquiler del salón" value="<?= e($gasto['descripcion']) ?>">
     </div>
 
     <div class="field-row">
@@ -103,7 +113,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="form-actions">
       <a class="btn btn-secondary" href="detalle.php?id=<?= $eventoId ?>&tab=gastos">Cancelar</a>
-      <button class="btn btn-primary" type="submit">Registrar gasto</button>
+      <button class="btn btn-primary" type="submit">Guardar</button>
     </div>
   </form>
 </div>

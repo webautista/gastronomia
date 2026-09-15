@@ -10,7 +10,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/icons.php';
 
 $stmt = db()->query(
-    "SELECT ev.nombre, ev.fecha, ev.lugar, ev.cuota
+    "SELECT ev.nombre, ev.fecha, ev.lugar, ev.cuota, ev.banner
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      WHERE es.nombre <> 'Finalizado' AND ev.fecha >= CURDATE()
@@ -106,6 +106,9 @@ $homeCssVersion = @filemtime(__DIR__ . '/assets/css/home.css') ?: '1';
     <div class="evt-public-grid">
       <?php foreach ($proximosEventos as $ev): ?>
         <div class="evt-public-card reveal">
+          <?php if (!empty($ev['banner'])): ?>
+            <img class="evt-public-banner" src="<?= e($ev['banner']) ?>" alt="<?= e($ev['nombre']) ?>" loading="lazy">
+          <?php endif; ?>
           <div class="evt-public-top">
             <span class="evt-public-date"><?= icon('calendar') ?> <?= e(fmtDate($ev['fecha'])) ?></span>
           </div>

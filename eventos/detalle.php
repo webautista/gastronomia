@@ -9,6 +9,7 @@ requirePermission($usuarioActual, 'eventos', 'ver', $base);
 $puedeEditarEvento = can($usuarioActual, 'eventos', 'editar');
 $puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
 $puedeCrearGasto = can($usuarioActual, 'gastos', 'crear');
+$puedeEditarGasto = can($usuarioActual, 'gastos', 'editar');
 $puedeEliminarGasto = can($usuarioActual, 'gastos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
@@ -98,6 +99,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($gastoId) {
             $pdo->prepare('DELETE FROM gastos WHERE id=? AND evento_id=?')->execute([$gastoId, $id]);
         }
+    } elseif ($accion === 'confirmar_gasto') {
+        requirePermission($usuarioActual, 'gastos', 'editar', $base);
+        $gastoId = intOrNull($_POST['gasto_id'] ?? null);
+        if ($gastoId) {
+            $pdo->prepare("UPDATE gastos SET estado = 'confirmado' WHERE id = ? AND evento_id = ? AND estado = 'proyectado'")
+                ->execute([$gastoId, $id]);
+        }
     }
 
     redirect('detalle.php?id=' . $id . '&tab=' . $tab);
@@ -122,26 +130,61 @@ $stmt = db()->prepare(
 $stmt->execute([$id]);
 $recetasEvento = $stmt->fetchAll();
 
+// El costo de ingredientes de cada receta se calcula una sola vez aquí
+// (no dentro de la pestaña "Recetas"), porque el resumen y la pestaña de
+// presupuesto también lo necesitan como "costo estimado de recetas".
+$costoRecetasEvento = 0;
+foreach ($recetasEvento as &$rc) {
+    $porcionesBase = max(1, (int) $rc['porciones_base']);
+    $stmtIng = db()->prepare(
+        'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
+         JOIN unidades_medida um ON um.id = i.unidad_id
+         WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
+    );
+    $stmtIng->execute([$rc['id']]);
+    $rc['ingredientes'] = $stmtIng->fetchAll();
+    $rc['costo_total'] = 0;
+    foreach ($rc['ingredientes'] as $ing) {
+        $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
+        $esEntera = (bool) ($ing['unidad_entera'] ?? false);
+        $rc['costo_total'] += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
+    }
+    $costoRecetasEvento += $rc['costo_total'];
+}
+unset($rc);
+
 // El total gastado alimenta el medidor de presupuesto del resumen, que se
 // muestra a todos los roles con acceso al evento; los renglones detallados
 // (categoría, proveedor, descripción) solo se cargan si el rol puede ver
-// el módulo de gastos.
-$stmtSumaGastos = db()->prepare('SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ?');
+// el módulo de gastos. "Gastado" = solo lo confirmado (ya pagado); lo
+// proyectado todavía no cuenta como dinero efectivamente gastado.
+$stmtSumaGastos = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'confirmado'");
 $stmtSumaGastos->execute([$id]);
 $gastado = (float) $stmtSumaGastos->fetchColumn();
+
+$stmtSumaProyectado = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'proyectado'");
+$stmtSumaProyectado->execute([$id]);
+$totalProyectado = (float) $stmtSumaProyectado->fetchColumn();
+
+// Cuánto necesitará el evento en total, calculado como referencia: el
+// costo de recetas (siempre live, no se guarda) + lo proyectado + lo ya
+// confirmado. Sirve para ver "cuánto vamos a necesitar" antes de que todo
+// esté pagado.
+$totalProyeccionInversion = $costoRecetasEvento + $totalProyectado + $gastado;
 
 $gastosEvento = [];
 if ($puedeVerGastos) {
     $stmt = db()->prepare(
         'SELECT g.*, cg.nombre AS categoria FROM gastos g
          JOIN categorias_gasto cg ON cg.id = g.categoria_id
-         WHERE g.evento_id = ? ORDER BY g.fecha DESC, g.id DESC'
+         WHERE g.evento_id = ? ORDER BY (g.estado = \'proyectado\') DESC, g.fecha DESC, g.id DESC'
     );
     $stmt->execute([$id]);
     $gastosEvento = $stmt->fetchAll();
 }
 
 $pct = $evento['presupuesto'] > 0 ? round($gastado / $evento['presupuesto'] * 100) : 0;
+$pctProyeccion = $evento['presupuesto'] > 0 ? round($totalProyeccionInversion / $evento['presupuesto'] * 100) : 0;
 $numPagados = count(array_filter($estudiantesEvento, fn($a) => (int) $a['pagado'] === 1));
 $esperado = count($estudiantesEvento) * $evento['cuota'];
 $recaudado = $numPagados * $evento['cuota'];
@@ -152,6 +195,10 @@ $activeNav = 'eventos';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <b>' . e($evento['nombre']) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
+
+<?php if (!empty($evento['banner'])): ?>
+  <img class="event-banner-hero" src="<?= e($base . '/' . $evento['banner']) ?>" alt="Banner de <?= e($evento['nombre']) ?>">
+<?php endif; ?>
 
 <div class="page-head">
   <div>
@@ -167,13 +214,21 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
 </div>
 
-<div class="summary-grid">
+<div class="summary-grid <?= $puedeVerGastos ? 'summary-grid-4' : '' ?>">
   <div class="card card-pad">
     <div class="stat-label">Presupuesto</div>
     <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($gastado) ?> gastado</span><span><?= (int) $pct ?>%</span></div>
     <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
     <div class="stat-hint" style="margin-top:8px;">Presupuesto total: <b class="mono"><?= money($evento['presupuesto']) ?></b></div>
   </div>
+  <?php if ($puedeVerGastos): ?>
+  <div class="card card-pad">
+    <div class="stat-label">Proyección de inversión</div>
+    <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($totalProyeccionInversion) ?> estimado</span><span><?= (int) $pctProyeccion ?>%</span></div>
+    <div class="meter <?= meterClase($pctProyeccion) ?>"><span style="width:<?= min($pctProyeccion, 100) ?>%"></span></div>
+    <div class="stat-hint" style="margin-top:8px;">Recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b> + proyectado: <b class="mono"><?= money($totalProyectado) ?></b> + confirmado: <b class="mono"><?= money($gastado) ?></b></div>
+  </div>
+  <?php endif; ?>
   <div class="card card-pad">
     <div class="stat-label">Cuota y recaudo</div>
     <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
@@ -300,15 +355,8 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
   <?php foreach ($recetasEvento as $rc):
     $porcionesBase = max(1, (int) $rc['porciones_base']);
-    $stmtIng = db()->prepare(
-        'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
-         JOIN unidades_medida um ON um.id = i.unidad_id
-         WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
-    );
-    $stmtIng->execute([$rc['id']]);
-    $ingredientesReceta = $stmtIng->fetchAll();
-    $factor = $rc['porciones_necesarias'] / $porcionesBase;
-    $costoTotal = 0;
+    $ingredientesReceta = $rc['ingredientes'];
+    $costoTotal = $rc['costo_total'];
   ?>
     <div class="recipe-card" data-recipe-card data-porciones-base="<?= $porcionesBase ?>">
       <div class="recipe-card-head">
@@ -345,7 +393,6 @@ require __DIR__ . '/../includes/layout_top.php';
             $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
             $esEntera = (bool) ($ing['unidad_entera'] ?? false);
             $costo = montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
-            $costoTotal += $costo;
           ?>
             <tr>
               <td class="cell-name"><?= e($ing['nombre']) ?></td>
@@ -373,31 +420,52 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="card card-pad" style="margin-bottom:16px;">
     <div class="meter-row"><span><?= money($gastado) ?> gastado de <?= money($evento['presupuesto']) ?></span><span><?= (int) $pct ?>%</span></div>
     <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
+    <div class="stat-hint" style="margin-top:12px;">
+      Costo estimado de recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b>
+      &nbsp;+&nbsp; Proyectado (sin pagar todavía): <b class="mono"><?= money($totalProyectado) ?></b>
+      &nbsp;+&nbsp; Confirmado (ya pagado): <b class="mono"><?= money($gastado) ?></b>
+      &nbsp;=&nbsp; Necesitarían en total ≈ <b class="mono"><?= money($totalProyeccionInversion) ?></b>
+    </div>
   </div>
   <div class="toolbar">
-    <div class="cell-muted"><?= count($gastosEvento) ?> gasto<?= count($gastosEvento) === 1 ? '' : 's' ?> registrado<?= count($gastosEvento) === 1 ? '' : 's' ?></div>
+    <div class="cell-muted"><?= count($gastosEvento) ?> partida<?= count($gastosEvento) === 1 ? '' : 's' ?> registrada<?= count($gastosEvento) === 1 ? '' : 's' ?></div>
     <?php if ($puedeCrearGasto): ?>
-      <a class="btn btn-secondary btn-sm" href="gasto_form.php?evento_id=<?= $id ?>"><?= icon('plus') ?> Registrar gasto</a>
+      <a class="btn btn-secondary btn-sm" href="gasto_form.php?evento_id=<?= $id ?>"><?= icon('plus') ?> Agregar partida</a>
     <?php endif; ?>
   </div>
   <div class="card">
     <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Monto</th><th></th></tr></thead>
+      <thead><tr><th>Estado</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Monto</th><th></th></tr></thead>
       <tbody>
         <?php if (!$gastosEvento): ?>
-          <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay gastos registrados.</td></tr>
+          <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay gastos ni partidas proyectadas.</td></tr>
         <?php endif; ?>
-        <?php foreach ($gastosEvento as $g): ?>
+        <?php foreach ($gastosEvento as $g): $esProyectado = $g['estado'] === 'proyectado'; ?>
           <tr>
+            <td>
+              <?php if ($esProyectado): ?>
+                <span class="chip chip-warning">Proyectado</span>
+              <?php else: ?>
+                <span class="chip chip-success">Confirmado</span>
+              <?php endif; ?>
+            </td>
             <td class="cell-muted"><?= fmtDate($g['fecha']) ?></td>
             <td><span class="chip chip-neutral"><?= e($g['categoria']) ?></span></td>
             <td><?= e($g['descripcion']) ?></td>
             <td class="cell-muted"><?= e($g['proveedor']) ?></td>
             <td class="mono"><?= money($g['monto']) ?></td>
             <td class="row-actions">
+              <?php if ($esProyectado && $puedeEditarGasto): ?>
+              <form method="post" data-confirm="¿Confirmar esta partida como gasto real ya pagado?">
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="accion" value="confirmar_gasto">
+                <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
+                <button class="btn btn-primary btn-sm" type="submit"><?= icon('check') ?> Confirmar</button>
+              </form>
+              <?php endif; ?>
               <?php if ($puedeEliminarGasto): ?>
-              <form method="post" data-confirm="¿Eliminar este gasto?">
+              <form method="post" data-confirm="¿Eliminar esta partida?">
                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                 <input type="hidden" name="accion" value="quitar_gasto">
                 <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">

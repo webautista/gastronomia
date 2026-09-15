@@ -19,7 +19,7 @@ foreach ($estados as $es) {
 $estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
 
 $evento = [
-    'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '',
+    'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '', 'banner' => null,
     'presupuesto' => '', 'cuota' => '', 'porciones' => '', 'estado_id' => $estadoPorDefecto,
 ];
 $errores = [];
@@ -58,15 +58,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'Las porciones a preparar deben ser mayores a 0.';
     }
 
+    // Banner: solo se valida el tipo/tamaño aquí. El archivo no se mueve ni
+    // se borra el banner anterior todavía — eso pasa más abajo, y solo si
+    // el resto del formulario también es válido, para no perder el banner
+    // viejo si el guardado termina fallando por otro motivo.
+    $eliminarBanner = !empty($_POST['eliminar_banner']);
+    $subioBannerValido = false;
+    $extensionBanner = null;
+    if (isset($_FILES['banner']) && $_FILES['banner']['error'] !== UPLOAD_ERR_NO_FILE) {
+        if ($_FILES['banner']['error'] !== UPLOAD_ERR_OK) {
+            $errores[] = 'No se pudo subir el banner. Intenta de nuevo.';
+        } else {
+            $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+            $mime = @mime_content_type($_FILES['banner']['tmp_name']);
+            if (!isset($tiposPermitidos[$mime])) {
+                $errores[] = 'El banner debe ser una imagen JPG, PNG o WEBP.';
+            } elseif ($_FILES['banner']['size'] > 5 * 1024 * 1024) {
+                $errores[] = 'El banner no puede pesar más de 5 MB.';
+            } else {
+                $subioBannerValido = true;
+                $extensionBanner = $tiposPermitidos[$mime];
+            }
+        }
+    }
+
+    if (!$errores) {
+        // Ahora sí: mover el archivo nuevo (o borrar el banner actual si se
+        // pidió quitarlo) justo antes de guardar en la base de datos.
+        $bannerFinal = $evento['banner'] ?? null;
+        if ($subioBannerValido) {
+            $directorioDestino = __DIR__ . '/../assets/uploads/eventos';
+            if (!is_dir($directorioDestino)) {
+                mkdir($directorioDestino, 0775, true);
+            }
+            $nombreArchivo = 'evento_' . ($id ?: 'nuevo') . '_' . bin2hex(random_bytes(6)) . '.' . $extensionBanner;
+            if (move_uploaded_file($_FILES['banner']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
+                if ($bannerFinal) {
+                    @unlink(__DIR__ . '/../' . $bannerFinal);
+                }
+                $bannerFinal = 'assets/uploads/eventos/' . $nombreArchivo;
+            } else {
+                $errores[] = 'No se pudo guardar el banner en el servidor. Vuelve a intentarlo.';
+            }
+        } elseif ($eliminarBanner && $bannerFinal) {
+            @unlink(__DIR__ . '/../' . $bannerFinal);
+            $bannerFinal = null;
+        }
+    }
+
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, presupuesto=?, cuota=?, porciones=?, estado_id=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, presupuesto=?, cuota=?, porciones=?, estado_id=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, presupuesto, cuota, porciones, estado_id) VALUES (?,?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, presupuesto, cuota, porciones, estado_id) VALUES (?,?,?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -87,7 +135,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php endif; ?>
 
 <div class="card card-pad form-card">
-  <form method="post">
+  <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
 
     <div class="field">
@@ -104,6 +152,24 @@ require __DIR__ . '/../includes/layout_top.php';
         <label for="lugar">Lugar</label>
         <input type="text" id="lugar" name="lugar" placeholder="Ej. Salón principal" value="<?= e($evento['lugar']) ?>">
       </div>
+    </div>
+
+    <div class="field">
+      <label>Banner del evento</label>
+      <?php if (!empty($evento['banner'])): ?>
+        <div data-banner-actual>
+          <img class="event-banner-preview" src="<?= e($base . '/' . $evento['banner']) ?>" alt="Banner de <?= e($evento['nombre']) ?: 'evento' ?>">
+          <div style="margin:8px 0;">
+            <button type="button" class="btn btn-danger btn-sm" data-eliminar-banner><?= icon('trash') ?> Eliminar banner</button>
+          </div>
+        </div>
+        <div class="hint" data-banner-marcado style="display:none;color:var(--danger);margin-bottom:8px;">Este banner se eliminará al guardar los cambios.</div>
+        <input type="hidden" name="eliminar_banner" value="0" data-input-eliminar-banner>
+      <?php else: ?>
+        <div class="recipe-photo-box" style="margin-bottom:8px;">Sin banner todavía</div>
+      <?php endif; ?>
+      <input type="file" id="banner" name="banner" accept="image/jpeg,image/png,image/webp">
+      <div class="hint">Opcional. Se muestra como imagen de portada al entrar al detalle del evento y en la página pública, en "Próximos eventos". JPG, PNG o WEBP, hasta 5 MB (ideal: una foto ancha, tipo panorámica).</div>
     </div>
 
     <div class="field-row">
@@ -138,5 +204,21 @@ require __DIR__ . '/../includes/layout_top.php';
     </div>
   </form>
 </div>
+
+<script>
+(function () {
+  var btnEliminarBanner = document.querySelector('[data-eliminar-banner]');
+  if (btnEliminarBanner) {
+    btnEliminarBanner.addEventListener('click', function () {
+      if (!window.confirm('¿Eliminar este banner? Se quitará al guardar los cambios del evento.')) {
+        return;
+      }
+      document.querySelector('[data-banner-actual]').style.display = 'none';
+      document.querySelector('[data-banner-marcado]').style.display = 'block';
+      document.querySelector('[data-input-eliminar-banner]').value = '1';
+    });
+  }
+})();
+</script>
 
 <?php require __DIR__ . '/../includes/layout_bottom.php'; ?>
