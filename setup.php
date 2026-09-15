@@ -70,6 +70,17 @@ function migrarColumnasNuevas(PDO $pdo): array
             $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN orden INT UNSIGNED NOT NULL DEFAULT 0');
             $mensajes[] = 'Columna "orden" agregada a la tabla unidades_medida (catálogo ya existente).';
         }
+        // "Se compra completa" (ej. no se puede comprar medio huevo o media
+        // lata): se usa para redondear hacia arriba la cantidad de compra al
+        // calcular el monto por línea de una receta. Se siembra una sola vez,
+        // justo aquí, con las unidades "de conteo" típicas — después se
+        // puede ajustar libremente desde Configuración sin que una futura
+        // corrida de setup.php lo vuelva a pisar.
+        if (!columnaExiste($pdo, 'unidades_medida', 'es_entera')) {
+            $pdo->exec('ALTER TABLE unidades_medida ADD COLUMN es_entera TINYINT(1) NOT NULL DEFAULT 0');
+            $pdo->exec("UPDATE unidades_medida SET es_entera = 1 WHERE nombre IN ('Unidad','Diente','Rama','Rebanada','Manojo','Lata','Paquete')");
+            $mensajes[] = 'Columna "es_entera" agregada a unidades_medida (se marcaron por defecto Unidad, Diente, Rama, Rebanada, Manojo, Lata y Paquete como "se compra completa").';
+        }
     }
 
     // Catálogo maestro de ingredientes (nuevo): la tabla "ingredientes" (el

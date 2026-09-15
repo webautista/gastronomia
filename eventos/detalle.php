@@ -301,7 +301,7 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php foreach ($recetasEvento as $rc):
     $porcionesBase = max(1, (int) $rc['porciones_base']);
     $stmtIng = db()->prepare(
-        'SELECT i.*, um.abreviatura AS unidad FROM ingredientes i
+        'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
          JOIN unidades_medida um ON um.id = i.unidad_id
          WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
     );
@@ -343,13 +343,14 @@ require __DIR__ . '/../includes/layout_top.php';
         <tbody>
           <?php foreach ($ingredientesReceta as $ing):
             $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
-            $costo = $cantidad * (float) $ing['costo_unitario'];
+            $esEntera = (bool) ($ing['unidad_entera'] ?? false);
+            $costo = montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
             $costoTotal += $costo;
           ?>
             <tr>
               <td class="cell-name"><?= e($ing['nombre']) ?></td>
               <td class="cell-muted mono"><?= numFmt($ing['cantidad']) ?> <?= e($ing['unidad']) ?></td>
-              <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>"><?= numFmt($cantidad) ?> <?= e($ing['unidad']) ?></td>
+              <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= $esEntera ? '1' : '0' ?>"><?= numFmt($cantidad) ?> <?= e($ing['unidad']) ?></td>
               <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= money($costo) ?></td>
             </tr>
           <?php endforeach; ?>

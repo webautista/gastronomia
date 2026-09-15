@@ -150,3 +150,29 @@ function costoPorUnidadUso(array $ingredienteCatalogo): float
     }
     return ((float) ($ingredienteCatalogo['precio_compra'] ?? 0)) / $contenido;
 }
+
+/**
+ * Cantidad que realmente hay que comprar para cubrir la cantidad que pide
+ * la receta. Si la unidad de uso es de las que se compran completas
+ * (es_entera, ej. "Unidad", "Lata") y la receta pide una fracción (ej.
+ * media manzana, medio huevo), no se puede comprar esa fracción: hay que
+ * redondear hacia arriba al entero siguiente. Para unidades continuas
+ * (Gramo, Libra, Litro, Cucharada, etc.) la cantidad se usa tal cual.
+ */
+function cantidadDeCompra(float $cantidad, bool $esEntera): float
+{
+    if ($cantidad <= 0) {
+        return 0.0;
+    }
+    return $esEntera ? ceil($cantidad - 0.0000001) : $cantidad;
+}
+
+/**
+ * Monto (RD$) que hay que invertir en un ingrediente para cubrir la
+ * cantidad que pide la receta, aplicando la regla de compra completa
+ * cuando corresponde (ver cantidadDeCompra()).
+ */
+function montoLineaReceta(float $cantidad, float $costoUnitario, bool $esEntera): float
+{
+    return cantidadDeCompra($cantidad, $esEntera) * $costoUnitario;
+}

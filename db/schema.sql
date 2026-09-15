@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS unidades_medida (
     abreviatura VARCHAR(10) NOT NULL,
     orden INT UNSIGNED NOT NULL DEFAULT 0,
     activo TINYINT(1) NOT NULL DEFAULT 1,
+    -- Si esta unidad se tiene que comprar completa aunque la receta pida una
+    -- fracción (ej. la receta necesita media manzana o medio huevo, pero se
+    -- compra una manzana o un huevo enteros). Se usa para calcular el monto
+    -- real de compra por línea, redondeando la cantidad hacia arriba.
+    es_entera TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_unidades_medida_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -38,6 +43,12 @@ INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden) VALUES
 ('Taza','taza',90),('Cucharada','cda',100),('Cucharadita','cdta',110),('Pizca','pizca',120),
 ('Diente','diente',130),('Rama','rama',140),('Rebanada','rebanada',150),('Manojo','manojo',160),
 ('Lata','lata',170),('Paquete','paq',180);
+
+-- El seed de "es_entera" (qué unidades se compran completas) lo hace
+-- setup.php una sola vez, justo cuando agrega la columna (ver
+-- migrarColumnasNuevas) — así corre tanto en una instalación nueva como en
+-- una que ya existía, y nunca pisa un ajuste manual hecho después desde
+-- Configuración en una corrida posterior de setup.php.
 
 -- Categorías de receta
 CREATE TABLE IF NOT EXISTS categorias_receta (
@@ -99,7 +110,8 @@ INSERT IGNORE INTO categorias_ingrediente (nombre, orden) VALUES
 ('Vegetal',10),('Vívere',20),('Fruta',30),('Cárnico',40),('Pescado y marisco',50),
 ('Lácteo y huevo',60),('Grano y cereal',70),('Legumbre',80),('Edulcorante',90),
 ('Condimento y especia',100),('Aceite y grasa',110),('Embutido',120),
-('Enlatado y conserva',130),('Panadería',140),('Bebida para cocinar',150),('Otro',160);
+('Enlatado y conserva',130),('Panadería',140),('Bebida para cocinar',150),
+('Repostería',155),('Otro',160);
 
 -- Catálogo maestro de ingredientes: nombre, categoría, ícono, unidad en que
 -- se usa dentro de las recetas, y precio de referencia. "unidad_compra" +
@@ -207,6 +219,41 @@ INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id
 ('Leche de coco', (SELECT id FROM categorias_ingrediente WHERE nombre='Bebida para cocinar'), '🥥', (SELECT id FROM unidades_medida WHERE nombre='Lata'), (SELECT id FROM unidades_medida WHERE nombre='Lata'), 1, 95.00, NULL),
 ('Vino blanco para cocinar', (SELECT id FROM categorias_ingrediente WHERE nombre='Bebida para cocinar'), '🍷', (SELECT id FROM unidades_medida WHERE nombre='Unidad'), (SELECT id FROM unidades_medida WHERE nombre='Unidad'), 1, 350.00, NULL),
 ('Agua', (SELECT id FROM categorias_ingrediente WHERE nombre='Bebida para cocinar'), '💧', (SELECT id FROM unidades_medida WHERE nombre='Litro'), (SELECT id FROM unidades_medida WHERE nombre='Litro'), 1, 37.00, 'Botella de 1.5 L a RD$56');
+
+-- Segunda tanda: más quesos, más embutidos/jamones y más ingredientes de
+-- repostería, a pedido — mismos criterios (precios de referencia
+-- investigados en supermercados dominicanos, septiembre de 2026).
+INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra) VALUES
+('Queso crema', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 8, 289.00, 'Paquete de 8 oz (226.8 g), tipo Philadelphia'),
+('Queso parmesano', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 3, 139.00, 'Paquete de 3 oz (85 g) rallado'),
+('Queso cheddar', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 220.00, NULL),
+('Queso gouda', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 230.00, NULL),
+('Queso ricotta', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 180.00, NULL),
+('Queso mascarpone', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 16, 350.00, 'Envase de 16 oz (454 g)'),
+('Queso azul', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 320.00, NULL),
+('Queso suizo', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 240.00, NULL),
+('Crema para batir', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🥛', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 2, 235.00, 'Envase de 2 lb (907 g)'),
+('Jamón serrano', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 2.8, 169.95, 'Paquete loncheado de 80 g'),
+('Prosciutto', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 2.8, 220.00, 'Paquete loncheado de 80 g aprox.'),
+('Jamón de pavo', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 415.00, NULL),
+('Chorizo', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 220.00, NULL),
+('Pepperoni', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 280.00, NULL),
+('Mortadela', (SELECT id FROM categorias_ingrediente WHERE nombre='Embutido'), '🥓', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 140.00, NULL),
+('Chocolate oscuro para hornear', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Onza'), 1, 40.00, NULL),
+('Chocolate blanco para hornear', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Onza'), (SELECT id FROM unidades_medida WHERE nombre='Onza'), 1, 45.00, NULL),
+('Cocoa en polvo', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 119.00, 'Paquete de 400 g'),
+('Polvo de hornear', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🧁', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 35.00, 'Caja de 6 sobres (66 g)'),
+('Bicarbonato de sodio', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🧁', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 40.00, NULL),
+('Gelatina sin sabor', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🧁', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 50.00, NULL),
+('Nueces', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🌰', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 380.00, NULL),
+('Almendras', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🌰', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 420.00, NULL),
+('Coco rallado', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🥥', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 90.00, 'Paquete de 250 g'),
+('Chispas de chocolate', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 419.00, 'Bolsa de 326 g'),
+('Mermelada', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍓', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 150.00, 'Frasco'),
+('Dulce de leche', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍯', (SELECT id FROM unidades_medida WHERE nombre='Lata'), (SELECT id FROM unidades_medida WHERE nombre='Lata'), 1, 140.00, NULL),
+('Colorante vegetal', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🎨', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 90.00, 'Set de colores básicos'),
+('Galleta María', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍪', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 70.00, 'Para bases de cheesecake'),
+('Cereza marrasquino', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍒', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 180.00, 'Frasco, para decorar');
 
 -- Módulos del sistema (pantallas/funcionalidades sobre las que se
 -- otorgan permisos por rol)

@@ -14,6 +14,12 @@ $errores = [];
 
 $categorias = db()->query('SELECT * FROM categorias_receta WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+// Mapa unidad_id -> ¿se compra completa? (ej. no se puede comprar medio
+// huevo ni media lata). Lo usa el JS para redondear el monto por línea.
+$unidadesEnteras = [];
+foreach ($unidades as $u) {
+    $unidadesEnteras[(int) $u['id']] = (bool) ($u['es_entera'] ?? false);
+}
 $categoriasIngrediente = db()->query('SELECT * FROM categorias_ingrediente WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $catalogoIngredientes = db()->query(
     'SELECT i.*, u.abreviatura AS unidad_abrev FROM ingredientes_catalogo i
@@ -234,25 +240,30 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field">
       <label>Ingredientes (por las porciones base indicadas)</label>
+      <div class="ing-row ing-row-labels">
+        <span>Ingrediente</span><span>Cantidad</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span>
+      </div>
       <div id="ingRows">
         <?php foreach ($ingredientes as $ing): ?>
           <div class="ing-row" data-ing-row>
             <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off" value="<?= e($ing['nombre']) ?>">
             <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="<?= e((string) ($ing['ingrediente_id'] ?? '')) ?>">
-            <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" value="<?= e((string) $ing['cantidad']) ?>">
-            <select name="ing_unidad_id[]">
+            <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= e((string) $ing['cantidad']) ?>">
+            <select name="ing_unidad_id[]" data-role="ing-unidad">
               <?php foreach ($unidades as $u): ?>
-                <option value="<?= (int) $u['id'] ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+                <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
               <?php endforeach; ?>
             </select>
-            <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" value="<?= e((string) $ing['costo_unitario']) ?>">
+            <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo" value="<?= e((string) $ing['costo_unitario']) ?>">
+            <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
             <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
-            <button type="button" class="icon-btn" onclick="this.closest('[data-ing-row]').remove()" title="Quitar fila"><?= icon('x') ?></button>
+            <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
           </div>
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano.</div>
+      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
+      <div class="ing-total">Costo total estimado de la receta: <span class="mono" id="ingCostoTotal">RD$ 0</span></div>
     </div>
 
     <div class="field">
@@ -278,15 +289,16 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="ing-row" data-ing-row>
     <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off">
     <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="">
-    <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad">
-    <select name="ing_unidad_id[]">
+    <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad">
+    <select name="ing_unidad_id[]" data-role="ing-unidad">
       <?php foreach ($unidades as $u): ?>
-        <option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+        <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
       <?php endforeach; ?>
     </select>
-    <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$">
+    <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo">
+    <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
     <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
-    <button type="button" class="icon-btn" onclick="this.closest('[data-ing-row]').remove()" title="Quitar fila"><?= icon('x') ?></button>
+    <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
   </div>
 </template>
 
@@ -360,7 +372,42 @@ require __DIR__ . '/../includes/layout_top.php';
     var modalPrecio = document.getElementById('modalIngPrecio');
     var modalErrores = document.getElementById('modalIngErrores');
     var formModal = document.getElementById('formNuevoIngrediente');
+    var ingRows = document.getElementById('ingRows');
+    var costoTotalEl = document.getElementById('ingCostoTotal');
     var filaActual = null;
+
+    function money(valor) {
+      return 'RD$ ' + Math.round(valor).toLocaleString('es-DO');
+    }
+
+    // Igual que cantidadDeCompra()/montoLineaReceta() en includes/helpers.php:
+    // si la unidad se compra completa (ej. Unidad, Lata), una cantidad
+    // fraccionaria (media manzana, medio huevo) redondea hacia arriba porque
+    // no se puede comprar esa fracción.
+    function cantidadDeCompra(cantidad, esEntera) {
+      if (!(cantidad > 0)) return 0;
+      return esEntera ? Math.ceil(cantidad - 0.0000001) : cantidad;
+    }
+
+    function recalcularFila(fila) {
+      var cantidad = parseFloat(fila.querySelector('[data-role="ing-cantidad"]').value) || 0;
+      var costo = parseFloat(fila.querySelector('[data-role="ing-costo"]').value) || 0;
+      var selectUnidad = fila.querySelector('[data-role="ing-unidad"]');
+      var opcion = selectUnidad ? selectUnidad.options[selectUnidad.selectedIndex] : null;
+      var esEntera = !!(opcion && opcion.getAttribute('data-entera') === '1');
+      var monto = cantidadDeCompra(cantidad, esEntera) * costo;
+      var montoEl = fila.querySelector('[data-role="ing-monto"]');
+      if (montoEl) montoEl.textContent = money(monto);
+      return monto;
+    }
+
+    function recalcularTotal() {
+      var total = 0;
+      ingRows.querySelectorAll('[data-ing-row]').forEach(function (fila) {
+        total += recalcularFila(fila);
+      });
+      if (costoTotalEl) costoTotalEl.textContent = money(total);
+    }
 
     function autocompletarFila(fila, nombreExacto) {
       var datos = CATALOGO[nombreExacto];
@@ -377,10 +424,24 @@ require __DIR__ . '/../includes/layout_top.php';
     }
 
     document.addEventListener('input', function (e) {
-      var input = e.target.closest('input[name="ing_nombre[]"]');
-      if (!input) return;
-      var fila = input.closest('[data-ing-row]');
-      if (fila) autocompletarFila(fila, input.value.trim());
+      var nombreInput = e.target.closest('input[name="ing_nombre[]"]');
+      if (nombreInput) {
+        var filaNombre = nombreInput.closest('[data-ing-row]');
+        if (filaNombre) {
+          autocompletarFila(filaNombre, nombreInput.value.trim());
+          recalcularTotal();
+        }
+        return;
+      }
+      if (e.target.closest('[data-role="ing-cantidad"], [data-role="ing-costo"]')) {
+        recalcularTotal();
+      }
+    });
+
+    document.addEventListener('change', function (e) {
+      if (e.target.closest('[data-role="ing-unidad"]')) {
+        recalcularTotal();
+      }
     });
 
     document.addEventListener('click', function (e) {
@@ -400,6 +461,13 @@ require __DIR__ . '/../includes/layout_top.php';
       }
       if (e.target.closest('[data-cerrar-modal-ingrediente]')) {
         modal.hidden = true;
+        return;
+      }
+      var btnQuitar = e.target.closest('[data-quitar-fila]');
+      if (btnQuitar) {
+        var filaQuitar = btnQuitar.closest('[data-ing-row]');
+        if (filaQuitar) filaQuitar.remove();
+        recalcularTotal();
       }
     });
 
@@ -424,6 +492,7 @@ require __DIR__ . '/../includes/layout_top.php';
             var nombreInput = filaActual.querySelector('input[name="ing_nombre[]"]');
             if (nombreInput) nombreInput.value = ing.nombre;
             autocompletarFila(filaActual, ing.nombre);
+            recalcularTotal();
           }
           modal.hidden = true;
         })
@@ -432,6 +501,8 @@ require __DIR__ . '/../includes/layout_top.php';
           modalErrores.hidden = false;
         });
     });
+
+    recalcularTotal();
   })();
 </script>
 

@@ -21,7 +21,7 @@ $puedeEliminar = can($usuarioActual, 'configuracion', 'eliminar');
 // la tabla/columna que lo referencia, para poder avisar antes de borrar.
 $catalogos = [
     'unidades_medida' => [
-        'tabla' => 'unidades_medida', 'label' => 'Unidades de medida', 'abrev' => true,
+        'tabla' => 'unidades_medida', 'label' => 'Unidades de medida', 'abrev' => true, 'entero' => true,
         'ref_tabla' => 'ingredientes', 'ref_col' => 'unidad_id',
     ],
     'categorias_receta' => [
@@ -75,13 +75,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         requirePermission($usuarioActual, 'configuracion', 'crear', $base);
         $nombre = trim($_POST['nombre'] ?? '');
         $abreviatura = trim($_POST['abreviatura'] ?? '');
+        $esEntera = !empty($_POST['es_entera']) ? 1 : 0;
         if ($nombre === '') {
             flash('El nombre no puede estar vacío.', 'error');
         } elseif ($catPost['abrev'] && $abreviatura === '') {
             flash('La abreviatura no puede estar vacía.', 'error');
         } else {
             $maxOrden = (int) db()->query("SELECT COALESCE(MAX(orden),0) FROM `$tablaPost`")->fetchColumn();
-            if ($catPost['abrev']) {
+            if (!empty($catPost['entero'])) {
+                $stmt = db()->prepare("INSERT INTO `$tablaPost` (nombre, abreviatura, orden, es_entera) VALUES (?,?,?,?)");
+                $stmt->execute([$nombre, $abreviatura, $maxOrden + 10, $esEntera]);
+            } elseif ($catPost['abrev']) {
                 $stmt = db()->prepare("INSERT INTO `$tablaPost` (nombre, abreviatura, orden) VALUES (?,?,?)");
                 $stmt->execute([$nombre, $abreviatura, $maxOrden + 10]);
             } else {
@@ -95,8 +99,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = intOrNull($_POST['id'] ?? null);
         $nombre = trim($_POST['nombre'] ?? '');
         $abreviatura = trim($_POST['abreviatura'] ?? '');
+        $esEntera = !empty($_POST['es_entera']) ? 1 : 0;
         if ($id && $nombre !== '' && (!$catPost['abrev'] || $abreviatura !== '')) {
-            if ($catPost['abrev']) {
+            if (!empty($catPost['entero'])) {
+                $stmt = db()->prepare("UPDATE `$tablaPost` SET nombre=?, abreviatura=?, es_entera=? WHERE id=?");
+                $stmt->execute([$nombre, $abreviatura, $esEntera, $id]);
+            } elseif ($catPost['abrev']) {
                 $stmt = db()->prepare("UPDATE `$tablaPost` SET nombre=?, abreviatura=? WHERE id=?");
                 $stmt->execute([$nombre, $abreviatura, $id]);
             } else {
@@ -196,6 +204,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <th style="width:70px;">Orden</th>
         <th>Nombre</th>
         <?php if ($cat['abrev']): ?><th>Abreviatura</th><?php endif; ?>
+        <?php if (!empty($cat['entero'])): ?><th>Se compra completa</th><?php endif; ?>
         <th>En uso</th>
         <th>Estado</th>
         <th style="min-width:220px;"></th>
@@ -203,7 +212,7 @@ require __DIR__ . '/../includes/layout_top.php';
     </thead>
     <tbody>
       <?php if (!$items): ?>
-        <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Sin elementos todavía.</td></tr>
+        <tr><td colspan="<?= 5 + ($cat['abrev'] ? 1 : 0) + (!empty($cat['entero']) ? 1 : 0) ?>" class="cell-muted" style="text-align:center;padding:24px;">Sin elementos todavía.</td></tr>
       <?php endif; ?>
       <?php foreach ($items as $i => $it): ?>
         <tr>
@@ -237,6 +246,9 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php if ($cat['abrev']): ?>
                 <td><input type="text" name="abreviatura" value="<?= e($it['abreviatura']) ?>" style="max-width:110px;"></td>
               <?php endif; ?>
+              <?php if (!empty($cat['entero'])): ?>
+                <td><label style="display:flex;align-items:center;gap:6px;font-weight:400;margin:0;"><input type="checkbox" name="es_entera" value="1" style="width:16px;height:16px;" <?= !empty($it['es_entera']) ? 'checked' : '' ?>> completa</label></td>
+              <?php endif; ?>
               <td class="cell-muted"><?= (int) ($usosPorId[$it['id']] ?? 0) ?></td>
               <td><span class="chip <?= $it['activo'] ? 'chip-success' : 'chip-muted' ?>"><?= $it['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
               <td class="row-actions">
@@ -244,6 +256,9 @@ require __DIR__ . '/../includes/layout_top.php';
           <?php else: ?>
               <td><?= e($it['nombre']) ?></td>
               <?php if ($cat['abrev']): ?><td><?= e($it['abreviatura']) ?></td><?php endif; ?>
+              <?php if (!empty($cat['entero'])): ?>
+                <td><span class="chip <?= !empty($it['es_entera']) ? 'chip-neutral' : 'chip-muted' ?>"><?= !empty($it['es_entera']) ? 'Sí' : 'No' ?></span></td>
+              <?php endif; ?>
               <td class="cell-muted"><?= (int) ($usosPorId[$it['id']] ?? 0) ?></td>
               <td><span class="chip <?= $it['activo'] ? 'chip-success' : 'chip-muted' ?>"><?= $it['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
               <td class="row-actions">
@@ -294,6 +309,11 @@ require __DIR__ . '/../includes/layout_top.php';
         </div>
       <?php endif; ?>
     </div>
+    <?php if (!empty($cat['entero'])): ?>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400;">
+        <input type="checkbox" name="es_entera" value="1" style="width:16px;height:16px;"> Se compra completa (ej. no se puede comprar medio huevo o media lata)
+      </label>
+    <?php endif; ?>
     <div class="form-actions">
       <button class="btn btn-primary" type="submit"><?= icon('plus') ?> Agregar</button>
     </div>

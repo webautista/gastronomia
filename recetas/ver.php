@@ -32,7 +32,7 @@ if (!$receta) {
 }
 
 $stmtIng = db()->prepare(
-    'SELECT i.*, um.abreviatura AS unidad, um.nombre AS unidad_nombre, ic.icono
+    'SELECT i.*, um.abreviatura AS unidad, um.nombre AS unidad_nombre, um.es_entera AS unidad_entera, ic.icono
      FROM ingredientes i
      JOIN unidades_medida um ON um.id = i.unidad_id
      LEFT JOIN ingredientes_catalogo ic ON ic.id = i.ingrediente_id
@@ -44,7 +44,7 @@ $ingredientesReceta = $stmtIng->fetchAll();
 $porcionesBase = max(1, (int) $receta['porciones_base']);
 $costoTotalBase = 0;
 foreach ($ingredientesReceta as $ing) {
-    $costoTotalBase += (float) $ing['cantidad'] * (float) $ing['costo_unitario'];
+    $costoTotalBase += montoLineaReceta((float) $ing['cantidad'], (float) $ing['costo_unitario'], (bool) ($ing['unidad_entera'] ?? false));
 }
 
 $pageTitle = $receta['nombre'];
@@ -86,8 +86,8 @@ require __DIR__ . '/../includes/layout_top.php';
       <?php foreach ($ingredientesReceta as $ing): ?>
         <tr>
           <td class="cell-name"><?= $ing['icono'] ? e($ing['icono']) . ' ' : '' ?><?= e($ing['nombre']) ?></td>
-          <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>"><?= numFmt($ing['cantidad']) ?> <?= e($ing['unidad']) ?></td>
-          <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= money((float) $ing['cantidad'] * (float) $ing['costo_unitario']) ?></td>
+          <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= !empty($ing['unidad_entera']) ? '1' : '0' ?>"><?= numFmt($ing['cantidad']) ?> <?= e($ing['unidad']) ?></td>
+          <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= money(montoLineaReceta((float) $ing['cantidad'], (float) $ing['costo_unitario'], (bool) ($ing['unidad_entera'] ?? false))) ?></td>
         </tr>
       <?php endforeach; ?>
     </tbody>

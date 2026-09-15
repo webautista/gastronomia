@@ -33,6 +33,15 @@
     return n.toLocaleString('es-DO', { maximumFractionDigits: 2 });
   }
 
+  // Igual que cantidadDeCompra()/montoLineaReceta() en includes/helpers.php:
+  // si la unidad se compra completa (data-entera="1", ej. Unidad, Lata), una
+  // cantidad fraccionaria redondea hacia arriba porque no se puede comprar
+  // esa fracción (media manzana igual cuenta como una manzana comprada).
+  function cantidadDeCompra(cantidad, esEntera) {
+    if (!(cantidad > 0)) return 0;
+    return esEntera ? Math.ceil(cantidad - 0.0000001) : cantidad;
+  }
+
   document.addEventListener('input', function (e) {
     var input = e.target.closest('[data-role="porciones-input"]');
     if (!input) return;
@@ -46,12 +55,13 @@
     card.querySelectorAll('[data-role="cant"]').forEach(function (celda) {
       var base = parseFloat(celda.getAttribute('data-base')) || 0;
       var unidad = celda.getAttribute('data-unidad') || '';
+      var esEntera = celda.getAttribute('data-entera') === '1';
       var cantidad = base * factor;
       celda.textContent = numFmt(cantidad) + ' ' + unidad;
       var costoCelda = celda.closest('tr').querySelector('[data-role="costo"]');
       if (costoCelda) {
         var costoUnit = parseFloat(costoCelda.getAttribute('data-costo')) || 0;
-        var costo = cantidad * costoUnit;
+        var costo = cantidadDeCompra(cantidad, esEntera) * costoUnit;
         costoCelda.textContent = 'RD$ ' + Math.round(costo).toLocaleString('es-DO');
         total += costo;
       }
