@@ -224,6 +224,65 @@ function migrarCatalogosYRoles(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Corrección de modelado (no de columnas): varias especias de la primera
+ * tanda del catálogo quedaron con "unidad de uso" = Paquete (Canela en
+ * polvo, Comino, Orégano, Pimienta negra molida, Sal, Polvo de hornear,
+ * Bicarbonato de sodio), cuando en una receta real se piden por
+ * Cucharadita — nadie escribe "0.05 Paquete de canela" en una receta. El
+ * síntoma real: al elegir uno de estos ingredientes y cambiar la unidad de
+ * esa línea a Cucharadita (lo natural), el costo se quedaba sin convertir
+ * — Paquete no tiene un tamaño universal (un paquete de canela y uno de
+ * pimienta no pesan lo mismo), así que no hay conversión automática
+ * posible entre Paquete y Cucharadita — y el monto salía disparatado (ej.
+ * 2 cucharaditas de canela calculadas como si costaran lo mismo que un
+ * paquete entero).
+ *
+ * La corrección real es de datos, no de código: cambiar la unidad de uso
+ * de estos ingredientes a Cucharadita directamente (así el autocompletado
+ * ya empieza en la unidad correcta y no hace falta cambiarla), con el
+ * tamaño real de paquete/frasco y el costo por cucharadita recalculados a
+ * partir de precios de supermercados dominicanos investigados en
+ * septiembre de 2026 (ver el nota_compra de cada uno). Cada UPDATE solo
+ * corre si esa fila SIGUE con unidad_id = Paquete, así que no pisa un
+ * ajuste manual que se haya hecho después desde Ingredientes (incluida
+ * esta misma corrección: la segunda vez que corra setup.php ya no
+ * encuentra nada que cambiar).
+ */
+function corregirUnidadUsoEspecias(PDO $pdo): array
+{
+    $mensajes = [];
+    $idPaquete = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Paquete'")->fetchColumn();
+    $idCucharadita = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Cucharadita'")->fetchColumn();
+    if (!$idPaquete || !$idCucharadita) {
+        return $mensajes;
+    }
+
+    // nombre => [contenido_por_compra en cucharaditas, precio_compra, nota_compra]
+    $correcciones = [
+        'Canela en polvo'       => [25, 95.00, 'Paquete de 65 g (marca Wala) ≈ 25 cucharaditas, a 2.6 g por cucharadita'],
+        'Comino'                => [45, 139.00, 'Frasco de 95 g (marca Líder) ≈ 45 cucharaditas, a 2.1 g por cucharadita'],
+        'Orégano'               => [47, 39.00, 'Paquete de 70 g (marca Bravo) ≈ 47 cucharaditas, a 1.5 g por cucharadita'],
+        'Pimienta negra molida' => [62, 149.00, 'Frasco de 141.7 g / 5 oz (marca Goya) ≈ 62 cucharaditas, a 2.3 g por cucharadita'],
+        'Sal'                   => [71, 14.00, 'Paquete de 425 g ≈ 71 cucharaditas, a 6 g por cucharadita (sal fina de mesa)'],
+        'Polvo de hornear'      => [14, 35.00, 'Caja de 6 sobres (66 g en total) ≈ 14 cucharaditas, a 4.6 g por cucharadita'],
+        'Bicarbonato de sodio'  => [99, 103.00, 'Caja de 453.6 g / 1 lb (marca Arm & Hammer) ≈ 99 cucharaditas, a 4.6 g por cucharadita'],
+    ];
+
+    $stmt = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, contenido_por_compra = ?, precio_compra = ?, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    foreach ($correcciones as $nombre => [$contenido, $precio, $nota]) {
+        $stmt->execute([$idCucharadita, $contenido, $precio, $nota, $nombre, $idPaquete]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": unidad de uso corregida de Paquete a Cucharadita (antes el costo no se podía convertir al cambiar la unidad en una receta).";
+        }
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -257,6 +316,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $mensajes = array_merge($mensajes, migrarColumnasNuevas($pdo));
         $mensajes = array_merge($mensajes, migrarCatalogosYRoles($pdo));
+        $mensajes = array_merge($mensajes, corregirUnidadUsoEspecias($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
