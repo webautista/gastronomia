@@ -283,6 +283,90 @@ function corregirUnidadUsoEspecias(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * "Vainilla líquida" era demasiado genérico: en la cocina dominicana hay
+ * tres productos de vainilla realmente distintos (Extracto de vainilla,
+ * Vainilla negra y Vainilla blanca — ver el catálogo de ingredientes), así
+ * que ese único ingrediente se separó en tres. Este paso solo renombra el
+ * que ya existía a su nombre correcto ("Extracto de vainilla", que es el
+ * que de verdad correspondía por el precio con que se había cargado); los
+ * otros dos (Vainilla negra, Vainilla blanca) son ingredientes nuevos que
+ * entran solos por el INSERT IGNORE del catálogo, sin necesitar migración.
+ * Guardado por nombre: si ya se renombró antes, no hace nada.
+ */
+function renombrarVainillaLiquidaAExtracto(PDO $pdo): array
+{
+    $mensajes = [];
+    $idViejo = $pdo->query("SELECT id FROM ingredientes_catalogo WHERE nombre = 'Vainilla líquida'")->fetchColumn();
+    if (!$idViejo) {
+        // No existe (instalación nueva, o ya se renombró antes): nada que hacer.
+        return $mensajes;
+    }
+    // El esquema (schema.sql) ya sembró "Extracto de vainilla" como fila
+    // nueva por su cuenta (INSERT IGNORE) antes de que este paso corra, así
+    // que en una base que todavía tenía "Vainilla líquida" ahora hay dos
+    // filas para el mismo ingrediente. Hay que quitar la duplicada recién
+    // sembrada (todavía no la referencia ninguna receta, se acaba de
+    // crear) y renombrar la vieja a su lugar, para no perder su id ni
+    // cualquier ajuste manual que ya tuviera (precio, ícono, etc.) — así
+    // las recetas que ya la usaban no pierden el vínculo con el catálogo.
+    $idDuplicado = $pdo->query("SELECT id FROM ingredientes_catalogo WHERE nombre = 'Extracto de vainilla'")->fetchColumn();
+    if ($idDuplicado) {
+        $pdo->prepare('DELETE FROM ingredientes_catalogo WHERE id = ?')->execute([$idDuplicado]);
+    }
+    $pdo->prepare("UPDATE ingredientes_catalogo SET nombre = 'Extracto de vainilla' WHERE id = ?")->execute([$idViejo]);
+    $mensajes[] = 'Ingrediente "Vainilla líquida" renombrado a "Extracto de vainilla" (para poder distinguirlo de Vainilla negra y Vainilla blanca, que son productos distintos).';
+    return $mensajes;
+}
+
+/**
+ * Segunda ronda del mismo problema: Vainilla líquida/Extracto de vainilla
+ * (estaba en Paquete), Limón verde (estaba en Libra, por peso) y Miel de
+ * abeja (estaba en Paquete) también se escriben en una receta por
+ * cucharada/cucharadita, no por el envase completo ni por libra — el mismo
+ * error de modelado que las 7 especias de corregirUnidadUsoEspecias(), solo
+ * que cada una viene de una unidad vieja distinta, así que va en su propia
+ * función. Guardado igual: solo toca la fila si sigue en su unidad vieja
+ * original, para no pisar un ajuste manual que ya se haya hecho desde
+ * Ingredientes.
+ */
+function corregirUnidadUsoLimonMielVainilla(PDO $pdo): array
+{
+    $mensajes = [];
+    $idPaquete = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Paquete'")->fetchColumn();
+    $idLibra = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Libra'")->fetchColumn();
+    $idCucharada = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Cucharada'")->fetchColumn();
+    $idCucharadita = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Cucharadita'")->fetchColumn();
+    if (!$idPaquete || !$idLibra || !$idCucharada || !$idCucharadita) {
+        return $mensajes;
+    }
+
+    // nombre => [unidad_id vieja, unidad_id nueva, contenido_por_compra, precio_compra, nota_compra]
+    // Nota: "Vainilla líquida" ya se renombró a "Extracto de vainilla" en
+    // renombrarVainillaLiquidaAExtracto() (que corre antes que esta
+    // función), así que aquí se busca por el nombre nuevo — funciona igual
+    // si la fila ya venía en su unidad vieja (Paquete) o si ya se había
+    // corregido a Cucharadita en una ronda anterior bajo el nombre viejo.
+    $correcciones = [
+        'Extracto de vainilla' => [$idPaquete, $idCucharadita, 6, 269.95, 'Botella de 1 oz / 29.6 ml (marca Food Club) ≈ 6 cucharaditas, a 5 ml por cucharadita'],
+        'Limón verde'          => [$idLibra, $idCucharada, 13, 68.00, 'Libra de limón verde/criollo ≈ 13 limones ≈ 13 cucharadas de jugo (ref.: 6-8 limones rinden 8 cucharadas en una limonada típica)'],
+        'Miel de abeja'        => [$idPaquete, $idCucharada, 22, 259.95, 'Envase de 16 oz / 453 g (marca Miel De Abeja Del Campo) ≈ 22 cucharadas, a 21 g por cucharada'],
+    ];
+
+    $stmt = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, contenido_por_compra = ?, precio_compra = ?, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    foreach ($correcciones as $nombre => [$idViejo, $idNuevo, $contenido, $precio, $nota]) {
+        $stmt->execute([$idNuevo, $contenido, $precio, $nota, $nombre, $idViejo]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": unidad de uso corregida para poder usarse por cucharada/cucharadita en una receta (antes el costo no se podía convertir al cambiar la unidad).";
+        }
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -317,6 +401,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, migrarColumnasNuevas($pdo));
         $mensajes = array_merge($mensajes, migrarCatalogosYRoles($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoEspecias($pdo));
+        $mensajes = array_merge($mensajes, renombrarVainillaLiquidaAExtracto($pdo));
+        $mensajes = array_merge($mensajes, corregirUnidadUsoLimonMielVainilla($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

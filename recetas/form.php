@@ -236,10 +236,14 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="field">
       <label>Foto de referencia</label>
       <?php if (!empty($receta['foto'])): ?>
-        <img class="recipe-photo-preview" src="<?= e($base . '/' . $receta['foto']) ?>" alt="Foto de <?= e($receta['nombre']) ?>">
-        <label style="display:flex;align-items:center;gap:8px;font-weight:400;margin-bottom:8px;">
-          <input type="checkbox" name="eliminar_foto" value="1" style="width:16px;height:16px;"> Quitar esta foto
-        </label>
+        <div data-foto-actual>
+          <img class="recipe-photo-preview" src="<?= e($base . '/' . $receta['foto']) ?>" alt="Foto de <?= e($receta['nombre']) ?>">
+          <div style="margin:8px 0;">
+            <button type="button" class="btn btn-danger btn-sm" data-eliminar-foto><?= icon('trash') ?> Eliminar foto</button>
+          </div>
+        </div>
+        <div class="hint" data-foto-marcada style="display:none;color:var(--danger);margin-bottom:8px;">Esta foto se eliminará al guardar los cambios.</div>
+        <input type="hidden" name="eliminar_foto" value="0" data-input-eliminar-foto>
       <?php else: ?>
         <div class="recipe-photo-box" style="margin-bottom:8px;">Sin foto todavía</div>
       <?php endif; ?>
@@ -250,7 +254,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="field">
       <label>Ingredientes (por las porciones base indicadas)</label>
       <div class="ing-row ing-row-labels">
-        <span>Ingrediente</span><span>Cantidad</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span>
+        <span>Ingrediente</span><span>Cantidad</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span><span></span>
       </div>
       <div id="ingRows">
         <?php foreach ($ingredientes as $ing): ?>
@@ -265,13 +269,14 @@ require __DIR__ . '/../includes/layout_top.php';
             </select>
             <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo" value="<?= e((string) $ing['costo_unitario']) ?>">
             <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
+            <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
             <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
             <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
           </div>
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
+      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El botón <?= icon('refresh') ?> vuelve a traer el costo actual del catálogo para esa fila (útil en una receta ya guardada, si el precio del catálogo cambió o si la fila quedó con un costo mal convertido de antes). El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
       <div class="ing-total">Costo total estimado de la receta: <span class="mono" id="ingCostoTotal">RD$ 0</span></div>
     </div>
 
@@ -306,6 +311,7 @@ require __DIR__ . '/../includes/layout_top.php';
     </select>
     <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo">
     <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
+    <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
     <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
     <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
   </div>
@@ -369,6 +375,20 @@ require __DIR__ . '/../includes/layout_top.php';
     var tpl = document.getElementById('ingRowTemplate');
     document.getElementById('ingRows').appendChild(tpl.content.cloneNode(true));
   });
+
+  (function () {
+    var btnEliminarFoto = document.querySelector('[data-eliminar-foto]');
+    if (btnEliminarFoto) {
+      btnEliminarFoto.addEventListener('click', function () {
+        if (!window.confirm('¿Eliminar esta foto? Se quitará al guardar los cambios de la receta.')) {
+          return;
+        }
+        document.querySelector('[data-foto-actual]').style.display = 'none';
+        document.querySelector('[data-foto-marcada]').style.display = 'block';
+        document.querySelector('[data-input-eliminar-foto]').value = '1';
+      });
+    }
+  })();
 
   (function () {
     var CATALOGO = <?= json_encode($catalogoPorNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
@@ -472,6 +492,42 @@ require __DIR__ . '/../includes/layout_top.php';
       }
     }
 
+    // Botón de "actualizar" por fila: para una receta ya guardada donde el
+    // costo quedó mal (ej. una fila que se guardó antes de que existiera la
+    // conversión automática, o el precio del catálogo cambió desde
+    // entonces). A diferencia de volver a escribir el nombre del
+    // ingrediente (que siempre trae la unidad del catálogo, aunque no sea
+    // la que se usó en la receta), este botón respeta la unidad que ya
+    // tiene la fila: si es compatible con la del catálogo, solo convierte
+    // el costo a esa unidad; si no es convertible, sí vuelve a la unidad y
+    // costo del catálogo (igual que autocompletarFila).
+    function actualizarDesdeCatalogo(fila) {
+      var nombreInput = fila.querySelector('input[name="ing_nombre[]"]');
+      var nombre = nombreInput ? nombreInput.value.trim() : '';
+      var datos = nombre ? CATALOGO[nombre] : null;
+      if (!datos) {
+        window.alert('Este nombre no coincide con ningún ingrediente activo del catálogo, así que no se puede actualizar automáticamente. Revisa que esté escrito igual que en Ingredientes.');
+        return;
+      }
+      var hiddenId = fila.querySelector('[data-role="ing-id"]');
+      var selectUnidad = fila.querySelector('[data-role="ing-unidad"]');
+      var inputCosto = fila.querySelector('input[name="ing_costo[]"]');
+      var idUnidadFila = selectUnidad ? (parseInt(selectUnidad.value, 10) || null) : null;
+      if (hiddenId) hiddenId.value = datos.id;
+      var costoConvertido = convertirCostoPorUnidad(datos.costo_unitario, datos.unidad_id, idUnidadFila);
+      if (costoConvertido !== null) {
+        if (inputCosto) inputCosto.value = costoConvertido.toFixed(2);
+        if (selectUnidad) selectUnidad.setAttribute('data-prev', idUnidadFila || '');
+      } else {
+        if (selectUnidad) {
+          selectUnidad.value = datos.unidad_id;
+          selectUnidad.setAttribute('data-prev', datos.unidad_id);
+        }
+        if (inputCosto) inputCosto.value = datos.costo_unitario;
+      }
+      recalcularTotal();
+    }
+
     document.addEventListener('input', function (e) {
       var nombreInput = e.target.closest('input[name="ing_nombre[]"]');
       if (nombreInput) {
@@ -519,6 +575,12 @@ require __DIR__ . '/../includes/layout_top.php';
         var filaQuitar = btnQuitar.closest('[data-ing-row]');
         if (filaQuitar) filaQuitar.remove();
         recalcularTotal();
+        return;
+      }
+      var btnActualizar = e.target.closest('[data-actualizar-catalogo]');
+      if (btnActualizar) {
+        var filaActualizar = btnActualizar.closest('[data-ing-row]');
+        if (filaActualizar) actualizarDesdeCatalogo(filaActualizar);
       }
     });
 

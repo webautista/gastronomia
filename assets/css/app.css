@@ -213,7 +213,7 @@ table.table{width:100%;border-collapse:collapse;}
 .form-card{max-width:640px;}
 .form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border);}
 
-.ing-row{display:grid;grid-template-columns:1.4fr 0.7fr 0.9fr 0.8fr 0.9fr auto auto;gap:8px;margin-bottom:8px;align-items:center;}
+.ing-row{display:grid;grid-template-columns:1.4fr 0.7fr 0.9fr 0.8fr 0.9fr auto auto auto;gap:8px;margin-bottom:8px;align-items:center;}
 @media (max-width:600px){.ing-row{grid-template-columns:1fr 1fr;}}
 .ing-row input,.ing-row select{padding:7px 9px;font-size:.82rem;}
 .ing-row-labels{font-size:.7rem;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.02em;margin-bottom:2px;}
