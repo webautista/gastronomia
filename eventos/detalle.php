@@ -43,17 +43,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
     $pdo = db();
 
-    if ($accion === 'toggle_pago') {
+    if ($accion === 'registrar_pago') {
         requirePermission($usuarioActual, 'eventos', 'editar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
-        if ($estudianteId) {
-            $stmt = $pdo->prepare('SELECT pagado FROM evento_estudiante WHERE evento_id=? AND estudiante_id=?');
-            $stmt->execute([$id, $estudianteId]);
-            $actual = $stmt->fetchColumn();
-            $nuevoPagado = $actual ? 0 : 1;
-            $fechaPago = $nuevoPagado ? date('Y-m-d') : null;
-            $stmt = $pdo->prepare('UPDATE evento_estudiante SET pagado=?, fecha_pago=? WHERE evento_id=? AND estudiante_id=?');
-            $stmt->execute([$nuevoPagado, $fechaPago, $id, $estudianteId]);
+        $monto = isset($_POST['monto_pagado']) ? (float) $_POST['monto_pagado'] : null;
+        if ($estudianteId && $monto !== null && $monto >= 0) {
+            $fechaPago = $monto > 0 ? date('Y-m-d') : null;
+            $stmt = $pdo->prepare('UPDATE evento_estudiante SET monto_pagado=?, pagado=?, fecha_pago=? WHERE evento_id=? AND estudiante_id=?');
+            $stmt->execute([$monto, $monto > 0 ? 1 : 0, $fechaPago, $id, $estudianteId]);
         }
     } elseif ($accion === 'quitar_estudiante') {
         requirePermission($usuarioActual, 'eventos', 'editar', $base);
@@ -113,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /* ---------------- Datos para mostrar ---------------- */
 $stmt = db()->prepare(
-    'SELECT ee.pagado, ee.fecha_pago, est.*, ge.nombre AS grupo FROM evento_estudiante ee
+    'SELECT ee.pagado, ee.monto_pagado, ee.fecha_pago, est.*, ge.nombre AS grupo FROM evento_estudiante ee
      JOIN estudiantes est ON est.id = ee.estudiante_id
      LEFT JOIN grupos_estudiante ge ON ge.id = est.grupo_id
      WHERE ee.evento_id = ? ORDER BY est.nombre ASC'
@@ -183,12 +180,25 @@ if ($puedeVerGastos) {
     $gastosEvento = $stmt->fetchAll();
 }
 
-$pct = $evento['presupuesto'] > 0 ? round($gastado / $evento['presupuesto'] * 100) : 0;
-$pctProyeccion = $evento['presupuesto'] > 0 ? round($totalProyeccionInversion / $evento['presupuesto'] * 100) : 0;
-$numPagados = count(array_filter($estudiantesEvento, fn($a) => (int) $a['pagado'] === 1));
-$esperado = count($estudiantesEvento) * $evento['cuota'];
-$recaudado = $numPagados * $evento['cuota'];
-$pctPago = $esperado > 0 ? round($recaudado / $esperado * 100) : 0;
+// La cuota ya no se escribe a mano: siempre es el costo de las recetas más
+// los gastos del evento, dividido entre los estudiantes asignados.
+// "Proyectada" es la estimación más completa (incluye lo aún no
+// confirmado); "confirmada" es solo lo que ya es gasto real, y es la que
+// se usa para cobrarle a cada estudiante.
+$cantidadEstudiantes = count($estudiantesEvento);
+$cuotas = calcularCuotasEvento($costoRecetasEvento, $totalProyectado, $gastado, $cantidadEstudiantes);
+$cuotaProyectada = $cuotas['proyectada'];
+$cuotaConfirmada = $cuotas['confirmada'];
+$totalConfirmadoConRecetas = $cuotas['total_confirmado'];
+
+// "Pagado" queda como referencia histórica; lo que de verdad importa ahora
+// es comparar lo que cada quien ya pagó (monto_pagado) contra la cuota
+// confirmada VIGENTE — así, si la cuota confirmada sube porque se
+// confirmó un gasto nuevo, el sistema muestra sola el complemento
+// pendiente sin tener que volver a marcar a nadie como pendiente.
+$recaudado = array_sum(array_column($estudiantesEvento, 'monto_pagado'));
+$numPagados = count(array_filter($estudiantesEvento, fn($a) => (float) $a['monto_pagado'] >= $cuotaConfirmada - 0.005));
+$pctPago = $totalConfirmadoConRecetas > 0 ? round($recaudado / $totalConfirmadoConRecetas * 100) : 0;
 
 $pageTitle = $evento['nombre'];
 $activeNav = 'eventos';
@@ -214,26 +224,25 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
 </div>
 
-<div class="summary-grid <?= $puedeVerGastos ? 'summary-grid-4' : '' ?>">
+<div class="summary-grid">
   <div class="card card-pad">
-    <div class="stat-label">Presupuesto</div>
-    <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($gastado) ?> gastado</span><span><?= (int) $pct ?>%</span></div>
-    <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
-    <div class="stat-hint" style="margin-top:8px;">Presupuesto total: <b class="mono"><?= money($evento['presupuesto']) ?></b></div>
+    <div class="stat-label">Inversión del evento</div>
+    <div class="stat-value"><?= money($totalProyeccionInversion) ?></div>
+    <?php if ($puedeVerGastos): ?>
+      <div class="stat-hint" style="margin-top:8px;">Recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b> + proyectado: <b class="mono"><?= money($totalProyectado) ?></b> + confirmado: <b class="mono"><?= money($gastado) ?></b></div>
+    <?php else: ?>
+      <div class="stat-hint">Costo estimado de recetas + gastos del evento.</div>
+    <?php endif; ?>
   </div>
-  <?php if ($puedeVerGastos): ?>
-  <div class="card card-pad">
-    <div class="stat-label">Proyección de inversión</div>
-    <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($totalProyeccionInversion) ?> estimado</span><span><?= (int) $pctProyeccion ?>%</span></div>
-    <div class="meter <?= meterClase($pctProyeccion) ?>"><span style="width:<?= min($pctProyeccion, 100) ?>%"></span></div>
-    <div class="stat-hint" style="margin-top:8px;">Recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b> + proyectado: <b class="mono"><?= money($totalProyectado) ?></b> + confirmado: <b class="mono"><?= money($gastado) ?></b></div>
-  </div>
-  <?php endif; ?>
   <div class="card card-pad">
     <div class="stat-label">Cuota y recaudo</div>
     <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
     <div class="meter <?= meterClase($pctPago) ?>"><span style="width:<?= min($pctPago, 100) ?>%"></span></div>
-    <div class="stat-hint" style="margin-top:8px;">Cuota: <b class="mono"><?= money($evento['cuota']) ?></b> · Esperado: <b class="mono"><?= money($esperado) ?></b></div>
+    <?php if ($cantidadEstudiantes > 0): ?>
+      <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+    <?php else: ?>
+      <div class="stat-hint" style="margin-top:8px;">Asigna estudiantes al evento para calcular la cuota.</div>
+    <?php endif; ?>
   </div>
   <div class="card card-pad">
     <div class="stat-label">Porciones a preparar</div>
@@ -291,7 +300,12 @@ require __DIR__ . '/../includes/layout_top.php';
 
 <?php elseif ($tab === 'estudiantes'): ?>
   <div class="toolbar">
-    <div class="cell-muted"><?= $numPagados ?> de <?= count($estudiantesEvento) ?> estudiantes pagados · <span class="mono"><?= money($recaudado) ?></span> de <span class="mono"><?= money($esperado) ?></span> recaudado</div>
+    <div class="cell-muted">
+      <?= $numPagados ?> de <?= count($estudiantesEvento) ?> estudiantes al día · <span class="mono"><?= money($recaudado) ?></span> de <span class="mono"><?= money($totalConfirmadoConRecetas) ?></span> recaudado
+      <?php if ($cantidadEstudiantes > 0): ?>
+        · cuota confirmada: <span class="mono"><?= money($cuotaConfirmada) ?></span> c/u
+      <?php endif; ?>
+    </div>
     <?php if ($puedeEditarEvento): ?>
       <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
     <?php endif; ?>
@@ -299,32 +313,54 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="card">
     <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Cuota</th><th>Estado</th><th></th></tr></thead>
+      <thead><tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Pagado</th><th>Pendiente</th><th></th></tr></thead>
       <tbody>
         <?php if (!$estudiantesEvento): ?>
           <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay estudiantes asignados a este evento.</td></tr>
         <?php endif; ?>
-        <?php foreach ($estudiantesEvento as $a): ?>
+        <?php foreach ($estudiantesEvento as $a):
+          $montoPagado = (float) $a['monto_pagado'];
+          $pendienteEstudiante = max(0, $cuotaConfirmada - $montoPagado);
+          $alDia = $pendienteEstudiante <= 0.005;
+        ?>
           <tr>
             <td class="cell-name"><?= e($a['nombre']) ?></td>
             <td class="cell-muted"><?= e($a['grupo']) ?></td>
             <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
-            <td class="mono"><?= money($evento['cuota']) ?></td>
             <td>
-              <?php if ($a['pagado']): ?>
-                <span class="chip chip-success"><?= icon('check') ?> Pagado · <?= fmtDate($a['fecha_pago']) ?></span>
+              <?php if ($puedeEditarEvento): ?>
+                <form method="post" style="display:flex;align-items:center;gap:6px;">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="registrar_pago">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <input type="number" name="monto_pagado" min="0" step="0.01" value="<?= e((string) $montoPagado) ?>" style="width:110px;">
+                  <button class="btn btn-secondary btn-sm" type="submit">Guardar</button>
+                </form>
               <?php else: ?>
-                <span class="chip chip-warning">Pendiente</span>
+                <span class="mono"><?= money($montoPagado) ?></span>
+              <?php endif; ?>
+              <?php if ($montoPagado > 0 && $a['fecha_pago']): ?>
+                <div class="stat-hint" style="margin-top:4px;">Último pago: <?= fmtDate($a['fecha_pago']) ?></div>
+              <?php endif; ?>
+            </td>
+            <td>
+              <?php if ($alDia): ?>
+                <span class="chip chip-success"><?= icon('check') ?> Al día</span>
+              <?php else: ?>
+                <span class="chip chip-warning"><?= money($pendienteEstudiante) ?></span>
               <?php endif; ?>
             </td>
             <td class="row-actions">
               <?php if ($puedeEditarEvento): ?>
-                <form method="post">
-                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                  <input type="hidden" name="accion" value="toggle_pago">
-                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                  <button class="btn btn-sm <?= $a['pagado'] ? 'btn-secondary' : 'btn-primary' ?>" type="submit"><?= $a['pagado'] ? 'Marcar pendiente' : 'Marcar pagado' ?></button>
-                </form>
+                <?php if (!$alDia): ?>
+                  <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                    <input type="hidden" name="accion" value="registrar_pago">
+                    <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                    <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
+                    <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
+                  </form>
+                <?php endif; ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="quitar_estudiante">
@@ -418,9 +454,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
 <?php elseif ($tab === 'gastos'): ?>
   <div class="card card-pad" style="margin-bottom:16px;">
-    <div class="meter-row"><span><?= money($gastado) ?> gastado de <?= money($evento['presupuesto']) ?></span><span><?= (int) $pct ?>%</span></div>
-    <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
-    <div class="stat-hint" style="margin-top:12px;">
+    <div class="stat-hint">
       Costo estimado de recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b>
       &nbsp;+&nbsp; Proyectado (sin pagar todavía): <b class="mono"><?= money($totalProyectado) ?></b>
       &nbsp;+&nbsp; Confirmado (ya pagado): <b class="mono"><?= money($gastado) ?></b>

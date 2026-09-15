@@ -10,7 +10,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/icons.php';
 
 $stmt = db()->query(
-    "SELECT ev.nombre, ev.fecha, ev.lugar, ev.cuota, ev.banner
+    "SELECT ev.id, ev.nombre, ev.fecha, ev.lugar, ev.banner
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      WHERE es.nombre <> 'Finalizado' AND ev.fecha >= CURDATE()
@@ -18,6 +18,28 @@ $stmt = db()->query(
      LIMIT 6"
 );
 $proximosEventos = $stmt->fetchAll();
+
+// La cuota ya no se guarda: se calcula igual que en el detalle del evento
+// (costo de recetas + gastos, dividido entre los estudiantes asignados) y
+// se muestra la proyectada — la estimación más completa — como "la cuota"
+// pública.
+foreach ($proximosEventos as &$ev) {
+    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $stmtProy = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'proyectado'");
+    $stmtProy->execute([$ev['id']]);
+    $totalProyectado = (float) $stmtProy->fetchColumn();
+    $stmtConf = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'confirmado'");
+    $stmtConf->execute([$ev['id']]);
+    $totalConfirmado = (float) $stmtConf->fetchColumn();
+    $stmtNum = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
+    $stmtNum->execute([$ev['id']]);
+    $numEstudiantes = (int) $stmtNum->fetchColumn();
+
+    $cuotas = calcularCuotasEvento($costoRecetas, $totalProyectado, $totalConfirmado, $numEstudiantes);
+    $ev['num_estudiantes'] = $numEstudiantes;
+    $ev['cuota_proyectada'] = $cuotas['proyectada'];
+}
+unset($ev);
 
 $cssVersion = @filemtime(__DIR__ . '/assets/css/app.css') ?: '1';
 $homeCssVersion = @filemtime(__DIR__ . '/assets/css/home.css') ?: '1';
@@ -119,7 +141,7 @@ $homeCssVersion = @filemtime(__DIR__ . '/assets/css/home.css') ?: '1';
             </div>
             <div class="evt-public-cuota">
               <span>Cuota por estudiante</span>
-              <b><?= money($ev['cuota']) ?></b>
+              <b><?= $ev['num_estudiantes'] > 0 ? money($ev['cuota_proyectada']) : 'Por confirmar' ?></b>
             </div>
           </div>
         </div>

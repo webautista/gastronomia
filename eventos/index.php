@@ -24,9 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 $busqueda = trim($_GET['q'] ?? '');
 
 $sql = 'SELECT ev.*, es.nombre AS estado,
-          (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id) AS gastado,
           (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
-          (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id AND ee.pagado = 1) AS num_pagados
+          (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado,
+          (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id AND g.estado = \'confirmado\') AS gastado,
+          (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id AND g.estado = \'proyectado\') AS proyectado
         FROM eventos ev
         JOIN estados_evento es ON es.id = ev.estado_id';
 $params = [];
@@ -40,6 +41,25 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $eventos = $stmt->fetchAll();
 
+// La cuota ya no se guarda: se calcula aquí mismo para cada evento igual
+// que en su detalle (costo de recetas + gastos, dividido entre los
+// estudiantes asignados), para que la lista siempre muestre el mismo
+// número que verían al entrar al evento.
+foreach ($eventos as &$ev) {
+    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $cuotas = calcularCuotasEvento($costoRecetas, (float) $ev['proyectado'], (float) $ev['gastado'], (int) $ev['num_estudiantes']);
+    $ev['costo_recetas'] = $costoRecetas;
+    $ev['total_proyeccion'] = $cuotas['total_proyeccion'];
+    $ev['total_confirmado'] = $cuotas['total_confirmado'];
+    $ev['cuota_proyectada'] = $cuotas['proyectada'];
+    $ev['cuota_confirmada'] = $cuotas['confirmada'];
+
+    $stmtPag = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ? AND monto_pagado >= ?');
+    $stmtPag->execute([(int) $ev['id'], $cuotas['confirmada'] - 0.005]);
+    $ev['num_pagados'] = (int) $stmtPag->fetchColumn();
+}
+unset($ev);
+
 $pageTitle = 'Eventos';
 $activeNav = 'eventos';
 require __DIR__ . '/../includes/layout_top.php';
@@ -48,7 +68,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="page-head">
   <div>
     <h1>Eventos</h1>
-    <p>Presupuesto, cuota y estado de cada evento.</p>
+    <p>Inversión, cuota y estado de cada evento.</p>
   </div>
   <?php if ($puedeCrear): ?>
     <a class="btn btn-primary" href="form.php"><?= icon('plus') ?> Nuevo evento</a>
@@ -69,11 +89,7 @@ require __DIR__ . '/../includes/layout_top.php';
   </div></div>
 <?php else: ?>
   <div class="event-grid">
-    <?php foreach ($eventos as $ev):
-      $pct = $ev['presupuesto'] > 0 ? round($ev['gastado'] / $ev['presupuesto'] * 100) : 0;
-      $esperado = $ev['num_estudiantes'] * $ev['cuota'];
-      $recaudado = $ev['num_pagados'] * $ev['cuota'];
-    ?>
+    <?php foreach ($eventos as $ev): ?>
       <div class="event-card">
         <div class="event-card-top">
           <div><h3><a href="detalle.php?id=<?= (int) $ev['id'] ?>"><?= e($ev['nombre']) ?></a></h3></div>
@@ -87,13 +103,18 @@ require __DIR__ . '/../includes/layout_top.php';
           <span><?= icon('portion') ?> <?= (int) $ev['porciones'] ?> porciones</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px;">
-          <div>
-            <div class="meter-row"><span>Presupuesto</span><span class="mono"><?= money($ev['gastado']) ?> / <?= money($ev['presupuesto']) ?></span></div>
-            <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
-          </div>
-          <div class="mini-row"><span>Cuota por estudiante</span><span class="mono"><?= money($ev['cuota']) ?></span></div>
-          <div class="mini-row"><span>Recaudado</span><span class="mono"><?= money($recaudado) ?> / <?= money($esperado) ?></span></div>
-          <div class="mini-row"><span>Estudiantes pagados</span><span><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></span></div>
+          <div class="mini-row"><span>Inversión total</span><span class="mono"><?= money($ev['total_proyeccion']) ?></span></div>
+          <?php if ((int) $ev['num_estudiantes'] > 0): ?>
+            <div class="mini-row"><span>Cuota proyectada</span><span class="mono"><?= money($ev['cuota_proyectada']) ?></span></div>
+            <div class="mini-row"><span>Cuota confirmada</span><span class="mono"><?= money($ev['cuota_confirmada']) ?></span></div>
+            <div>
+              <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($ev['recaudado']) ?> / <?= money($ev['total_confirmado']) ?></span></div>
+              <div class="meter <?= meterClase($ev['total_confirmado'] > 0 ? round($ev['recaudado'] / $ev['total_confirmado'] * 100) : 0) ?>"><span style="width:<?= $ev['total_confirmado'] > 0 ? min(round($ev['recaudado'] / $ev['total_confirmado'] * 100), 100) : 0 ?>%"></span></div>
+            </div>
+            <div class="mini-row"><span>Estudiantes al día</span><span><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></span></div>
+          <?php else: ?>
+            <div class="mini-row"><span>Cuota</span><span class="cell-muted">Asigna estudiantes para calcularla</span></div>
+          <?php endif; ?>
         </div>
         <div class="row-actions" style="justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
           <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>

@@ -178,6 +178,64 @@ function montoLineaReceta(float $cantidad, float $costoUnitario, bool $esEntera)
 }
 
 /**
+ * Costo total en vivo de las recetas asignadas a un evento (la misma suma
+ * que ya se calculaba receta por receta dentro del detalle del evento),
+ * expuesto aquí como función compartida para que la página pública y el
+ * listado de eventos puedan usarlo sin repetir la consulta. Nunca se
+ * guarda en ninguna tabla — siempre se recalcula a partir de los precios
+ * actuales del catálogo.
+ */
+function costoTotalRecetasEvento(PDO $pdo, int $eventoId): float
+{
+    $stmt = $pdo->prepare(
+        'SELECT er.porciones_necesarias, r.id, r.porciones_base FROM evento_receta er
+         JOIN recetas r ON r.id = er.receta_id
+         WHERE er.evento_id = ?'
+    );
+    $stmt->execute([$eventoId]);
+    $recetas = $stmt->fetchAll();
+
+    $total = 0.0;
+    foreach ($recetas as $rc) {
+        $porcionesBase = max(1, (int) $rc['porciones_base']);
+        $stmtIng = $pdo->prepare(
+            'SELECT i.cantidad, i.costo_unitario, um.es_entera AS unidad_entera FROM ingredientes i
+             JOIN unidades_medida um ON um.id = i.unidad_id
+             WHERE i.receta_id = ?'
+        );
+        $stmtIng->execute([$rc['id']]);
+        foreach ($stmtIng->fetchAll() as $ing) {
+            $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
+            $esEntera = (bool) ($ing['unidad_entera'] ?? false);
+            $total += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
+        }
+    }
+    return $total;
+}
+
+/**
+ * Cuota proyectada y confirmada por estudiante de un evento. El total a
+ * repartir ya no se escribe a mano (antes era "presupuesto"): siempre es
+ * costo de recetas + gastos, dividido entre los estudiantes asignados.
+ * "Proyectada" incluye lo que todavía no se ha confirmado (la estimación
+ * más completa); "confirmada" es solo lo que ya es gasto real (recetas +
+ * gastos confirmados) — es la que se usa para cobrarle a cada estudiante.
+ * Con 0 estudiantes asignados ambas cuotas quedan en 0 (no se puede
+ * repartir entre nadie todavía).
+ */
+function calcularCuotasEvento(float $costoRecetas, float $totalProyectado, float $totalConfirmado, int $cantidadEstudiantes): array
+{
+    $totalProyeccion = $costoRecetas + $totalProyectado + $totalConfirmado;
+    $totalConfirmadoConRecetas = $costoRecetas + $totalConfirmado;
+    return [
+        'total_proyeccion' => $totalProyeccion,
+        'total_confirmado' => $totalConfirmadoConRecetas,
+        'proyectada' => $cantidadEstudiantes > 0 ? $totalProyeccion / $cantidadEstudiantes : 0.0,
+        'confirmada' => $cantidadEstudiantes > 0 ? $totalConfirmadoConRecetas / $cantidadEstudiantes : 0.0,
+    ];
+}
+
+/**
  * Convierte un costo por unidad (ej. RD$/Onza) a su equivalente en otra
  * unidad (ej. RD$/Gramo), cuando ambas miden lo mismo. Se usa al cambiar la
  * unidad de una línea de receta: si el ingrediente venía con el costo

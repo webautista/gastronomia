@@ -20,7 +20,7 @@ $estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
 
 $evento = [
     'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '', 'banner' => null,
-    'presupuesto' => '', 'cuota' => '', 'porciones' => '', 'estado_id' => $estadoPorDefecto,
+    'porciones' => '', 'estado_id' => $estadoPorDefecto,
 ];
 $errores = [];
 
@@ -40,8 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $evento['nombre']      = trim($_POST['nombre'] ?? '');
     $evento['fecha']       = $_POST['fecha'] ?? '';
     $evento['lugar']       = trim($_POST['lugar'] ?? '');
-    $evento['presupuesto'] = (float) ($_POST['presupuesto'] ?? 0);
-    $evento['cuota']       = (float) ($_POST['cuota'] ?? 0);
     $evento['porciones']   = intOrNull($_POST['porciones'] ?? null) ?? 0;
     $evento['estado_id']   = intOrNull($_POST['estado_id'] ?? null);
 
@@ -108,13 +106,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, presupuesto=?, cuota=?, porciones=?, estado_id=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, porciones=?, estado_id=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, presupuesto, cuota, porciones, estado_id) VALUES (?,?,?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['presupuesto'], $evento['cuota'], $evento['porciones'], $evento['estado_id']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, porciones, estado_id) VALUES (?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -172,14 +170,9 @@ require __DIR__ . '/../includes/layout_top.php';
       <div class="hint">Opcional. Se muestra como imagen de portada al entrar al detalle del evento y en la página pública, en "Próximos eventos". JPG, PNG o WEBP, hasta 5 MB (ideal: una foto ancha, tipo panorámica).</div>
     </div>
 
-    <div class="field-row">
-      <div class="field">
-        <label for="presupuesto">Presupuesto (RD$)</label>
-        <input type="number" id="presupuesto" name="presupuesto" min="0" step="0.01" required value="<?= e((string) $evento['presupuesto']) ?>">
-      </div>
-      <div class="field">
-        <label for="cuota">Cuota por estudiante (RD$)</label>
-        <input type="number" id="cuota" name="cuota" min="0" step="0.01" required value="<?= e((string) $evento['cuota']) ?>">
+    <div class="field">
+      <div class="hint" style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 12px;">
+        <?= icon('sparkle') ?> La inversión y la cuota por estudiante ya no se escriben a mano: se calculan solas a partir del costo de las recetas y los gastos del evento, divididas entre los estudiantes asignados. Las vas a ver en el Resumen del evento una vez lo guardes.
       </div>
     </div>
 

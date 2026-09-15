@@ -144,6 +144,28 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "estado" (proyectado/confirmado) agregada a la tabla gastos; los gastos existentes quedaron marcados "confirmado".';
     }
 
+    // Monto pagado por estudiante: reemplaza el "pagado" (sí/no) fijo por un
+    // monto real. Ahora la cuota ya no se escribe a mano — se calcula sola
+    // (cuota confirmada = recetas + gastos confirmados ÷ estudiantes
+    // asignados) y puede subir si se confirman más gastos después de que
+    // alguien ya pagó. Guardando cuánto pagó cada quien, el sistema siempre
+    // puede mostrar el "pendiente" (el complemento que falta) comparando
+    // contra la cuota confirmada actual, sin tener que re-marcar a nadie
+    // como pendiente a mano.
+    if (columnaExiste($pdo, 'evento_estudiante', 'evento_id') && !columnaExiste($pdo, 'evento_estudiante', 'monto_pagado')) {
+        $pdo->exec('ALTER TABLE evento_estudiante ADD COLUMN monto_pagado DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER pagado');
+        // A quienes ya estaban marcados "pagado" bajo el sistema viejo (una
+        // cuota fija por evento) se les asigna como monto pagado la cuota
+        // que tenía el evento en ese momento, para no perder ese historial.
+        $pdo->exec(
+            'UPDATE evento_estudiante ee
+             JOIN eventos ev ON ev.id = ee.evento_id
+             SET ee.monto_pagado = ev.cuota
+             WHERE ee.pagado = 1'
+        );
+        $mensajes[] = 'Columna "monto_pagado" agregada a la tabla evento_estudiante; los estudiantes ya marcados como pagados quedaron con el monto de la cuota que tenía el evento en ese momento.';
+    }
+
     return $mensajes;
 }
 
