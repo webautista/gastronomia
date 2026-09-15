@@ -64,6 +64,15 @@ $ingredientes = $stmt->fetchAll();
 
 $categorias = db()->query('SELECT * FROM categorias_ingrediente ORDER BY orden ASC, nombre ASC')->fetchAll();
 
+// Total de ingredientes por categoría (todos, activos e inactivos), para el
+// resumen arriba de la tabla y para el filtro — útil sobre todo para
+// verificar de un vistazo que un lote de ingredientes nuevos quedó cargado.
+$conteoPorCategoria = [];
+foreach (db()->query('SELECT categoria_id, COUNT(*) AS total FROM ingredientes_catalogo GROUP BY categoria_id')->fetchAll() as $fila) {
+    $conteoPorCategoria[(int) $fila['categoria_id']] = (int) $fila['total'];
+}
+$totalIngredientes = array_sum($conteoPorCategoria);
+
 $pageTitle = 'Ingredientes';
 $activeNav = 'ingredientes';
 require __DIR__ . '/../includes/layout_top.php';
@@ -85,12 +94,27 @@ require __DIR__ . '/../includes/layout_top.php';
     <input type="text" name="q" placeholder="Buscar ingrediente..." value="<?= e($busqueda) ?>">
     <?php if ($categoriaFiltro): ?><input type="hidden" name="cat" value="<?= (int) $categoriaFiltro ?>"><?php endif; ?>
   </form>
-  <select id="filtroCategoria" style="max-width:220px;">
-    <option value="">Todas las categorías</option>
+  <select id="filtroCategoria" style="max-width:260px;">
+    <option value="">Todas las categorías (<?= $totalIngredientes ?>)</option>
     <?php foreach ($categorias as $c): ?>
-      <option value="<?= (int) $c['id'] ?>" <?= (int) $c['id'] === (int) $categoriaFiltro ? 'selected' : '' ?>><?= e($c['nombre']) ?></option>
+      <option value="<?= (int) $c['id'] ?>" <?= (int) $c['id'] === (int) $categoriaFiltro ? 'selected' : '' ?>><?= e($c['nombre']) ?> (<?= $conteoPorCategoria[(int) $c['id']] ?? 0 ?>)</option>
     <?php endforeach; ?>
   </select>
+</div>
+
+<div class="card card-pad" style="margin-bottom:16px;">
+  <h2 class="section-title" style="margin-top:0;">Ingredientes por categoría</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">
+    <a class="chip <?= !$categoriaFiltro ? 'chip-success' : 'chip-neutral' ?>" href="index.php<?= $busqueda !== '' ? '?q=' . urlencode($busqueda) : '' ?>" style="text-decoration:none;">Todas: <b><?= $totalIngredientes ?></b></a>
+    <?php foreach ($categorias as $c): ?>
+      <?php
+        $n = $conteoPorCategoria[(int) $c['id']] ?? 0;
+        $params = ['cat' => (int) $c['id']];
+        if ($busqueda !== '') { $params['q'] = $busqueda; }
+      ?>
+      <a class="chip <?= (int) $c['id'] === (int) $categoriaFiltro ? 'chip-success' : ($n === 0 ? 'chip-muted' : 'chip-neutral') ?>" href="index.php?<?= http_build_query($params) ?>" style="text-decoration:none;"><?= e($c['nombre']) ?>: <b><?= $n ?></b></a>
+    <?php endforeach; ?>
+  </div>
 </div>
 
 <script>
