@@ -60,6 +60,17 @@ INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden) VALUES
 --   mililitros para volumen). Las unidades "de conteo" (Unidad, Lata,
 --   Diente, etc.) quedan con ambos campos en NULL: no son convertibles
 --   entre sí automáticamente.
+--
+-- Una tercera columna que se agrega igual desde setup.php, pero en
+-- ingredientes_catalogo (no en unidades_medida): densidad_g_ml. tipo_medida
+-- solo permite convertir DENTRO de una misma magnitud (masa con masa,
+-- volumen con volumen) porque esa conversión es universal (1 Onza siempre
+-- son 28.35 g, para cualquier ingrediente). Pero masa y volumen NO tienen
+-- una equivalencia universal — una cucharada de mantequilla no pesa lo
+-- mismo que una de harina — así que ese puente solo se puede tender por
+-- ingrediente, con su densidad real (gramos por mililitro). Ver
+-- convertirCantidadEntreUnidades()/convertirCostoPorUnidad() en
+-- includes/helpers.php.
 
 -- Categorías de receta
 CREATE TABLE IF NOT EXISTS categorias_receta (
@@ -152,6 +163,16 @@ INSERT IGNORE INTO acciones_ingrediente (nombre, orden) VALUES
 -- que mantener actualizado. Cuando se compra igual que se usa (la mayoría
 -- de los casos: una libra de carne se usa en libras), unidad_compra_id
 -- queda igual a unidad_id y contenido_por_compra en 1.
+--
+-- Una columna más, densidad_g_ml, se agrega siempre desde setup.php (igual
+-- razón que es_entera/tipo_medida/factor_base en unidades_medida: si
+-- viviera aquí en el CREATE TABLE, una instalación nueva nacería ya
+-- "migrada" y el UPDATE que siembra sus valores nunca correría). Es
+-- opcional (NULL para la enorme mayoría de ingredientes) y solo hace falta
+-- cuando un ingrediente necesita escribirse tanto en una unidad de masa
+-- (Gramo, Libra...) como de volumen (Cucharada, Taza...) — ej. mantequilla,
+-- harina: sin la densidad de ESE ingrediente en particular no hay forma de
+-- saber cuántos gramos "es" una cucharada suya.
 CREATE TABLE IF NOT EXISTS ingredientes_catalogo (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(120) NOT NULL,
@@ -222,7 +243,19 @@ INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id
 ('Arroz', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍚', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 46.00, NULL),
 ('Harina de trigo', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🌾', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 28.00, NULL),
 ('Avena', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🌾', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 45.00, NULL),
-('Pasta (espagueti)', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Paquete'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 1, 65.00, 'Paquete de 454 g'),
+('Pasta (espagueti)', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 454, 65.00, 'Paquete de 454 g (marca Zerca/genérica)'),
+('Pasta (espagueti) Princesa', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 45.00, 'Paquete de 400 g (marca Princesa)'),
+('Pasta (espagueti) Milano', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 40.00, 'Paquete de 400 g (marca Milano)'),
+('Pasta (espagueti) Barilla', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 500, 250.00, 'Paquete de 500 g (marca Barilla) — precio estimado de referencia (tomado de otra presentación Barilla, Fusilli Integral RD$254/500 g), verificar al comprar'),
+('Pasta (penne)', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 500, 128.00, 'Paquete de 500 g (marca Zara, Pennine No. 46)'),
+('Pasta (coditos) Princesa', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 44.00, 'Paquete de 400 g (marca Princesa)'),
+('Pasta (coditos) Milano', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 47.00, 'Paquete de 400 g (marca Milano)'),
+('Pasta (fettuccine)', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 500, 185.00, 'Paquete de 500 g (marca Zara No. 205)'),
+('Pasta (lasaña tradicional) Princesa', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 400, 101.95, 'Paquete de 400 g, láminas tradicionales (marca Princesa)'),
+('Pasta (lasaña tradicional) Milano', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 300, 85.00, 'Paquete de 300 g aprox., láminas tradicionales (marca Milano) — precio estimado de referencia, verificar al comprar'),
+('Pasta (lasaña tradicional) Barilla', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 500, 378.95, 'Paquete de 500 g, láminas tradicionales (marca Barilla)'),
+('Pasta (lasaña oven ready) Barilla', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 255, 210.00, 'Paquete de 9 oz / 255 g, láminas precocidas "oven ready" / sin hervir (marca Barilla) — precio estimado de referencia, disponibilidad en RD sujeta a verificar al comprar'),
+('Pasta (ravioles)', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🍝', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 283, 320.00, 'Paquete de 10 oz / 283 g, fresco relleno (marca Rana) — precio estimado de referencia para tienda especializada/gourmet, verificar al comprar'),
 ('Habichuelas rojas', (SELECT id FROM categorias_ingrediente WHERE nombre='Legumbre'), '🫘', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 65.00, NULL),
 ('Garbanzos', (SELECT id FROM categorias_ingrediente WHERE nombre='Legumbre'), '🫘', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 70.00, NULL),
 ('Lentejas', (SELECT id FROM categorias_ingrediente WHERE nombre='Legumbre'), '🫘', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 60.00, NULL),
@@ -670,6 +703,29 @@ CREATE TABLE IF NOT EXISTS gastos (
         REFERENCES eventos(id) ON DELETE CASCADE,
     CONSTRAINT fk_gastos_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_gasto(id),
     KEY idx_gastos_evento (evento_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Decisiones de compra por evento o práctica: cuando la lista de compra
+-- sugiere llevar el paquete completo de un ingrediente (ej. pasta, queso —
+-- no se vende suelto en la cantidad exacta de la receta), aquí se guarda si
+-- la usuaria acepta esa sugerencia (comprar_paquete=1, por defecto) o la
+-- rechaza porque ya tiene ese ingrediente (comprar_paquete=0), y el precio
+-- del paquete que ella misma edite (precio_paquete NULL = usar el precio de
+-- referencia del catálogo). entidad_tipo/entidad_id son polimórficos
+-- (apuntan a eventos o practicas según el caso) en vez de dos columnas de
+-- llave foránea nulas, para que una sola UNIQUE KEY pueda garantizar que no
+-- haya dos decisiones para el mismo ingrediente en el mismo evento/práctica.
+CREATE TABLE IF NOT EXISTS compra_decisiones (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('evento','practica') NOT NULL,
+    entidad_id INT UNSIGNED NOT NULL,
+    ingrediente_catalogo_id INT UNSIGNED NOT NULL,
+    comprar_paquete TINYINT(1) NOT NULL DEFAULT 1,
+    precio_paquete DECIMAL(10,2) NULL,
+    actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_compradecision_ingrediente FOREIGN KEY (ingrediente_catalogo_id)
+        REFERENCES ingredientes_catalogo(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_compradecision (entidad_tipo, entidad_id, ingrediente_catalogo_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

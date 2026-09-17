@@ -67,6 +67,10 @@ foreach ($catalogoIngredientes as $ci) {
         'id' => (int) $ci['id'],
         'unidad_id' => (int) $ci['unidad_id'],
         'costo_unitario' => round(costoPorUnidadUso($ci), 2),
+        // Gramos por mililitro, cuando este ingrediente la tiene cargada
+        // (ej. mantequilla, harina) — le permite al JS convertir su costo
+        // entre unidades de masa y de volumen. null para la mayoría.
+        'densidad_g_ml' => $ci['densidad_g_ml'] !== null ? (float) $ci['densidad_g_ml'] : null,
     ];
 }
 
@@ -546,19 +550,46 @@ require __DIR__ . '/../includes/layout_top.php';
       return esEntera ? Math.ceil(cantidad - 0.0000001) : cantidad;
     }
 
+    // Igual que convertirCantidadEntreUnidades() en includes/helpers.php:
+    // convierte una cantidad de una unidad a otra. Mismo tipo_medida (masa
+    // con masa, o volumen con volumen) usa el factor universal de cada
+    // unidad; tipo_medida distinto (masa vs. volumen) solo es posible si se
+    // conoce la densidad (g/ml) de ESTE ingrediente en particular (una
+    // cucharada de mantequilla no pesa lo mismo que una de harina) — sin
+    // ella, devuelve null.
+    function convertirCantidadEntreUnidadesJs(cantidadOrigen, idOrigen, idDestino, densidadGml) {
+      if (!idOrigen || !idDestino) return null;
+      if (idOrigen === idDestino) return cantidadOrigen;
+      var uo = UNIDADES_INFO[idOrigen], ud = UNIDADES_INFO[idDestino];
+      if (!uo || !ud || !uo.tipo_medida || !ud.tipo_medida) return null;
+      if (!uo.factor_base || !ud.factor_base) return null;
+      if (uo.tipo_medida === ud.tipo_medida) {
+        return cantidadOrigen * (uo.factor_base / ud.factor_base);
+      }
+      if (!densidadGml) return null;
+      var base = cantidadOrigen * uo.factor_base; // gramos (masa) o ml (volumen)
+      var baseDestino;
+      if (uo.tipo_medida === 'masa' && ud.tipo_medida === 'volumen') {
+        baseDestino = base / densidadGml;
+      } else if (uo.tipo_medida === 'volumen' && ud.tipo_medida === 'masa') {
+        baseDestino = base * densidadGml;
+      } else {
+        return null;
+      }
+      return baseDestino / ud.factor_base;
+    }
+
     // Igual que convertirCostoPorUnidad() en includes/helpers.php: convierte
     // un costo por unidad (ej. RD$/Onza) a su equivalente en otra unidad
-    // (ej. RD$/Gramo) cuando ambas son del mismo tipo de medida (masa o
-    // volumen) y tienen su factor de conversión cargado. Devuelve null si no
-    // son convertibles automáticamente (ej. una es masa y la otra es una
-    // unidad de conteo como Unidad o Lata) — ahí el costo se ajusta a mano.
-    function convertirCostoPorUnidad(costoPorUnidadOrigen, idOrigen, idDestino) {
+    // (ej. RD$/Gramo), apoyándose en convertirCantidadEntreUnidadesJs().
+    // Devuelve null si no son convertibles automáticamente — ahí el costo
+    // se ajusta a mano.
+    function convertirCostoPorUnidad(costoPorUnidadOrigen, idOrigen, idDestino, densidadGml) {
       if (!idOrigen || !idDestino) return null;
       if (idOrigen === idDestino) return costoPorUnidadOrigen;
-      var uo = UNIDADES_INFO[idOrigen], ud = UNIDADES_INFO[idDestino];
-      if (!uo || !ud || !uo.tipo_medida || !ud.tipo_medida || uo.tipo_medida !== ud.tipo_medida) return null;
-      if (!uo.factor_base || !ud.factor_base) return null;
-      return costoPorUnidadOrigen * (ud.factor_base / uo.factor_base);
+      var equivalencia = convertirCantidadEntreUnidadesJs(1, idOrigen, idDestino, densidadGml);
+      if (!equivalencia) return null;
+      return costoPorUnidadOrigen / equivalencia;
     }
 
     // Se dispara al cambiar la unidad de una fila: si la fila tiene un
@@ -574,7 +605,10 @@ require __DIR__ . '/../includes/layout_top.php';
       var inputCosto = fila ? fila.querySelector('[data-role="ing-costo"]') : null;
       if (inputCosto && idAnterior && idNuevo && idAnterior !== idNuevo) {
         var costoActual = parseFloat(inputCosto.value) || 0;
-        var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo);
+        var nombreInput = fila ? fila.querySelector('input[name="ing_nombre[]"]') : null;
+        var datosFila = nombreInput ? CATALOGO[nombreInput.value.trim()] : null;
+        var densidadFila = datosFila ? datosFila.densidad_g_ml : null;
+        var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo, densidadFila);
         if (costoConvertido !== null) {
           inputCosto.value = costoConvertido.toFixed(2);
         }
@@ -649,7 +683,7 @@ require __DIR__ . '/../includes/layout_top.php';
       var inputCosto = fila.querySelector('input[name="ing_costo[]"]');
       var idUnidadFila = selectUnidad ? (parseInt(selectUnidad.value, 10) || null) : null;
       if (hiddenId) hiddenId.value = datos.id;
-      var costoConvertido = convertirCostoPorUnidad(datos.costo_unitario, datos.unidad_id, idUnidadFila);
+      var costoConvertido = convertirCostoPorUnidad(datos.costo_unitario, datos.unidad_id, idUnidadFila, datos.densidad_g_ml);
       if (costoConvertido !== null) {
         if (inputCosto) inputCosto.value = costoConvertido.toFixed(2);
         if (selectUnidad) selectUnidad.setAttribute('data-prev', idUnidadFila || '');

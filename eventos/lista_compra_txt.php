@@ -23,7 +23,8 @@ $stmt = db()->prepare('SELECT receta_id, porciones_necesarias FROM evento_receta
 $stmt->execute([$id]);
 $recetas = $stmt->fetchAll();
 
-$consolidado = listaCompraConsolidada(db(), $recetas);
+$decisionesCompra = cargarDecisionesCompra(db(), 'evento', $id);
+$consolidado = listaCompraConsolidada(db(), $recetas, $decisionesCompra);
 $titulo = 'Lista de compra — ' . $evento['nombre'] . ' (' . fmtDate($evento['fecha']) . ')';
 $texto = renderListaCompraTexto($titulo, $consolidado);
 

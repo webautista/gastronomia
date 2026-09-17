@@ -116,6 +116,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$montoConfirmado, $gastoId, $id]);
             flash('Gasto confirmado.');
         }
+    } elseif ($accion === 'guardar_decision_compra') {
+        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        $catalogoId = intOrNull($_POST['catalogo_id'] ?? null);
+        $comprarPaquete = !empty($_POST['comprar_paquete']) ? 1 : 0;
+        $precioPaquete = isset($_POST['precio_paquete']) && $_POST['precio_paquete'] !== '' ? (float) $_POST['precio_paquete'] : null;
+        if ($catalogoId && $precioPaquete !== null && $precioPaquete >= 0) {
+            $pdo->prepare(
+                'INSERT INTO compra_decisiones (entidad_tipo, entidad_id, ingrediente_catalogo_id, comprar_paquete, precio_paquete)
+                 VALUES (\'evento\', ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE comprar_paquete = VALUES(comprar_paquete), precio_paquete = VALUES(precio_paquete)'
+            )->execute([$id, $catalogoId, $comprarPaquete, $precioPaquete]);
+        }
     }
 
     redirect('detalle.php?id=' . $id . '&tab=' . $tab);
@@ -517,7 +529,8 @@ require __DIR__ . '/../includes/layout_top.php';
 
 <?php elseif ($tab === 'compras'):
   $recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasEvento);
-  $consolidado = listaCompraConsolidada(db(), $recetasParaLista);
+  $decisionesCompra = cargarDecisionesCompra(db(), 'evento', $id);
+  $consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
 ?>
   <div class="toolbar no-print">
     <div class="cell-muted">Ingredientes de todas las recetas de este evento, sumados y organizados para ir al súper.</div>
@@ -539,12 +552,36 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-name"><?= e($l['nombre']) ?></td>
             <td class="mono">
               <?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?>
-              <?php if (!empty($l['compra'])): ?>
-                <br><span class="cell-muted" style="font-size:.78rem;font-weight:400;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span>
+              <?php if (!empty($l['compra'])): $dc = $l['compra_decision']; ?>
+                <div class="cell-muted" style="font-size:.78rem;font-weight:400;margin-top:4px;">
+                  <?php if ($dc['comprar_paquete']): ?>
+                    comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?>
+                  <?php else: ?>
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
+                  <?php endif; ?>
+                </div>
+                <?php if ($puedeEditarEvento): ?>
+                <form method="post" class="no-print" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-weight:400;">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="guardar_decision_compra">
+                  <input type="hidden" name="catalogo_id" value="<?= (int) $l['catalogo_id'] ?>">
+                  <label style="font-size:.72rem;display:flex;align-items:center;gap:4px;" class="cell-muted">
+                    <input type="checkbox" name="comprar_paquete" value="1" <?= $dc['comprar_paquete'] ? 'checked' : '' ?>> Comprar
+                  </label>
+                  <span class="cell-muted" style="font-size:.72rem;">RD$</span>
+                  <input type="number" name="precio_paquete" min="0" step="0.01" value="<?= e((string) $dc['precio_paquete']) ?>" style="width:74px;font-size:.78rem;" title="Precio del paquete (editable)">
+                  <button class="btn btn-secondary btn-sm" type="submit" style="font-size:.72rem;padding:2px 8px;">Guardar</button>
+                </form>
+                <?php endif; ?>
               <?php endif; ?>
             </td>
             <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td>
-            <td class="mono"><?= money($l['monto']) ?></td>
+            <td class="mono">
+              <?= money($l['monto']) ?>
+              <?php if (!empty($l['compra_decision']) && !$l['compra_decision']['comprar_paquete']): ?>
+                <div class="cell-muted" style="font-size:.72rem;font-weight:400;">ya lo tienes</div>
+              <?php endif; ?>
+            </td>
           </tr>
         <?php endforeach; ?>
         <?php foreach ($consolidado['al_gusto'] as $ag): ?>

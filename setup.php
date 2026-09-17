@@ -240,6 +240,21 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "practica_id" agregada a la tabla gastos (un gasto ahora puede pertenecer a una práctica en vez de a un evento); "evento_id" se volvió opcional.';
     }
 
+    // Densidad del ingrediente (gramos por mililitro): el puente que hace
+    // falta para convertir su costo entre una unidad de masa (Gramo,
+    // Libra...) y una de volumen (Cucharada, Taza...) — algo que
+    // tipo_medida/factor_base NO pueden resolver por sí solos porque no hay
+    // una equivalencia universal entre masa y volumen (una cucharada de
+    // mantequilla no pesa lo mismo que una de harina). Opcional: se deja
+    // NULL para la enorme mayoría de ingredientes, que solo se usan en un
+    // tipo de medida. Ver convertirCantidadEntreUnidades() en
+    // includes/helpers.php y establecerDensidadIngredientes() más abajo,
+    // que siembra los primeros valores (mantequilla, harina).
+    if (columnaExiste($pdo, 'ingredientes_catalogo', 'id') && !columnaExiste($pdo, 'ingredientes_catalogo', 'densidad_g_ml')) {
+        $pdo->exec('ALTER TABLE ingredientes_catalogo ADD COLUMN densidad_g_ml DECIMAL(8,4) NULL AFTER contenido_por_compra');
+        $mensajes[] = 'Columna "densidad_g_ml" agregada a ingredientes_catalogo (permite convertir el costo de un ingrediente entre unidades de masa y de volumen, ej. mantequilla en cucharadas o en gramos).';
+    }
+
     return $mensajes;
 }
 
@@ -526,6 +541,71 @@ function corregirUnidadUsoMantequillaGuineoAvena(PDO $pdo): array
 }
 
 /**
+ * Mismo problema de modelado que corregirUnidadUsoEspecias() y las otras
+ * rondas: "Pasta (espagueti)" quedó con unidad de uso = Paquete (de la
+ * primera tanda del catálogo), cuando en una receta real la pasta se pesa
+ * en gramos o libras — nadie escribe "0.4 Paquete de espagueti". Paquete no
+ * tiene un tamaño universal, así que no había forma de convertir el costo
+ * al escribir una receta en Gramo o Libra. Se corrige a Gramo (ya
+ * convertible con Libra/Kilogramo/Onza vía tipo_medida='masa'), igual que
+ * ya se hizo para las especias. Guardado igual: solo toca la fila si sigue
+ * en Paquete, para no pisar un ajuste manual posterior.
+ */
+function corregirUnidadUsoPasta(PDO $pdo): array
+{
+    $mensajes = [];
+    $idPaquete = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Paquete'")->fetchColumn();
+    $idGramo = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Gramo'")->fetchColumn();
+    if (!$idPaquete || !$idGramo) {
+        return $mensajes;
+    }
+    $stmt = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, contenido_por_compra = 454, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    $stmt->execute([$idGramo, 'Paquete de 454 g (marca Zerca/genérica)', 'Pasta (espagueti)', $idPaquete]);
+    if ($stmt->rowCount() > 0) {
+        $mensajes[] = 'Ingrediente "Pasta (espagueti)": unidad de uso corregida de Paquete a Gramo (antes el costo no se podía convertir al escribir una receta en gramos, libras o kilogramos de pasta).';
+    }
+    return $mensajes;
+}
+
+/**
+ * Siembra la densidad (gramos por mililitro) de los primeros ingredientes
+ * que la necesitan: mantequilla y harina de trigo, que en una receta real
+ * a veces se escriben por peso (gramos, libras) y otras por volumen
+ * (cucharadas, cucharaditas, tazas) — sin su densidad no hay forma de
+ * convertir el costo entre esos dos mundos (ver comentario de
+ * densidad_g_ml en db/schema.sql y convertirCantidadEntreUnidades() en
+ * includes/helpers.php). Valores de referencia: King Arthur Baking,
+ * "Ingredient Weight Chart" (mantequilla 226 g/taza, harina de trigo todo
+ * uso 120 g/taza; 1 taza = 236.588 ml). Guardado igual que las demás
+ * correcciones: solo toca la fila si su densidad sigue en NULL, para no
+ * pisar un ajuste manual que ya se haya hecho desde Ingredientes.
+ */
+function establecerDensidadIngredientes(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'ingredientes_catalogo', 'densidad_g_ml')) {
+        return $mensajes;
+    }
+    // nombre => [densidad g/ml, nota para el mensaje]
+    $valores = [
+        'Mantequilla'     => [0.9553, '226 g por taza'],
+        'Harina de trigo' => [0.5072, '120 g por taza'],
+    ];
+    $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
+    foreach ($valores as $nombre => [$densidad, $nota]) {
+        $stmt->execute([$densidad, $nombre]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": densidad agregada ($densidad g/ml, ref. $nota) para poder usarse tanto en gramo/libra/kilogramo como en cucharada/cucharadita/taza dentro de una receta.";
+        }
+    }
+    return $mensajes;
+}
+
+/**
  * Padres antes no tenía ningún acceso a Prácticas (era planificación
  * interna del taller). Ahora sí puede VER la pestaña "Estudiantes y pagos"
  * de una práctica (mismo criterio que ya tiene en Eventos), pero sigue sin
@@ -608,6 +688,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, renombrarVainillaLiquidaAExtracto($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoLimonMielVainilla($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoMantequillaGuineoAvena($pdo));
+        $mensajes = array_merge($mensajes, corregirUnidadUsoPasta($pdo));
+        $mensajes = array_merge($mensajes, establecerDensidadIngredientes($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
 

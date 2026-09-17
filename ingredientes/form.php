@@ -14,7 +14,7 @@ $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY
 $ing = [
     'nombre' => '', 'categoria_id' => '', 'icono' => '', 'unidad_id' => '',
     'unidad_compra_id' => '', 'contenido_por_compra' => '1', 'precio_compra' => '',
-    'nota_compra' => '',
+    'nota_compra' => '', 'densidad_g_ml' => '',
 ];
 $errores = [];
 
@@ -39,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ing['contenido_por_compra'] = trim($_POST['contenido_por_compra'] ?? '1');
     $ing['precio_compra'] = trim($_POST['precio_compra'] ?? '0');
     $ing['nota_compra'] = trim($_POST['nota_compra'] ?? '');
+    $ing['densidad_g_ml'] = trim($_POST['densidad_g_ml'] ?? '');
 
     if ($ing['nombre'] === '') {
         $errores[] = 'El nombre es obligatorio.';
@@ -63,6 +64,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($precioCompra < 0) {
         $errores[] = 'El precio de compra no puede ser negativo.';
     }
+    // Opcional: solo hace falta cuando este ingrediente se va a usar tanto
+    // en unidades de masa como de volumen (ej. mantequilla, harina). Vacío
+    // se guarda como NULL, no como 0 (0 g/ml no es una densidad válida).
+    $densidadTexto = str_replace(',', '.', trim($ing['densidad_g_ml']));
+    $densidadGml = null;
+    if ($densidadTexto !== '') {
+        $densidadGml = (float) $densidadTexto;
+        if ($densidadGml <= 0) {
+            $errores[] = 'La densidad, si se indica, debe ser mayor a 0.';
+        }
+    }
     if (!$errores) {
         $stmtDup = db()->prepare('SELECT id FROM ingredientes_catalogo WHERE nombre = ? AND id <> ?');
         $stmtDup->execute([$ing['nombre'], $id ?? 0]);
@@ -75,22 +87,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id) {
             $stmt = db()->prepare(
                 'UPDATE ingredientes_catalogo
-                 SET nombre=?, categoria_id=?, icono=?, unidad_id=?, unidad_compra_id=?, contenido_por_compra=?, precio_compra=?, nota_compra=?
+                 SET nombre=?, categoria_id=?, icono=?, unidad_id=?, unidad_compra_id=?, contenido_por_compra=?, precio_compra=?, nota_compra=?, densidad_g_ml=?
                  WHERE id=?'
             );
             $stmt->execute([
                 $ing['nombre'], $ing['categoria_id'], $ing['icono'] ?: null, $ing['unidad_id'],
-                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $id,
+                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml, $id,
             ]);
             flash('Ingrediente actualizado.');
         } else {
             $stmt = db()->prepare(
-                'INSERT INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
-                 VALUES (?,?,?,?,?,?,?,?)'
+                'INSERT INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra, densidad_g_ml)
+                 VALUES (?,?,?,?,?,?,?,?,?)'
             );
             $stmt->execute([
                 $ing['nombre'], $ing['categoria_id'], $ing['icono'] ?: null, $ing['unidad_id'],
-                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null,
+                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml,
             ]);
             flash('Ingrediente agregado.');
         }
@@ -177,6 +189,16 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="field">
       <label for="nota_compra">Nota de compra (opcional)</label>
       <input type="text" id="nota_compra" name="nota_compra" placeholder="Ej. Cartón de 30 unidades en Bravo" value="<?= e($ing['nota_compra'] ?? '') ?>">
+    </div>
+
+    <h2 class="section-title" style="margin-top:22px;">Convertir entre gramos/libras y cucharadas/tazas (opcional)</h2>
+    <p class="cell-muted" style="font-size:.85rem;margin-top:-6px;">
+      Deja esto vacío casi siempre. Solo hace falta cuando este ingrediente se va a escribir en recetas distintas tanto por peso (Gramo, Libra, Kilogramo) como por volumen (Cucharada, Cucharadita, Taza) — ej. mantequilla, harina — porque para convertir entre esos dos mundos hace falta saber cuánto pesa este ingrediente en particular por cada mililitro (una cucharada de mantequilla no pesa lo mismo que una de harina).
+    </p>
+    <div class="field" style="max-width:260px;">
+      <label for="densidad_g_ml">Densidad (gramos por mililitro)</label>
+      <input type="number" step="any" min="0" id="densidad_g_ml" name="densidad_g_ml" placeholder="Ej. 0.9553" value="<?= e((string) ($ing['densidad_g_ml'] ?? '')) ?>">
+      <div class="hint">Ej. 1 taza (236.6 ml) de mantequilla pesa ≈ 226 g → 226 ÷ 236.6 ≈ 0.9553.</div>
     </div>
 
     <div class="card" style="background:var(--surface-2);padding:12px 16px;margin-top:6px;">
