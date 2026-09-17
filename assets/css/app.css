@@ -238,10 +238,16 @@ table.table{width:100%;border-collapse:collapse;}
 /* Segunda fila de cada línea de ingrediente: opcional, reemplazo, acciones. */
 .ing-row-extra{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding-left:2px;}
 .ing-row-extra input[type="text"]{padding:6px 9px;font-size:.78rem;}
-.al-gusto-check,.opcional-check{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:var(--text-secondary);white-space:nowrap;cursor:pointer;}
+/* Especificidad "label.clase" a propósito: estas casillas viven dentro de un
+   .field (la ficha de Ingredientes), y ".field label{display:block}" (más
+   arriba en este archivo) tiene más especificidad que una clase sola, así
+   que le ganaba a ".al-gusto-check{display:inline-flex}" y rompía por
+   completo el acomodo en fila de estas casillas — cada"al gusto"/"opcional"
+   volvía a apilarse como bloque. */
+label.al-gusto-check,label.opcional-check{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:var(--text-secondary);white-space:nowrap;cursor:pointer;}
 .al-gusto-check input,.opcional-check input{margin:0;}
 .ing-acciones{display:flex;flex-wrap:wrap;gap:6px;}
-.chip-check{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;background:var(--surface);white-space:nowrap;}
+label.chip-check{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;background:var(--surface);white-space:nowrap;}
 .chip-check input{margin:0;}
 .chip-check:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}
 
