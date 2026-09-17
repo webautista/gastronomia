@@ -141,6 +141,24 @@ button{font-family:inherit;}
 .chip-neutral{background:var(--surface-2);color:var(--text-secondary);}
 .chip-muted{background:transparent;border:1px solid var(--border);color:var(--text-tertiary);}
 
+.toggle-card{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px 16px;}
+.toggle-card-text{display:flex;gap:12px;align-items:flex-start;}
+.toggle-card-icon{flex-shrink:0;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border);color:var(--text-tertiary);transition:background .15s,color .15s,border-color .15s;}
+.toggle-card-icon svg{width:18px;height:18px;}
+.toggle-card.is-public .toggle-card-icon{background:var(--success-soft);border-color:transparent;color:var(--success);}
+.toggle-card-title{font-weight:700;color:var(--text);font-size:.92rem;margin-bottom:3px;}
+.toggle-card-desc{font-size:.82rem;color:var(--text-secondary);line-height:1.45;}
+.toggle-card-state{display:inline-block;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-tertiary);margin-top:9px;}
+.toggle-card.is-public .toggle-card-state{color:var(--success);}
+
+.switch{position:relative;display:inline-block;width:44px;height:26px;flex-shrink:0;margin-top:2px;}
+.switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;inset:0;cursor:pointer;z-index:1;}
+.switch-track{position:absolute;inset:0;background:var(--border);border-radius:999px;transition:background .15s;}
+.switch-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s;}
+.switch input:checked ~ .switch-track{background:var(--success);}
+.switch input:checked ~ .switch-thumb{transform:translateX(18px);}
+.switch input:focus-visible ~ .switch-track{outline:2px solid var(--accent);outline-offset:2px;}
+
 .meter{height:7px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
 .meter > span{display:block;height:100%;background:var(--accent);border-radius:999px;}
 .meter.warn > span{background:var(--warning);}
