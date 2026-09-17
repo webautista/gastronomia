@@ -25,7 +25,7 @@ $eventos = $stmt->fetchAll();
 // presupuesto usado (el bug reportado: una partida proyectada de
 // RD$3,000 aparecía como "usada" sin haberse confirmado).
 foreach ($eventos as &$ev) {
-    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
     $ev['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];

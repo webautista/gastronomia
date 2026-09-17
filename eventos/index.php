@@ -45,7 +45,7 @@ $eventos = $stmt->fetchAll();
 // asignados), para que la lista siempre muestre el mismo número que
 // verían al entrar al evento.
 foreach ($eventos as &$ev) {
-    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
     $ev['costo_recetas'] = $costoRecetas;

@@ -24,7 +24,7 @@ $proximosEventos = $stmt->fetchAll();
 // se muestra la proyectada — la estimación más completa — como "la cuota"
 // pública.
 foreach ($proximosEventos as &$ev) {
-    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $stmtNum = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
     $stmtNum->execute([$ev['id']]);

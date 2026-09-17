@@ -217,25 +217,48 @@ function costoTotalReceta(PDO $pdo, int $recetaId, ?int $porcionesDeseadas = nul
 }
 
 /**
- * Costo total en vivo de las recetas asignadas a un evento: la suma de
- * costoTotalReceta() de cada receta, escalada a las porciones que hace
- * falta preparar para ese evento (no a las porciones base de la receta).
+ * Recetas asignadas a un evento o práctica, con las porciones que hace
+ * falta preparar de cada una — la misma forma que espera
+ * listaCompraConsolidada(). $entidadTipo es 'evento' o 'practica'.
  */
-function costoTotalRecetasEvento(PDO $pdo, int $eventoId): float
+function recetasAsignadas(PDO $pdo, string $entidadTipo, int $entidadId): array
 {
-    $stmt = $pdo->prepare(
-        'SELECT er.porciones_necesarias, r.id FROM evento_receta er
-         JOIN recetas r ON r.id = er.receta_id
-         WHERE er.evento_id = ?'
-    );
-    $stmt->execute([$eventoId]);
-    $recetas = $stmt->fetchAll();
-
-    $total = 0.0;
-    foreach ($recetas as $rc) {
-        $total += costoTotalReceta($pdo, (int) $rc['id'], (int) $rc['porciones_necesarias']);
+    if ($entidadTipo === 'practica') {
+        $stmt = $pdo->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
+    } else {
+        $stmt = $pdo->prepare('SELECT receta_id, porciones_necesarias FROM evento_receta WHERE evento_id = ?');
     }
-    return $total;
+    $stmt->execute([$entidadId]);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Costo real de materiales de un evento o práctica, para la tarjeta
+ * "Inversión" y para calcularCuotas() — a diferencia de sumar
+ * costoTotalReceta() de cada receta por separado (la suma ingenua del
+ * costo por porción de cada receta, calculada receta por receta sin verlas
+ * juntas), este usa el mismo total consolidado que ya se muestra en la
+ * pestaña Lista de Compra
+ * (listaCompraConsolidada(), sección 12/16 de la especificación): suma los
+ * ingredientes de TODAS las recetas juntas (así dos recetas que comparten
+ * un ingrediente no pagan cada una su propio redondeo por separado) y
+ * respeta las decisiones de compra guardadas (comprar el paquete completo
+ * a su precio real, o "ya lo tiene" — compra_decisiones, sección 16). Es
+ * intencional que este número pueda ser MAYOR que la suma de costos "en el
+ * papel" de cada receta: si hay que comprar el paquete completo de queso
+ * parmesano para usar solo 60 g, el gasto real es el del paquete, no el de
+ * la porción — y la tarjeta de Inversión y la cuota deben reflejar ese
+ * gasto real, no uno más bajo que nunca se va a poder cumplir en la
+ * práctica. Devuelve 0 si no hay ninguna receta asignada todavía.
+ */
+function costoRecetasConsolidado(PDO $pdo, string $entidadTipo, int $entidadId): float
+{
+    $recetas = recetasAsignadas($pdo, $entidadTipo, $entidadId);
+    if (!$recetas) {
+        return 0.0;
+    }
+    $decisiones = cargarDecisionesCompra($pdo, $entidadTipo, $entidadId);
+    return listaCompraConsolidada($pdo, $recetas, $decisiones)['total'];
 }
 
 /**

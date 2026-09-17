@@ -147,7 +147,6 @@ $stmt = db()->prepare(
 $stmt->execute([$id]);
 $recetasPractica = $stmt->fetchAll();
 
-$costoMateriales = 0;
 foreach ($recetasPractica as &$rc) {
     $porcionesBase = max(1, (int) $rc['porciones_base']);
     $stmtIng = db()->prepare(
@@ -166,9 +165,17 @@ foreach ($recetasPractica as &$rc) {
         $esEntera = (bool) ($ing['unidad_entera'] ?? false);
         $rc['costo_total'] += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
     }
-    $costoMateriales += $rc['costo_total'];
 }
 unset($rc);
+
+// El costo que alimenta la tarjeta "Inversión" y la cuota por estudiante
+// NO es la simple suma de los chips de arriba (cada uno calculado receta
+// por receta, sin verlas juntas): es el mismo total consolidado y
+// consciente de las decisiones de compra que ya se muestra en la pestaña
+// Lista de Compra (costoRecetasConsolidado(), includes/helpers.php) — para
+// que la tarjeta de Inversión nunca diga un número distinto al que dice
+// esa pestaña.
+$costoMateriales = costoRecetasConsolidado(db(), 'practica', $id);
 
 // Acciones/cortes marcados por línea (igual que en eventos/detalle.php).
 $accionesPorFila = [];

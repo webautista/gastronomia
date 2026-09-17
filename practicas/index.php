@@ -45,10 +45,7 @@ $puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
 // igual que en eventos/index.php: costo de materiales (o el gasto real si
 // ya lo superó) más otros gastos, dividido entre los estudiantes asignados.
 foreach ($practicas as &$p) {
-    $stmtR = db()->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
-    $stmtR->execute([(int) $p['id']]);
-    $recetasP = $stmtR->fetchAll();
-    $p['costo_materiales'] = $recetasP ? listaCompraConsolidada(db(), $recetasP)['total'] : 0.0;
+    $p['costo_materiales'] = costoRecetasConsolidado(db(), 'practica', (int) $p['id']);
 
     $stmtEst = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ?');
     $stmtEst->execute([(int) $p['id']]);
