@@ -17,7 +17,7 @@ if (!$id) {
     redirect('index.php');
 }
 
-$tabsValidos = ['resumen', 'estudiantes', 'recetas'];
+$tabsValidos = ['resumen', 'estudiantes', 'recetas', 'compras'];
 if ($puedeVerGastos) {
     $tabsValidos[] = 'gastos';
 }
@@ -282,6 +282,7 @@ require __DIR__ . '/../includes/layout_top.php';
   <a class="tab <?= $tab === 'resumen' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=resumen">Resumen</a>
   <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
   <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas e ingredientes</a>
+  <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
   <?php if ($puedeVerGastos): ?>
     <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
   <?php endif; ?>
@@ -404,11 +405,16 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
 
 <?php elseif ($tab === 'recetas'): ?>
-  <div class="toolbar">
+  <div class="toolbar no-print">
     <div class="cell-muted">Las cantidades se recalculan según las porciones que necesitas preparar.</div>
-    <?php if ($puedeEditarEvento): ?>
-      <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
-    <?php endif; ?>
+    <div class="row-actions">
+      <?php if (count($recetasEvento) > 1): ?>
+        <button class="btn btn-secondary btn-sm" type="button" data-role="toggle-todas-recetas" data-contenedor="lista-recetas-evento">Colapsar todo</button>
+      <?php endif; ?>
+      <?php if ($puedeEditarEvento): ?>
+        <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
+      <?php endif; ?>
+    </div>
   </div>
   <?php if (!$recetasEvento): ?>
     <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
@@ -416,6 +422,7 @@ require __DIR__ . '/../includes/layout_top.php';
       <div>Agrega recetas del catálogo para calcular los ingredientes.</div>
     </div></div>
   <?php endif; ?>
+  <div data-role="lista-recetas-evento">
   <?php foreach ($recetasEvento as $rc):
     $porcionesBase = max(1, (int) $rc['porciones_base']);
     $ingredientesReceta = $rc['ingredientes'];
@@ -423,12 +430,15 @@ require __DIR__ . '/../includes/layout_top.php';
   ?>
     <div class="recipe-card" data-recipe-card data-porciones-base="<?= $porcionesBase ?>">
       <div class="recipe-card-head">
-        <div>
-          <h4><?= e($rc['nombre']) ?></h4>
-          <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="icon-btn no-print" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
+          <div>
+            <h4><?= e($rc['nombre']) ?></h4>
+            <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones · <span class="mono" data-role="costo-total-badge"><?= money($costoTotal) ?></span></div>
+          </div>
         </div>
         <?php if ($puedeEditarEvento): ?>
-          <form method="post" style="display:flex;align-items:center;gap:14px;">
+          <form method="post" class="no-print" style="display:flex;align-items:center;gap:14px;">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="actualizar_porciones">
             <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
@@ -438,7 +448,7 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
           </form>
-          <form method="post" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
+          <form method="post" class="no-print" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="quitar_receta">
             <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
@@ -448,6 +458,7 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
         <?php endif; ?>
       </div>
+      <div class="recipe-card-body">
       <div class="table-wrap">
       <table class="table">
         <thead><tr><th>Ingrediente</th><th>Cantidad base</th><th>Cantidad necesaria</th><th>Costo est.</th></tr></thead>
@@ -482,8 +493,55 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="prep-text"><?= nl2br(e($rc['preparacion'])) ?></div>
         </details>
       <?php endif; ?>
+      </div>
     </div>
   <?php endforeach; ?>
+  </div>
+
+<?php elseif ($tab === 'compras'):
+  $recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasEvento);
+  $consolidado = listaCompraConsolidada(db(), $recetasParaLista);
+?>
+  <div class="toolbar no-print">
+    <div class="cell-muted">Ingredientes de todas las recetas de este evento, sumados y organizados para ir al súper.</div>
+    <div class="row-actions">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="window.print()"><?= icon('printer') ?> Imprimir</button>
+      <a class="btn btn-secondary btn-sm" href="lista_compra_txt.php?id=<?= $id ?>"><?= icon('download') ?> Descargar (.txt)</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Ingrediente</th><th>Cantidad</th><th>Recetas</th><th>Costo est.</th></tr></thead>
+      <tbody>
+        <?php if (!$consolidado['lineas'] && !$consolidado['al_gusto']): ?>
+          <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay recetas asignadas a este evento.</td></tr>
+        <?php endif; ?>
+        <?php foreach ($consolidado['lineas'] as $l): ?>
+          <tr>
+            <td class="cell-name"><?= e($l['nombre']) ?></td>
+            <td class="mono"><?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?></td>
+            <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td>
+            <td class="mono"><?= money($l['monto']) ?></td>
+          </tr>
+        <?php endforeach; ?>
+        <?php foreach ($consolidado['al_gusto'] as $ag): ?>
+          <tr>
+            <td class="cell-name"><?= e($ag['nombre']) ?> <span class="chip chip-muted" style="font-size:.68rem;">Al gusto</span></td>
+            <td class="cell-muted mono">—</td>
+            <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $ag['recetas'])) ?></td>
+            <td class="cell-muted mono">—</td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+      <?php if ($consolidado['lineas']): ?>
+      <tfoot>
+        <tr><td colspan="3" style="text-align:right;font-weight:600;">Costo estimado total</td><td class="mono" style="font-weight:600;"><?= money($consolidado['total']) ?></td></tr>
+      </tfoot>
+      <?php endif; ?>
+    </table>
+    </div>
+  </div>
 
 <?php elseif ($tab === 'gastos'): ?>
   <div class="card card-pad" style="margin-bottom:16px;">

@@ -368,6 +368,7 @@ CREATE TABLE IF NOT EXISTS modulos (
 INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('panel', 'Panel general', 10),
 ('eventos', 'Eventos', 20),
+('practicas', 'Prácticas', 25),
 ('gastos', 'Gastos de eventos', 30),
 ('estudiantes', 'Estudiantes', 40),
 ('recetas', 'Recetas', 50),
@@ -410,12 +411,13 @@ INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar
 SELECT r.id, m.id, 1, 1, 1, 1 FROM roles r JOIN modulos m ON r.nombre = 'Administrador';
 
 -- Padres: solo ver eventos y recetas (incluye el estado de pagos dentro
--- del detalle del evento), nada de gastos, estudiantes, configuración ni
--- usuarios, y ninguna acción de crear/editar/eliminar.
+-- del detalle del evento), nada de gastos, estudiantes, configuración,
+-- usuarios ni prácticas (planificación interna del taller), y ninguna
+-- acción de crear/editar/eliminar.
 INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar)
 SELECT r.id, m.id, 1, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Padres' AND m.clave IN ('panel','eventos','recetas');
 INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar)
-SELECT r.id, m.id, 0, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Padres' AND m.clave IN ('gastos','estudiantes','ingredientes','configuracion','usuarios');
+SELECT r.id, m.id, 0, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Padres' AND m.clave IN ('gastos','estudiantes','ingredientes','configuracion','usuarios','practicas');
 
 CREATE TABLE IF NOT EXISTS usuarios (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -552,6 +554,38 @@ CREATE TABLE IF NOT EXISTS evento_receta (
     CONSTRAINT fk_er_evento FOREIGN KEY (evento_id)
         REFERENCES eventos(id) ON DELETE CASCADE,
     CONSTRAINT fk_er_receta FOREIGN KEY (receta_id)
+        REFERENCES recetas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- Prácticas: sesiones de práctica de clase (no eventos con estudiantes ni
+-- cobro de cuota) en las que se preparan una o varias recetas en una fecha
+-- puntual, para calcular solo el gasto de materiales que hace falta según
+-- lo que se va a cocinar ese día.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS practicas (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(200) NOT NULL,
+    fecha DATE NOT NULL,
+    maestro_responsable VARCHAR(150) NULL,
+    materia VARCHAR(150) NULL,
+    notas TEXT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_practicas_fecha (fecha)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Recetas asignadas a una práctica, con las porciones que hay que preparar
+-- ese día — mismo patrón que evento_receta (las cantidades de ingredientes
+-- se calculan en la aplicación, nunca se guardan).
+CREATE TABLE IF NOT EXISTS practica_receta (
+    practica_id INT UNSIGNED NOT NULL,
+    receta_id INT UNSIGNED NOT NULL,
+    porciones_necesarias INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (practica_id, receta_id),
+    CONSTRAINT fk_pracr_practica FOREIGN KEY (practica_id)
+        REFERENCES practicas(id) ON DELETE CASCADE,
+    CONSTRAINT fk_pracr_receta FOREIGN KEY (receta_id)
         REFERENCES recetas(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

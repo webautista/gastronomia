@@ -193,6 +193,16 @@ table.table{width:100%;border-collapse:collapse;}
 .portion-control{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--text-secondary);}
 .portion-control input{width:72px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:.85rem;}
 
+/* Colapsar/expandir una tarjeta de receta (eventos y prácticas): con la
+   tarjeta colapsada, solo queda visible el encabezado (nombre, porciones,
+   costo total) — útil para tener un overview rápido de varias recetas a la
+   vez. El botón por tarjeta rota su flecha (mismo ícono chevronDown que el
+   menú de acciones de recetas/form.php) para indicar el estado. */
+.recipe-card-head [data-role="recipe-collapse-toggle"] svg{transition:transform .15s;}
+.recipe-card.collapsed [data-role="recipe-collapse-toggle"] svg{transform:rotate(-90deg);}
+.recipe-card.collapsed .recipe-card-body{display:none;}
+.recipe-card-head [data-role="costo-total-badge"]{color:var(--text);font-weight:600;}
+
 .empty{text-align:center;padding:40px 20px;color:var(--text-secondary);}
 .empty svg{width:38px;height:38px;color:var(--text-tertiary);margin-bottom:10px;}
 
@@ -288,3 +298,17 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .check-row .csub{font-size:.74rem;color:var(--text-tertiary);}
 
 .badge-demo{font-size:.68rem;background:var(--surface-2);color:var(--text-secondary);padding:4px 10px;border-radius:999px;font-weight:600;}
+
+/* Impresión de la pestaña "Lista de Compra" (eventos y prácticas): al
+   imprimir (Ctrl+P) desde esa pestaña, se oculta todo el menú/navegación y
+   los botones, dejando solo el contenido de la lista lista para llevar al
+   súper o guardar como PDF desde el diálogo de impresión del navegador.
+   ".no-print" marca además botones sueltos que no tiene sentido imprimir
+   (Editar, Agregar receta, Colapsar todo, Imprimir/Descargar) aunque estén
+   fuera de la pestaña de compras. */
+@media print{
+  .sidebar,.topbar,.tabs,.summary-grid,.page-head,.no-print{display:none !important;}
+  body,.app,.main,.content{background:#fff !important;}
+  .content{margin:0 !important;padding:0 !important;}
+  .card{box-shadow:none !important;border:none !important;}
+}

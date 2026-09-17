@@ -296,3 +296,191 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
     }
     return $costoPorUnidadOrigen * ($factorDestino / $factorOrigen);
 }
+
+/**
+ * Consolida en una sola lista de compra los ingredientes de un conjunto de
+ * recetas, cada una con las porciones que hace falta preparar (de un evento
+ * o de una práctica — cualquier lugar donde se asignen recetas con
+ * porciones_necesarias). La gracia de consolidar en vez de sumar el costo
+ * "ya redondeado" de cada receta por separado: si tres recetas usan 0.3,
+ * 0.4 y 0.5 huevos cada una, comprar por separado redondearía a un huevo
+ * completo TRES veces (3 huevos); consolidado, se suman las cantidades
+ * crudas primero (1.2 huevos) y la regla de "se compra completa" se aplica
+ * una sola vez sobre el total (2 huevos) — se ahorra comprar de más.
+ *
+ * Agrupa por ingrediente del catálogo (ingrediente_id) cuando existe, o por
+ * nombre de texto libre en minúsculas cuando no; dentro de un mismo
+ * ingrediente, convierte a una unidad común cuando las unidades son
+ * compatibles (mismo tipo_medida, vía convertirCostoPorUnidad()) — si no
+ * son convertibles (unidades de conteo distintas, o masa vs. volumen),
+ * quedan como líneas separadas para no inventar una conversión que no
+ * existe. Las líneas "Al gusto" no tienen cantidad medible: se listan
+ * aparte, solo para recordar que hace falta tenerlas a mano.
+ *
+ * $recetasConPorciones: array de ['receta_id' => int, 'porciones_necesarias' => int]
+ * Devuelve ['lineas' => [...], 'al_gusto' => [...], 'total' => float].
+ */
+function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones): array
+{
+    $unidadesPorId = [];
+    foreach ($pdo->query('SELECT * FROM unidades_medida')->fetchAll() as $u) {
+        $unidadesPorId[(int) $u['id']] = $u;
+    }
+
+    $grupos = [];
+    $alGusto = [];
+
+    foreach ($recetasConPorciones as $rp) {
+        $recetaId = (int) ($rp['receta_id'] ?? 0);
+        $porcionesNecesarias = (int) ($rp['porciones_necesarias'] ?? 0);
+        if ($recetaId <= 0) {
+            continue;
+        }
+        $stmt = $pdo->prepare('SELECT nombre, porciones_base FROM recetas WHERE id = ?');
+        $stmt->execute([$recetaId]);
+        $receta = $stmt->fetch();
+        if (!$receta) {
+            continue;
+        }
+        $porcionesBase = max(1, (int) $receta['porciones_base']);
+        $nombreReceta = $receta['nombre'];
+
+        $stmtIng = $pdo->prepare(
+            'SELECT i.* FROM ingredientes i WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
+        );
+        $stmtIng->execute([$recetaId]);
+
+        foreach ($stmtIng->fetchAll() as $ing) {
+            $nombre = $ing['nombre'];
+            $claveBase = !empty($ing['ingrediente_id'])
+                ? 'cat:' . $ing['ingrediente_id']
+                : 'txt:' . mb_strtolower(trim($nombre));
+
+            if (!empty($ing['al_gusto'])) {
+                if (!isset($alGusto[$claveBase])) {
+                    $alGusto[$claveBase] = ['nombre' => $nombre, 'recetas' => []];
+                }
+                $alGusto[$claveBase]['recetas'][$nombreReceta] = true;
+                continue;
+            }
+
+            $unidadIng = $unidadesPorId[(int) $ing['unidad_id']] ?? null;
+            $tipoMedida = $unidadIng['tipo_medida'] ?? null;
+            $clave = $claveBase . '|' . ($tipoMedida ?: ('u' . $ing['unidad_id']));
+
+            $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, $porcionesNecesarias);
+            $esEntera = (bool) ($unidadIng['es_entera'] ?? false);
+            $costoUnit = (float) $ing['costo_unitario'];
+
+            if (!isset($grupos[$clave])) {
+                $grupos[$clave] = [
+                    'nombre' => $nombre,
+                    'unidad_ancla' => $unidadIng,
+                    'cantidad' => 0.0,
+                    // Suma del costo de cada línea EN SU PROPIA UNIDAD
+                    // (cantidad × costo, sin convertir nada): el monto de una
+                    // línea no depende de en qué unidad esté escrita, así que
+                    // sumarlo así es exacto y no arrastra el error de redondeo
+                    // que sí introduciría convertir un costo por unidad de
+                    // Gramo a Onza (o viceversa) y multiplicar después.
+                    'monto_sin_redondear' => 0.0,
+                    'es_entera' => $esEntera,
+                    'recetas' => [],
+                ];
+            }
+
+            // La cantidad SÍ se convierte a una unidad común (la del primer
+            // ingrediente del grupo, "unidad_ancla") porque esto es solo para
+            // mostrar "cuánto comprar" en una sola unidad legible — no para
+            // calcular el costo, que ya se sumó arriba sin necesitar
+            // conversión.
+            $cantidadEnAncla = $cantidad;
+            $unidadAncla = $grupos[$clave]['unidad_ancla'];
+            if ($unidadIng && $unidadAncla && (int) $unidadIng['id'] !== (int) $unidadAncla['id']) {
+                $factorOrigen = (float) ($unidadIng['factor_base'] ?? 0);
+                $factorDestino = (float) ($unidadAncla['factor_base'] ?? 0);
+                if ($factorOrigen > 0 && $factorDestino > 0) {
+                    $cantidadEnAncla = $cantidad * ($factorOrigen / $factorDestino);
+                }
+            }
+
+            $grupos[$clave]['cantidad'] += $cantidadEnAncla;
+            $grupos[$clave]['monto_sin_redondear'] += $cantidad * $costoUnit;
+            $grupos[$clave]['recetas'][$nombreReceta] = true;
+        }
+    }
+
+    $lineas = [];
+    $total = 0.0;
+    foreach ($grupos as $g) {
+        // Unidades continuas (Gramo, Onza, Cucharada...) nunca se compran
+        // "completas": el monto exacto ya sumado sin convertir es el
+        // correcto, sin más que hacer. Solo las unidades de conteo
+        // (es_entera, ej. Unidad, Lata) necesitan redondear la cantidad
+        // total hacia arriba UNA vez — para eso hace falta un precio
+        // promedio por unidad, que se obtiene del propio monto ya sumado
+        // (monto_sin_redondear / cantidad), en vez de arrastrar el costo de
+        // una sola línea, así que sigue siendo correcto aunque dos recetas
+        // hayan guardado el costo con centavos ligeramente distintos.
+        if ($g['es_entera'] && $g['cantidad'] > 0) {
+            $costoPromedioPorUnidad = $g['monto_sin_redondear'] / $g['cantidad'];
+            $monto = cantidadDeCompra($g['cantidad'], true) * $costoPromedioPorUnidad;
+        } else {
+            $monto = $g['monto_sin_redondear'];
+        }
+        $total += $monto;
+        $lineas[] = [
+            'nombre' => $g['nombre'],
+            'cantidad' => $g['cantidad'],
+            'unidad' => $g['unidad_ancla']['abreviatura'] ?? '',
+            'monto' => $monto,
+            'recetas' => array_keys($g['recetas']),
+        ];
+    }
+    usort($lineas, fn($a, $b) => strnatcasecmp($a['nombre'], $b['nombre']));
+
+    $alGustoLista = array_values($alGusto);
+    foreach ($alGustoLista as &$ag) {
+        $ag['recetas'] = array_keys($ag['recetas']);
+    }
+    unset($ag);
+    usort($alGustoLista, fn($a, $b) => strnatcasecmp($a['nombre'], $b['nombre']));
+
+    return ['lineas' => $lineas, 'al_gusto' => $alGustoLista, 'total' => $total];
+}
+
+/**
+ * Versión en texto plano de una lista de compra consolidada (ver
+ * listaCompraConsolidada()), lista para descargar como archivo .txt — para
+ * que los estudiantes puedan llevarla al súper sin necesitar abrir el
+ * sistema desde el navegador.
+ */
+function renderListaCompraTexto(string $titulo, array $consolidado): string
+{
+    $lineas = [];
+    $lineas[] = $titulo;
+    $lineas[] = str_repeat('=', mb_strlen($titulo));
+    $lineas[] = '';
+
+    if (!$consolidado['lineas'] && !$consolidado['al_gusto']) {
+        $lineas[] = '(Sin ingredientes todavía — asigna recetas primero.)';
+        return implode("\n", $lineas) . "\n";
+    }
+
+    foreach ($consolidado['lineas'] as $l) {
+        $lineas[] = sprintf('[ ] %s — %s %s (%s)', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']));
+    }
+
+    if ($consolidado['al_gusto']) {
+        $lineas[] = '';
+        $lineas[] = 'Al gusto (sin cantidad fija):';
+        foreach ($consolidado['al_gusto'] as $ag) {
+            $lineas[] = '[ ] ' . $ag['nombre'];
+        }
+    }
+
+    $lineas[] = '';
+    $lineas[] = 'Costo estimado total: ' . money($consolidado['total']);
+
+    return implode("\n", $lineas) . "\n";
+}

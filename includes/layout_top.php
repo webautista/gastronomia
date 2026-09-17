@@ -26,6 +26,7 @@ $usuarioActual = currentUser();
 $todosLosNavItems = [
     'panel'        => ['label' => 'Panel',              'icon' => 'grid',     'href' => $base . '/panel.php'],
     'eventos'      => ['label' => 'Eventos',             'icon' => 'calendar', 'href' => $base . '/eventos/index.php'],
+    'practicas'    => ['label' => 'Prácticas',           'icon' => 'whisk',    'href' => $base . '/practicas/index.php'],
     'estudiantes'  => ['label' => 'Estudiantes',         'icon' => 'users',    'href' => $base . '/estudiantes/index.php'],
     'recetas'      => ['label' => 'Recetas',             'icon' => 'book',     'href' => $base . '/recetas/index.php'],
     'ingredientes' => ['label' => 'Ingredientes',         'icon' => 'basket',   'href' => $base . '/ingredientes/index.php'],

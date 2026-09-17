@@ -75,4 +75,33 @@
     var totalCelda = card.querySelector('[data-role="costo-total"]');
     if (totalCelda) totalCelda.textContent = 'RD$ ' + Math.round(total).toLocaleString('es-DO');
   });
+
+  /* Colapsar/expandir una tarjeta de receta (eventos y prácticas): oculta
+     la tabla de ingredientes y la preparación, dejando solo el nombre, las
+     porciones y el costo total a la vista — útil para tener un overview
+     rápido cuando hay varias recetas asignadas. Un botón aparte por tarjeta
+     y otro de "Colapsar todo / Expandir todo" para todas a la vez. */
+  document.addEventListener('click', function (e) {
+    var toggleUna = e.target.closest('[data-role="recipe-collapse-toggle"]');
+    if (toggleUna) {
+      var card = toggleUna.closest('[data-recipe-card]');
+      if (card) card.classList.toggle('collapsed');
+      return;
+    }
+
+    var toggleTodas = e.target.closest('[data-role="toggle-todas-recetas"]');
+    if (toggleTodas) {
+      var contenedorId = toggleTodas.getAttribute('data-contenedor');
+      var contenedor = contenedorId ? document.querySelector('[data-role="' + contenedorId + '"]') : document;
+      if (!contenedor) return;
+      var tarjetas = contenedor.querySelectorAll('[data-recipe-card]');
+      var hayAlgunaExpandida = Array.prototype.some.call(tarjetas, function (t) {
+        return !t.classList.contains('collapsed');
+      });
+      tarjetas.forEach(function (t) {
+        t.classList.toggle('collapsed', hayAlgunaExpandida);
+      });
+      toggleTodas.textContent = hayAlgunaExpandida ? 'Expandir todo' : 'Colapsar todo';
+    }
+  });
 })();
