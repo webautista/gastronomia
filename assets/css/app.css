@@ -246,10 +246,24 @@ table.table{width:100%;border-collapse:collapse;}
    volvía a apilarse como bloque. */
 label.al-gusto-check,label.opcional-check{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:var(--text-secondary);white-space:nowrap;cursor:pointer;}
 .al-gusto-check input,.opcional-check input{margin:0;}
-.ing-acciones{display:flex;flex-wrap:wrap;gap:6px;}
-label.chip-check{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;background:var(--surface);white-space:nowrap;}
-.chip-check input{margin:0;}
-.chip-check:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}
+/* Menú desplegable de "Preparación (cortes/acciones)": un botón que resume
+   lo marcado (o un texto de relleno si no hay nada marcado todavía) y, al
+   hacer clic, despliega un panel con las casillas de todas las acciones
+   activas — mucho más compacto que mostrarlas todas sueltas en la fila. */
+.acciones-dropdown{position:relative;}
+.acciones-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:220px;max-width:100%;padding:7px 10px;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text-tertiary);cursor:pointer;text-align:left;}
+.acciones-toggle:hover{border-color:var(--accent);}
+.acciones-toggle[data-has-value="1"]{color:var(--text);}
+.acciones-toggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.acciones-toggle svg{width:14px;height:14px;flex-shrink:0;color:var(--text-tertiary);transition:transform .15s;}
+.acciones-dropdown.open .acciones-toggle{border-color:var(--accent);}
+.acciones-dropdown.open .acciones-toggle svg{transform:rotate(180deg);}
+.acciones-panel{position:absolute;top:calc(100% + 4px);left:0;z-index:30;width:340px;max-width:min(340px, 80vw);max-height:250px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);padding:8px;display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;}
+.acciones-panel[hidden]{display:none;}
+label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;padding:5px 6px;border-radius:6px;cursor:pointer;color:var(--text-secondary);white-space:nowrap;}
+.accion-item:hover{background:var(--surface-2);}
+.accion-item input{margin:0;}
+@media (max-width:600px){.acciones-panel{grid-template-columns:1fr;width:260px;}}
 
 /* Modal (alta rápida de ingrediente, etc.) */
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,20,15,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;}

@@ -14,6 +14,26 @@ $errores = [];
 
 $accionesIngrediente = db()->query('SELECT * FROM acciones_ingrediente WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $accionesValidas = array_column($accionesIngrediente, 'id');
+$accionesNombrePorId = array_column($accionesIngrediente, 'nombre', 'id');
+
+/**
+ * Texto del botón desplegable de "Preparación (cortes/acciones)" de una
+ * línea de ingrediente, a partir de los nombres ya marcados para esa línea.
+ * Se calcula del lado del servidor (no con JavaScript al cargar la página)
+ * para que una receta con acciones ya guardadas se vea bien de una vez, sin
+ * depender de que el JS corra primero.
+ */
+function etiquetaAccionesSeleccionadas(array $nombres): string
+{
+    if (!$nombres) {
+        return 'Preparación (cortes/acciones)';
+    }
+    $nombres = array_values($nombres);
+    if (count($nombres) <= 2) {
+        return implode(', ', $nombres);
+    }
+    return implode(', ', array_slice($nombres, 0, 2)) . ' +' . (count($nombres) - 2) . ' más';
+}
 
 $categorias = db()->query('SELECT * FROM categorias_receta WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
@@ -322,7 +342,11 @@ require __DIR__ . '/../includes/layout_top.php';
         <span>Cantidad</span><span></span><span>Ingrediente</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span><span></span>
       </div>
       <div id="ingRows">
-        <?php foreach ($ingredientes as $ing): $esAlGusto = !empty($ing['al_gusto']); ?>
+        <?php foreach ($ingredientes as $ing): $esAlGusto = !empty($ing['al_gusto']);
+          $accionesFilaIds = $ing['acciones'] ?? [];
+          $accionesFilaNombres = array_values(array_intersect_key($accionesNombrePorId, array_flip($accionesFilaIds)));
+          $tieneAcciones = count($accionesFilaNombres) > 0;
+        ?>
           <div class="ing-row-block" data-ing-row>
             <div class="ing-row">
               <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= $esAlGusto ? '' : e((string) $ing['cantidad']) ?>" <?= $esAlGusto ? 'disabled' : '' ?>>
@@ -343,10 +367,16 @@ require __DIR__ . '/../includes/layout_top.php';
             <div class="ing-row-extra">
               <label class="opcional-check"><input type="checkbox" name="ing_opcional[]" value="1" <?= !empty($ing['opcional']) ? 'checked' : '' ?>> Opcional</label>
               <input type="text" name="ing_reemplazo[]" placeholder="Reemplazo (opcional, ej. o mantequilla de maní)" list="catalogoIngredientesList" value="<?= e((string) ($ing['reemplazo'] ?? '')) ?>" style="flex:1;min-width:200px;">
-              <div class="ing-acciones" data-role="ing-acciones-wrap">
-                <?php foreach ($accionesIngrediente as $ac): ?>
-                  <label class="chip-check"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>" <?= in_array((int) $ac['id'], $ing['acciones'] ?? [], true) ? 'checked' : '' ?>> <?= e($ac['nombre']) ?></label>
-                <?php endforeach; ?>
+              <div class="acciones-dropdown" data-role="acciones-dropdown">
+                <button type="button" class="acciones-toggle" data-role="acciones-toggle" data-has-value="<?= $tieneAcciones ? '1' : '0' ?>">
+                  <span data-role="acciones-label"><?= e(etiquetaAccionesSeleccionadas($accionesFilaNombres)) ?></span>
+                  <?= icon('chevronDown') ?>
+                </button>
+                <div class="acciones-panel" data-role="acciones-panel" hidden>
+                  <?php foreach ($accionesIngrediente as $ac): ?>
+                    <label class="accion-item"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>" <?= in_array((int) $ac['id'], $accionesFilaIds, true) ? 'checked' : '' ?>> <?= e($ac['nombre']) ?></label>
+                  <?php endforeach; ?>
+                </div>
               </div>
             </div>
             <input type="hidden" name="ing_al_gusto[]" data-role="ing-al-gusto-hidden" value="<?= $esAlGusto ? '1' : '0' ?>">
@@ -398,10 +428,16 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="ing-row-extra">
       <label class="opcional-check"><input type="checkbox" name="ing_opcional[]" value="1"> Opcional</label>
       <input type="text" name="ing_reemplazo[]" placeholder="Reemplazo (opcional, ej. o mantequilla de maní)" list="catalogoIngredientesList" style="flex:1;min-width:200px;">
-      <div class="ing-acciones" data-role="ing-acciones-wrap">
-        <?php foreach ($accionesIngrediente as $ac): ?>
-          <label class="chip-check"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>"> <?= e($ac['nombre']) ?></label>
-        <?php endforeach; ?>
+      <div class="acciones-dropdown" data-role="acciones-dropdown">
+        <button type="button" class="acciones-toggle" data-role="acciones-toggle" data-has-value="0">
+          <span data-role="acciones-label">Preparación (cortes/acciones)</span>
+          <?= icon('chevronDown') ?>
+        </button>
+        <div class="acciones-panel" data-role="acciones-panel" hidden>
+          <?php foreach ($accionesIngrediente as $ac): ?>
+            <label class="accion-item"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>"> <?= e($ac['nombre']) ?></label>
+          <?php endforeach; ?>
+        </div>
       </div>
     </div>
     <input type="hidden" name="ing_al_gusto[]" data-role="ing-al-gusto-hidden" value="0">
@@ -627,6 +663,36 @@ require __DIR__ . '/../includes/layout_top.php';
       recalcularTotal();
     }
 
+    // Texto del botón del menú de "Preparación (cortes/acciones)": igual que
+    // etiquetaAccionesSeleccionadas() en recetas/form.php (PHP), para que el
+    // texto se vea igual al cargar la página (calculado en el servidor) y al
+    // cambiar la selección en el navegador (calculado aquí).
+    function actualizarEtiquetaAcciones(dropdown) {
+      var labelEl = dropdown.querySelector('[data-role="acciones-label"]');
+      var toggleEl = dropdown.querySelector('[data-role="acciones-toggle"]');
+      if (!labelEl || !toggleEl) return;
+      var nombres = [];
+      dropdown.querySelectorAll('[data-role="ing-accion-check"]:checked').forEach(function (chk) {
+        nombres.push(chk.closest('label').textContent.trim());
+      });
+      if (nombres.length === 0) {
+        labelEl.textContent = 'Preparación (cortes/acciones)';
+        toggleEl.setAttribute('data-has-value', '0');
+      } else if (nombres.length <= 2) {
+        labelEl.textContent = nombres.join(', ');
+        toggleEl.setAttribute('data-has-value', '1');
+      } else {
+        labelEl.textContent = nombres.slice(0, 2).join(', ') + ' +' + (nombres.length - 2) + ' más';
+        toggleEl.setAttribute('data-has-value', '1');
+      }
+    }
+
+    function cerrarMenuAcciones(dropdown) {
+      dropdown.classList.remove('open');
+      var panel = dropdown.querySelector('[data-role="acciones-panel"]');
+      if (panel) panel.hidden = true;
+    }
+
     document.addEventListener('input', function (e) {
       var nombreInput = e.target.closest('input[name="ing_nombre[]"]');
       if (nombreInput) {
@@ -663,10 +729,44 @@ require __DIR__ . '/../includes/layout_top.php';
           if (chkAlGusto.checked) inputCantidadAg.value = '';
         }
         recalcularTotal();
+        return;
+      }
+      // Menú desplegable de "Preparación (cortes/acciones)": al marcar o
+      // destildar una opción, actualiza el texto del botón para que se vea
+      // de un vistazo qué quedó seleccionado, sin cerrar el menú (así se
+      // pueden marcar varias seguidas).
+      var chkAccion = e.target.closest('[data-role="ing-accion-check"]');
+      if (chkAccion) {
+        var dropdownAcc = chkAccion.closest('[data-role="acciones-dropdown"]');
+        if (dropdownAcc) actualizarEtiquetaAcciones(dropdownAcc);
       }
     });
 
     document.addEventListener('click', function (e) {
+      // Menú desplegable de acciones: cualquier clic fuera de un menú
+      // abierto lo cierra (comportamiento normal de un desplegable).
+      document.querySelectorAll('[data-role="acciones-dropdown"].open').forEach(function (abierto) {
+        if (!abierto.contains(e.target)) {
+          cerrarMenuAcciones(abierto);
+        }
+      });
+
+      var toggleAcc = e.target.closest('[data-role="acciones-toggle"]');
+      if (toggleAcc) {
+        var dropdownToggle = toggleAcc.closest('[data-role="acciones-dropdown"]');
+        if (dropdownToggle) {
+          var yaAbierto = dropdownToggle.classList.contains('open');
+          // Cerrar cualquier otro menú de acciones que haya quedado abierto
+          // en otra fila, para no tener dos abiertos a la vez.
+          document.querySelectorAll('[data-role="acciones-dropdown"].open').forEach(cerrarMenuAcciones);
+          if (!yaAbierto) {
+            dropdownToggle.classList.add('open');
+            dropdownToggle.querySelector('[data-role="acciones-panel"]').hidden = false;
+          }
+        }
+        return;
+      }
+
       var btn = e.target.closest('[data-abrir-modal-ingrediente]');
       if (btn) {
         filaActual = btn.closest('[data-ing-row]');
