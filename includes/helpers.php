@@ -298,6 +298,38 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
 }
 
 /**
+ * Convierte una CANTIDAD (no un costo) de una unidad a otra compatible —
+ * hermana de convertirCostoPorUnidad() pero para el sentido contrario: si
+ * costo-por-unidad escala por (factorDestino/factorOrigen), una cantidad
+ * escala por (factorOrigen/factorDestino) — ej. 300 g a Onza: 300 × (1/28.35)
+ * ≈ 10.58 oz. Se usa en listaCompraConsolidada() para saber, en la unidad de
+ * uso propia del catálogo de un ingrediente, cuánto se necesita en total y
+ * así calcular cuántas unidades de compra (Libra, Paquete, Cartón...) hacen
+ * falta. Devuelve null en los mismos casos que convertirCostoPorUnidad():
+ * unidades no convertibles entre sí (de conteo, o tipos de medida distintos).
+ */
+function convertirCantidadEntreUnidades(float $cantidadOrigen, ?array $unidadOrigen, ?array $unidadDestino): ?float
+{
+    if (!$unidadOrigen || !$unidadDestino) {
+        return null;
+    }
+    if ((int) $unidadOrigen['id'] === (int) $unidadDestino['id']) {
+        return $cantidadOrigen;
+    }
+    $tipoOrigen = $unidadOrigen['tipo_medida'] ?? null;
+    $tipoDestino = $unidadDestino['tipo_medida'] ?? null;
+    if (!$tipoOrigen || !$tipoDestino || $tipoOrigen !== $tipoDestino) {
+        return null;
+    }
+    $factorOrigen = (float) ($unidadOrigen['factor_base'] ?? 0);
+    $factorDestino = (float) ($unidadDestino['factor_base'] ?? 0);
+    if ($factorOrigen <= 0 || $factorDestino <= 0) {
+        return null;
+    }
+    return $cantidadOrigen * ($factorOrigen / $factorDestino);
+}
+
+/**
  * Consolida en una sola lista de compra los ingredientes de un conjunto de
  * recetas, cada una con las porciones que hace falta preparar (de un evento
  * o de una práctica — cualquier lugar donde se asignen recetas con
@@ -317,6 +349,19 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
  * existe. Las líneas "Al gusto" no tienen cantidad medible: se listan
  * aparte, solo para recordar que hace falta tenerlas a mano.
  *
+ * Cada línea trae, además de la cantidad en la unidad de uso (la que se
+ * escribe en la receta, ej. "7.5 taza"), un posible 'compra' con cuánto hay
+ * que llevar al súper en la unidad en que ese ingrediente realmente se
+ * vende (ej. "2 lb") — a partir de `unidad_compra_id`/`contenido_por_compra`
+ * del catálogo (sección 4 de la especificación). Solo se calcula cuando el
+ * ingrediente viene del catálogo, tiene una unidad de compra distinta a la
+ * de uso, y ambas son convertibles; si no, 'compra' queda en null y la
+ * pantalla solo muestra la cantidad de uso, como antes. Si la unidad de
+ * compra es de las que se compran completas (es_entera, ej. Paquete,
+ * Cartón), la cantidad de compra se redondea hacia arriba UNA vez sobre el
+ * total ya consolidado — mismo principio de "sumar primero, redondear
+ * después" que ya se aplica al costo.
+ *
  * $recetasConPorciones: array de ['receta_id' => int, 'porciones_necesarias' => int]
  * Devuelve ['lineas' => [...], 'al_gusto' => [...], 'total' => float].
  */
@@ -325,6 +370,11 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones): array
     $unidadesPorId = [];
     foreach ($pdo->query('SELECT * FROM unidades_medida')->fetchAll() as $u) {
         $unidadesPorId[(int) $u['id']] = $u;
+    }
+
+    $catalogoPorId = [];
+    foreach ($pdo->query('SELECT id, unidad_id, unidad_compra_id, contenido_por_compra FROM ingredientes_catalogo')->fetchAll() as $c) {
+        $catalogoPorId[(int) $c['id']] = $c;
     }
 
     $grupos = [];
@@ -375,6 +425,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones): array
             if (!isset($grupos[$clave])) {
                 $grupos[$clave] = [
                     'nombre' => $nombre,
+                    'catalogo_id' => !empty($ing['ingrediente_id']) ? (int) $ing['ingrediente_id'] : null,
                     'unidad_ancla' => $unidadIng,
                     'cantidad' => 0.0,
                     // Suma del costo de cada línea EN SU PROPIA UNIDAD
@@ -429,11 +480,40 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones): array
             $monto = $g['monto_sin_redondear'];
         }
         $total += $monto;
+
+        // Además de la cantidad en la unidad de uso, calcular cuánto hay que
+        // llevar al súper en la unidad en que ese ingrediente realmente se
+        // vende (ver docblock de la función) — solo cuando el ingrediente
+        // viene del catálogo y esa unidad de compra es distinta a la de uso
+        // y convertible con ella.
+        $compra = null;
+        $catalogo = $g['catalogo_id'] ? ($catalogoPorId[$g['catalogo_id']] ?? null) : null;
+        if ($catalogo && !empty($catalogo['unidad_compra_id'])) {
+            $unidadCompraId = (int) $catalogo['unidad_compra_id'];
+            $contenidoPorCompra = (float) ($catalogo['contenido_por_compra'] ?? 0);
+            $unidadCompra = $unidadesPorId[$unidadCompraId] ?? null;
+            $unidadUsoCatalogo = isset($catalogo['unidad_id']) ? ($unidadesPorId[(int) $catalogo['unidad_id']] ?? null) : null;
+            if ($unidadCompra && $contenidoPorCompra > 0 && $unidadCompraId !== (int) ($g['unidad_ancla']['id'] ?? 0)) {
+                $cantidadEnUsoCatalogo = convertirCantidadEntreUnidades($g['cantidad'], $g['unidad_ancla'], $unidadUsoCatalogo);
+                if ($cantidadEnUsoCatalogo !== null && $cantidadEnUsoCatalogo > 0) {
+                    $unidadesNecesarias = $cantidadEnUsoCatalogo / $contenidoPorCompra;
+                    if (!empty($unidadCompra['es_entera'])) {
+                        $unidadesNecesarias = cantidadDeCompra($unidadesNecesarias, true);
+                    }
+                    $compra = [
+                        'cantidad' => $unidadesNecesarias,
+                        'unidad' => $unidadCompra['abreviatura'] ?: $unidadCompra['nombre'],
+                    ];
+                }
+            }
+        }
+
         $lineas[] = [
             'nombre' => $g['nombre'],
             'cantidad' => $g['cantidad'],
             'unidad' => $g['unidad_ancla']['abreviatura'] ?? '',
             'monto' => $monto,
+            'compra' => $compra,
             'recetas' => array_keys($g['recetas']),
         ];
     }
@@ -468,7 +548,11 @@ function renderListaCompraTexto(string $titulo, array $consolidado): string
     }
 
     foreach ($consolidado['lineas'] as $l) {
-        $lineas[] = sprintf('[ ] %s — %s %s (%s)', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']));
+        $compraTxt = '';
+        if (!empty($l['compra'])) {
+            $compraTxt = sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad']), $l['compra']['unidad']);
+        }
+        $lineas[] = sprintf('[ ] %s — %s %s (%s)%s', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']), $compraTxt);
     }
 
     if ($consolidado['al_gusto']) {

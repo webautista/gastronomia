@@ -276,7 +276,12 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php foreach ($consolidado['lineas'] as $l): ?>
           <tr>
             <td class="cell-name"><?= e($l['nombre']) ?></td>
-            <td class="mono"><?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?></td>
+            <td class="mono">
+              <?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?>
+              <?php if (!empty($l['compra'])): ?>
+                <br><span class="cell-muted" style="font-size:.78rem;font-weight:400;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span>
+              <?php endif; ?>
+            </td>
             <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td>
             <td class="mono"><?= money($l['monto']) ?></td>
           </tr>
