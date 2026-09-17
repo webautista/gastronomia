@@ -10,7 +10,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/icons.php';
 
 $stmt = db()->query(
-    "SELECT ev.id, ev.nombre, ev.fecha, ev.lugar, ev.banner
+    "SELECT ev.id, ev.nombre, ev.fecha, ev.lugar, ev.banner, ev.cuota_publica
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      WHERE es.nombre <> 'Finalizado' AND ev.fecha >= CURDATE()
@@ -22,17 +22,26 @@ $proximosEventos = $stmt->fetchAll();
 // La cuota ya no se guarda: se calcula igual que en el detalle del evento
 // (costo de recetas + gastos, dividido entre los estudiantes asignados) y
 // se muestra la proyectada — la estimación más completa — como "la cuota"
-// pública.
+// pública. Pero mientras el presupuesto se sigue armando esa cifra puede
+// cambiar de un día a otro, así que solo se calcula y se muestra si el
+// evento tiene el check "Mostrar cuota en la página pública" activado
+// (eventos.cuota_publica, por defecto desactivado) — si no, el evento igual
+// aparece en la Home (nombre/fecha/lugar), solo que con la cuota como "Por
+// confirmar", igual que un evento sin estudiantes asignados todavía.
 foreach ($proximosEventos as &$ev) {
-    $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
-    $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
-    $stmtNum = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
-    $stmtNum->execute([$ev['id']]);
-    $numEstudiantes = (int) $stmtNum->fetchColumn();
+    $ev['num_estudiantes'] = 0;
+    $ev['cuota_proyectada'] = 0.0;
+    if (!empty($ev['cuota_publica'])) {
+        $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
+        $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
+        $stmtNum = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
+        $stmtNum->execute([$ev['id']]);
+        $numEstudiantes = (int) $stmtNum->fetchColumn();
 
-    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEstudiantes);
-    $ev['num_estudiantes'] = $numEstudiantes;
-    $ev['cuota_proyectada'] = $cuotas['proyectada'];
+        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEstudiantes);
+        $ev['num_estudiantes'] = $numEstudiantes;
+        $ev['cuota_proyectada'] = $cuotas['proyectada'];
+    }
 }
 unset($ev);
 

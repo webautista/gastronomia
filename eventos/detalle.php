@@ -275,6 +275,13 @@ require __DIR__ . '/../includes/layout_top.php';
       <span><?= icon('calendar') ?> <?= fmtDate($evento['fecha']) ?></span>
       <span><?= icon('pin') ?> <?= e($evento['lugar']) ?></span>
       <span class="chip <?= chipEstadoClase($evento['estado']) ?>"><?= e($evento['estado']) ?></span>
+      <?php if ($puedeVerGastos): ?>
+        <?php if (!empty($evento['cuota_publica'])): ?>
+          <span class="chip chip-success" title="La cuota de este evento se muestra en la página pública"><?= icon('users') ?> Cuota pública</span>
+        <?php else: ?>
+          <span class="chip chip-muted" title="La cuota de este evento no se muestra en la página pública — ahí aparece como &quot;Por confirmar&quot;"><?= icon('lock') ?> Cuota no pública</span>
+        <?php endif; ?>
+      <?php endif; ?>
     </div>
   </div>
   <?php if ($puedeEditarEvento): ?>

@@ -94,6 +94,9 @@ require __DIR__ . '/../includes/layout_top.php';
         <div class="event-card-top">
           <div><h3><a href="detalle.php?id=<?= (int) $ev['id'] ?>"><?= e($ev['nombre']) ?></a></h3></div>
           <div class="row-actions">
+            <?php if (empty($ev['cuota_publica'])): ?>
+              <span class="chip chip-muted" title="La cuota de este evento no se muestra en la página pública"><?= icon('lock') ?> No pública</span>
+            <?php endif; ?>
             <span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span>
           </div>
         </div>

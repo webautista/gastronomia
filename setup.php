@@ -255,6 +255,18 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "densidad_g_ml" agregada a ingredientes_catalogo (permite convertir el costo de un ingrediente entre unidades de masa y de volumen, ej. mantequilla en cucharadas o en gramos).';
     }
 
+    // Control de publicación de la cuota en la Home pública: mientras un
+    // evento todavía se está presupuestando, la cuota puede ir variando, y
+    // mostrarla en la página pública daría una cifra errática. Por defecto
+    // OCULTA (0) — tanto para eventos ya existentes como para uno nuevo —
+    // así ningún evento se publica de golpe al correr esta migración; se
+    // activa a mano por evento desde eventos/form.php cuando la cuota ya
+    // esté estable.
+    if (columnaExiste($pdo, 'eventos', 'id') && !columnaExiste($pdo, 'eventos', 'cuota_publica')) {
+        $pdo->exec('ALTER TABLE eventos ADD COLUMN cuota_publica TINYINT(1) NOT NULL DEFAULT 0 AFTER estado_id');
+        $mensajes[] = 'Columna "cuota_publica" agregada a eventos (controla si la cuota de ese evento se muestra en la página pública; por defecto oculta).';
+    }
+
     return $mensajes;
 }
 

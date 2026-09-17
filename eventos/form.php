@@ -20,7 +20,7 @@ $estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
 
 $evento = [
     'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '', 'banner' => null,
-    'porciones' => '', 'estado_id' => $estadoPorDefecto,
+    'porciones' => '', 'estado_id' => $estadoPorDefecto, 'cuota_publica' => 0,
 ];
 $errores = [];
 
@@ -42,6 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $evento['lugar']       = trim($_POST['lugar'] ?? '');
     $evento['porciones']   = intOrNull($_POST['porciones'] ?? null) ?? 0;
     $evento['estado_id']   = intOrNull($_POST['estado_id'] ?? null);
+    $evento['cuota_publica'] = !empty($_POST['cuota_publica']) ? 1 : 0;
 
     if ($evento['nombre'] === '') {
         $errores[] = 'El nombre del evento es obligatorio.';
@@ -106,13 +107,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, porciones=?, estado_id=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, porciones=?, estado_id=?, cuota_publica=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $evento['cuota_publica'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, porciones, estado_id) VALUES (?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, porciones, estado_id, cuota_publica) VALUES (?,?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $evento['cuota_publica']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -174,6 +175,14 @@ require __DIR__ . '/../includes/layout_top.php';
       <div class="hint" style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 12px;">
         <?= icon('sparkle') ?> La inversión y la cuota por estudiante ya no se escriben a mano: se calculan solas a partir del costo de las recetas y los gastos del evento, divididas entre los estudiantes asignados. Las vas a ver en el Resumen del evento una vez lo guardes.
       </div>
+    </div>
+
+    <div class="field">
+      <label class="chip-check">
+        <input type="checkbox" id="cuota_publica" name="cuota_publica" value="1" <?= !empty($evento['cuota_publica']) ? 'checked' : '' ?>>
+        Mostrar la cuota de este evento en la página pública
+      </label>
+      <div class="hint">Mientras el presupuesto todavía se está armando, la cuota puede variar — con esto desmarcado, "Próximos eventos" en la Home sigue mostrando el evento pero con la cuota como "Por confirmar". Nace desmarcado en un evento nuevo; actívalo cuando la cifra ya esté estable.</div>
     </div>
 
     <div class="field-row">
