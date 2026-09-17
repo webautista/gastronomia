@@ -124,7 +124,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php if (trim((string) ($receta['preparacion'] ?? '')) !== ''): ?>
   <div class="card card-pad" style="margin-top:16px;">
     <h2 class="section-title"><?= icon('book') ?> Preparación</h2>
-    <div class="prep-text"><?= nl2br(e($receta['preparacion'])) ?></div>
+    <div class="prep-text"><?= e($receta['preparacion']) ?></div>
   </div>
 <?php endif; ?>
 
