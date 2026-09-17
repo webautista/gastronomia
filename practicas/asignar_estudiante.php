@@ -1,0 +1,69 @@
+<?php
+/** Agregar estudiantes a una práctica — mismo patrón que eventos/asignar_estudiante.php. */
+require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'practicas', 'editar', $base);
+
+$id = intOrNull($_GET['id'] ?? null);
+if (!$id) {
+    redirect('index.php');
+}
+
+$stmt = db()->prepare('SELECT * FROM practicas WHERE id = ?');
+$stmt->execute([$id]);
+$practica = $stmt->fetch();
+if (!$practica) {
+    flash('Esa práctica ya no existe.', 'error');
+    redirect('index.php');
+}
+
+$stmt = db()->prepare(
+    'SELECT e.*, ge.nombre AS grupo
+     FROM estudiantes e
+     LEFT JOIN grupos_estudiante ge ON ge.id = e.grupo_id
+     WHERE e.id NOT IN (SELECT estudiante_id FROM practica_estudiante WHERE practica_id = ?)
+     ORDER BY e.nombre ASC'
+);
+$stmt->execute([$id]);
+$disponibles = $stmt->fetchAll();
+
+$pageTitle = 'Agregar estudiantes';
+$activeNav = 'practicas';
+$breadcrumb = '<a href="index.php">Prácticas</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $id . '">' . e($practica['nombre']) . '</a> &nbsp;/&nbsp; <b>Agregar estudiantes</b>';
+require __DIR__ . '/../includes/layout_top.php';
+?>
+
+<div class="page-head"><div><h1>Agregar estudiantes a la práctica</h1><p><?= e($practica['nombre']) ?></p></div></div>
+
+<div class="card card-pad form-card" style="max-width:560px;">
+  <?php if (!$disponibles): ?>
+    <p class="cell-muted">Todos los estudiantes de la lista maestra ya están asignados a esta práctica.</p>
+    <div class="form-actions">
+      <a class="btn btn-secondary" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Volver</a>
+      <a class="btn btn-primary" href="<?= e($base) ?>/estudiantes/form.php">Crear nuevo estudiante</a>
+    </div>
+  <?php else: ?>
+    <form method="post" action="detalle.php?id=<?= $id ?>&tab=estudiantes">
+      <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+      <input type="hidden" name="accion" value="asignar_estudiantes">
+      <div class="check-list">
+        <?php foreach ($disponibles as $st): ?>
+          <label class="check-row">
+            <input type="checkbox" name="estudiante_ids[]" value="<?= (int) $st['id'] ?>">
+            <span><span class="cname"><?= e($st['nombre']) ?></span><br><span class="csub"><?= e($st['grupo'] ?? '—') ?></span></span>
+          </label>
+        <?php endforeach; ?>
+      </div>
+      <div class="form-actions">
+        <a class="btn btn-secondary" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Cancelar</a>
+        <button class="btn btn-primary" type="submit">Agregar seleccionados</button>
+      </div>
+    </form>
+  <?php endif; ?>
+</div>
+
+<?php require __DIR__ . '/../includes/layout_bottom.php'; ?>

@@ -239,24 +239,97 @@ function costoTotalRecetasEvento(PDO $pdo, int $eventoId): float
 }
 
 /**
- * Cuota proyectada y confirmada por estudiante de un evento. El total a
- * repartir ya no se escribe a mano (antes era "presupuesto"): siempre es
- * costo de recetas + gastos, dividido entre los estudiantes asignados.
- * "Proyectada" incluye lo que todavía no se ha confirmado (la estimación
- * más completa); "confirmada" es solo lo que ya es gasto real (recetas +
- * gastos confirmados) — es la que se usa para cobrarle a cada estudiante.
- * Con 0 estudiantes asignados ambas cuotas quedan en 0 (no se puede
- * repartir entre nadie todavía).
+ * Monto que "cuenta" de un gasto según en qué etapa de su ciclo de vida
+ * está (proyectado → confirmado → pagado), cada una con su propio monto
+ * editable por separado (ver db/schema.sql, tabla gastos): un gasto pagado
+ * usa monto_pagado, uno confirmado usa monto_confirmado, y uno todavía
+ * proyectado usa el monto original estimado. Los montos de una etapa
+ * posterior pueden venir NULL si esa etapa fue sembrada por una versión
+ * anterior del sistema (antes de que existiera esta columna) — en ese caso
+ * se cae hacia el monto de la etapa anterior, nunca hacia 0.
  */
-function calcularCuotasEvento(float $costoRecetas, float $totalProyectado, float $totalConfirmado, int $cantidadEstudiantes): array
+function montoEfectivoGasto(array $gasto): float
 {
-    $totalProyeccion = $costoRecetas + $totalProyectado + $totalConfirmado;
-    $totalConfirmadoConRecetas = $costoRecetas + $totalConfirmado;
+    if (($gasto['estado'] ?? '') === 'pagado') {
+        return (float) ($gasto['monto_pagado'] ?? $gasto['monto_confirmado'] ?? $gasto['monto']);
+    }
+    if (($gasto['estado'] ?? '') === 'confirmado') {
+        return (float) ($gasto['monto_confirmado'] ?? $gasto['monto']);
+    }
+    return (float) $gasto['monto'];
+}
+
+/**
+ * Suma los gastos activos (no eliminados) vinculados a un evento o una
+ * práctica en cuatro baldes: material vs. "otros" (según
+ * es_material_receta) × proyectado vs. usado (confirmado o pagado — un
+ * gasto solo proyectado NUNCA cuenta como "usado", es la corrección al bug
+ * reportado de "presupuesto usado" mostrando dinero que todavía no se ha
+ * confirmado). $columna es 'evento_id' o 'practica_id' — siempre uno de
+ * estos dos literales fijos, nunca entrada del usuario, así que es seguro
+ * interpolarla directo en el SQL.
+ */
+function resumenGastosVinculo(PDO $pdo, string $columna, int $id): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT estado, es_material_receta, monto, monto_confirmado, monto_pagado
+         FROM gastos WHERE $columna = ? AND eliminado_en IS NULL"
+    );
+    $stmt->execute([$id]);
+
+    $out = ['material_proyectado' => 0.0, 'material_usado' => 0.0, 'otros_proyectado' => 0.0, 'otros_usado' => 0.0];
+    foreach ($stmt->fetchAll() as $g) {
+        $material = !empty($g['es_material_receta']);
+        if ($g['estado'] === 'proyectado') {
+            $out[$material ? 'material_proyectado' : 'otros_proyectado'] += (float) $g['monto'];
+        } else {
+            $out[$material ? 'material_usado' : 'otros_usado'] += montoEfectivoGasto($g);
+        }
+    }
+    return $out;
+}
+
+/**
+ * Cuota proyectada y confirmada por estudiante de un evento o práctica. El
+ * total a repartir ya no se escribe a mano: siempre se calcula a partir del
+ * costo de recetas y los gastos reales, dividido entre los estudiantes
+ * asignados. Comparte la misma lógica entre Eventos y Prácticas (ver
+ * eventos/detalle.php y practicas/detalle.php).
+ *
+ * "Materiales": una receta tiene un costo proyectado (el cálculo de sus
+ * ingredientes, $costoRecetas — siempre en vivo). Los gastos marcados
+ * "es_material_receta" no se suman aparte de ese cálculo: se comparan
+ * contra él, y se usa el MAYOR de los dos ($materialUsado si ya superó lo
+ * proyectado) — así, si de verdad se gastó más de lo previsto en
+ * materiales, la cuota lo refleja automáticamente en vez de quedarse corta.
+ * "Otros" gastos (es_material_receta = 0, ej. alquiler de salón, logística)
+ * sí se suman aparte, como siempre.
+ *
+ * "Proyectada" es la estimación más completa (incluye lo aún no
+ * confirmado, de cualquier balde); "confirmada" es solo lo que ya es gasto
+ * real (materiales-final + otros ya confirmados/pagados) — es la que se
+ * usa para cobrarle a cada estudiante. Con 0 estudiantes asignados ambas
+ * cuotas quedan en 0 (no se puede repartir entre nadie todavía).
+ */
+function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidadEstudiantes): array
+{
+    $materialUsado = $resumenGastos['material_usado'];
+    $materialProyectado = $resumenGastos['material_proyectado'];
+    $otrosProyectado = $resumenGastos['otros_proyectado'];
+    $otrosUsado = $resumenGastos['otros_usado'];
+
+    $materialesFinal = max($costoRecetas, $materialUsado);
+    $totalProyeccion = $materialesFinal + $materialProyectado + $otrosProyectado + $otrosUsado;
+    $totalConfirmado = $materialesFinal + $otrosUsado;
+
     return [
+        'materiales_final' => $materialesFinal,
+        'material_excedido' => $materialUsado > $costoRecetas + 0.005,
+        'material_exceso' => max(0.0, $materialUsado - $costoRecetas),
         'total_proyeccion' => $totalProyeccion,
-        'total_confirmado' => $totalConfirmadoConRecetas,
+        'total_confirmado' => $totalConfirmado,
         'proyectada' => $cantidadEstudiantes > 0 ? $totalProyeccion / $cantidadEstudiantes : 0.0,
-        'confirmada' => $cantidadEstudiantes > 0 ? $totalConfirmadoConRecetas / $cantidadEstudiantes : 0.0,
+        'confirmada' => $cantidadEstudiantes > 0 ? $totalConfirmado / $cantidadEstudiantes : 0.0,
     ];
 }
 

@@ -25,17 +25,12 @@ $proximosEventos = $stmt->fetchAll();
 // pública.
 foreach ($proximosEventos as &$ev) {
     $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
-    $stmtProy = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'proyectado'");
-    $stmtProy->execute([$ev['id']]);
-    $totalProyectado = (float) $stmtProy->fetchColumn();
-    $stmtConf = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'confirmado'");
-    $stmtConf->execute([$ev['id']]);
-    $totalConfirmado = (float) $stmtConf->fetchColumn();
+    $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $stmtNum = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
     $stmtNum->execute([$ev['id']]);
     $numEstudiantes = (int) $stmtNum->fetchColumn();
 
-    $cuotas = calcularCuotasEvento($costoRecetas, $totalProyectado, $totalConfirmado, $numEstudiantes);
+    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEstudiantes);
     $ev['num_estudiantes'] = $numEstudiantes;
     $ev['cuota_proyectada'] = $cuotas['proyectada'];
 }

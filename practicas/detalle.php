@@ -7,14 +7,31 @@ $base = '..';
 $usuarioActual = requireLogin($base);
 requirePermission($usuarioActual, 'practicas', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'practicas', 'editar');
+$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
+$puedeCrearGasto = can($usuarioActual, 'gastos', 'crear');
+$puedeEditarGasto = can($usuarioActual, 'gastos', 'editar');
+$puedeEliminarGasto = can($usuarioActual, 'gastos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
     redirect('index.php');
 }
 
-$tabsValidos = ['recetas', 'compras'];
-$tab = in_array($_GET['tab'] ?? '', $tabsValidos, true) ? $_GET['tab'] : 'recetas';
+// Un rol que solo puede VER prácticas (ej. Padres) entra únicamente a
+// "Estudiantes y pagos" — la planificación de la práctica (Recetas, Lista
+// de Compra) es interna del taller. Un rol que además puede editar
+// (Administrador, o cualquier rol de staff configurado así desde Usuarios
+// y roles) sí ve las pestañas completas, igual que en Eventos.
+$tabsValidos = ['estudiantes'];
+if ($puedeEditar) {
+    $tabsValidos[] = 'recetas';
+    $tabsValidos[] = 'compras';
+}
+if ($puedeVerGastos) {
+    $tabsValidos[] = 'gastos';
+}
+$tabPorDefecto = $puedeEditar ? 'recetas' : 'estudiantes';
+$tab = in_array($_GET['tab'] ?? '', $tabsValidos, true) ? $_GET['tab'] : $tabPorDefecto;
 
 $stmt = db()->prepare('SELECT * FROM practicas WHERE id = ?');
 $stmt->execute([$id]);
@@ -55,6 +72,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($recetaId && $porciones && $porciones > 0) {
             $pdo->prepare('UPDATE practica_receta SET porciones_necesarias=? WHERE practica_id=? AND receta_id=?')
                 ->execute([$porciones, $id, $recetaId]);
+        }
+    } elseif ($accion === 'registrar_pago') {
+        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
+        $monto = isset($_POST['monto_pagado']) ? (float) $_POST['monto_pagado'] : null;
+        if ($estudianteId && $monto !== null && $monto >= 0) {
+            $fechaPago = $monto > 0 ? date('Y-m-d') : null;
+            $pdo->prepare('UPDATE practica_estudiante SET monto_pagado=?, fecha_pago=? WHERE practica_id=? AND estudiante_id=?')
+                ->execute([$monto, $fechaPago, $id, $estudianteId]);
+        }
+    } elseif ($accion === 'quitar_estudiante') {
+        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
+        if ($estudianteId) {
+            $pdo->prepare('DELETE FROM practica_estudiante WHERE practica_id=? AND estudiante_id=?')->execute([$id, $estudianteId]);
+        }
+    } elseif ($accion === 'asignar_estudiantes') {
+        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        $ids = array_map('intval', $_POST['estudiante_ids'] ?? []);
+        $stmt = $pdo->prepare('INSERT IGNORE INTO practica_estudiante (practica_id, estudiante_id) VALUES (?,?)');
+        foreach ($ids as $eid) {
+            if ($eid > 0) {
+                $stmt->execute([$id, $eid]);
+            }
+        }
+    } elseif ($accion === 'quitar_gasto') {
+        requirePermission($usuarioActual, 'gastos', 'eliminar', $base);
+        $gastoId = intOrNull($_POST['gasto_id'] ?? null);
+        if ($gastoId) {
+            $stmtG = $pdo->prepare("SELECT estado FROM gastos WHERE id = ? AND practica_id = ? AND eliminado_en IS NULL");
+            $stmtG->execute([$gastoId, $id]);
+            $estadoGasto = $stmtG->fetchColumn();
+            if ($estadoGasto === 'pagado' && ($usuarioActual['rol_nombre'] ?? '') !== 'Administrador') {
+                flash('Un gasto ya pagado solo puede eliminarlo un Administrador.', 'error');
+            } elseif ($estadoGasto) {
+                $pdo->prepare('UPDATE gastos SET eliminado_en = NOW() WHERE id = ?')->execute([$gastoId]);
+                flash('Gasto eliminado.');
+            }
+        }
+    } elseif ($accion === 'confirmar_gasto') {
+        requirePermission($usuarioActual, 'gastos', 'editar', $base);
+        $gastoId = intOrNull($_POST['gasto_id'] ?? null);
+        $montoConfirmado = isset($_POST['monto_confirmado']) ? (float) $_POST['monto_confirmado'] : 0;
+        if ($gastoId && $montoConfirmado > 0) {
+            $pdo->prepare("UPDATE gastos SET estado = 'confirmado', monto_confirmado = ? WHERE id = ? AND practica_id = ? AND estado = 'proyectado'")
+                ->execute([$montoConfirmado, $gastoId, $id]);
+            flash('Gasto confirmado.');
         }
     }
 
@@ -121,6 +185,47 @@ if ($tab === 'compras') {
     $consolidado = listaCompraConsolidada(db(), $recetasParaLista);
 }
 
+// Estudiantes asignados a esta práctica + su cuota (mismo patrón que
+// eventos/detalle.php, con practica_estudiante en vez de evento_estudiante).
+$stmt = db()->prepare(
+    'SELECT pe.monto_pagado, pe.fecha_pago, est.*, ge.nombre AS grupo FROM practica_estudiante pe
+     JOIN estudiantes est ON est.id = pe.estudiante_id
+     LEFT JOIN grupos_estudiante ge ON ge.id = est.grupo_id
+     WHERE pe.practica_id = ? ORDER BY est.nombre ASC'
+);
+$stmt->execute([$id]);
+$estudiantesPractica = $stmt->fetchAll();
+$cantidadEstudiantes = count($estudiantesPractica);
+
+// Gastos de la práctica, mismo balde material/otros × proyectado/usado que
+// un evento (ver includes/helpers.php, resumenGastosVinculo()).
+$resumenGastos = resumenGastosVinculo(db(), 'practica_id', $id);
+$materialUsado = $resumenGastos['material_usado'];
+$otrosUsado = $resumenGastos['otros_usado'];
+$totalProyectado = $resumenGastos['material_proyectado'] + $resumenGastos['otros_proyectado'];
+
+$gastosPractica = [];
+if ($puedeVerGastos) {
+    $stmt = db()->prepare(
+        "SELECT g.*, cg.nombre AS categoria FROM gastos g
+         JOIN categorias_gasto cg ON cg.id = g.categoria_id
+         WHERE g.practica_id = ? AND g.eliminado_en IS NULL
+         ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC, g.id DESC"
+    );
+    $stmt->execute([$id]);
+    $gastosPractica = $stmt->fetchAll();
+}
+
+$cuotas = calcularCuotas($costoMateriales, $resumenGastos, $cantidadEstudiantes);
+$cuotaProyectada = $cuotas['proyectada'];
+$cuotaConfirmada = $cuotas['confirmada'];
+$totalConfirmadoConMateriales = $cuotas['total_confirmado'];
+$totalProyeccionInversion = $cuotas['total_proyeccion'];
+
+$recaudado = array_sum(array_column($estudiantesPractica, 'monto_pagado'));
+$numPagados = count(array_filter($estudiantesPractica, fn($a) => (float) $a['monto_pagado'] >= $cuotaConfirmada - 0.005));
+$pctPago = $totalConfirmadoConMateriales > 0 ? round($recaudado / $totalConfirmadoConMateriales * 100) : 0;
+
 $pageTitle = $practica['nombre'];
 $activeNav = 'practicas';
 $breadcrumb = '<a href="index.php">Prácticas</a> &nbsp;/&nbsp; <b>' . e($practica['nombre']) . '</b>';
@@ -145,11 +250,31 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="alert" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-secondary);margin-bottom:18px;"><?= nl2br(e($practica['notas'])) ?></div>
 <?php endif; ?>
 
-<div class="summary-grid" style="grid-template-columns:1fr 1fr;">
+<div class="summary-grid">
   <div class="card card-pad">
-    <div class="stat-label">Costo estimado de materiales</div>
-    <div class="stat-value"><?= money($costoMateriales) ?></div>
-    <div class="stat-hint">Según las recetas y porciones asignadas a esta práctica.</div>
+    <div class="stat-label">Inversión de la práctica</div>
+    <div class="stat-value"><?= money($totalProyeccionInversion) ?></div>
+    <?php if ($puedeVerGastos): ?>
+      <div class="stat-hint" style="margin-top:8px;">Proyectado en recetas: <b class="mono"><?= money($costoMateriales) ?></b> · Gastado en materiales: <b class="mono"><?= money($materialUsado) ?></b><?php if ($otrosUsado > 0 || $totalProyectado > 0): ?> · Otros gastos: <b class="mono"><?= money($otrosUsado) ?></b><?php endif; ?></div>
+      <?php if ($cuotas['material_excedido']): ?>
+        <div class="alert alert-error" style="margin-top:10px;padding:10px 12px;font-size:.85rem;">
+          <?= icon('alertTriangle') ?> El gasto en materiales superó lo proyectado en recetas por <b><?= money($cuotas['material_exceso']) ?></b>.
+        </div>
+      <?php endif; ?>
+    <?php else: ?>
+      <div class="stat-hint">Según las recetas y porciones asignadas a esta práctica.</div>
+    <?php endif; ?>
+  </div>
+  <div class="card card-pad">
+    <div class="stat-label">Cuota y recaudo</div>
+    <?php if ($cantidadEstudiantes > 0): ?>
+      <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
+      <div class="meter <?= meterClase($pctPago) ?>"><span style="width:<?= min($pctPago, 100) ?>%"></span></div>
+      <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+    <?php else: ?>
+      <div class="stat-value" style="font-size:1.05rem;">—</div>
+      <div class="stat-hint">Asigna estudiantes a la práctica para calcular la cuota.</div>
+    <?php endif; ?>
   </div>
   <div class="card card-pad">
     <div class="stat-label">Recetas asignadas</div>
@@ -159,8 +284,14 @@ require __DIR__ . '/../includes/layout_top.php';
 </div>
 
 <div class="tabs">
-  <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas</a>
-  <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
+  <?php if ($puedeEditar): ?>
+    <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas</a>
+    <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
+  <?php endif; ?>
+  <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
+  <?php if ($puedeVerGastos): ?>
+    <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
+  <?php endif; ?>
 </div>
 
 <?php if ($tab === 'recetas'): ?>
@@ -300,6 +431,166 @@ require __DIR__ . '/../includes/layout_top.php';
         <tr><td colspan="3" style="text-align:right;font-weight:600;">Costo estimado total</td><td class="mono" style="font-weight:600;"><?= money($consolidado['total']) ?></td></tr>
       </tfoot>
       <?php endif; ?>
+    </table>
+    </div>
+  </div>
+
+<?php elseif ($tab === 'estudiantes'): ?>
+  <div class="toolbar">
+    <div class="cell-muted">
+      <?= $numPagados ?> de <?= count($estudiantesPractica) ?> estudiantes al día · <span class="mono"><?= money($recaudado) ?></span> de <span class="mono"><?= money($totalConfirmadoConMateriales) ?></span> recaudado
+      <?php if ($cantidadEstudiantes > 0): ?>
+        · cuota confirmada: <span class="mono"><?= money($cuotaConfirmada) ?></span> c/u
+      <?php endif; ?>
+    </div>
+    <?php if ($puedeEditar): ?>
+      <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
+    <?php endif; ?>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Pagado</th><th>Pendiente</th><th></th></tr></thead>
+      <tbody>
+        <?php if (!$estudiantesPractica): ?>
+          <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay estudiantes asignados a esta práctica.</td></tr>
+        <?php endif; ?>
+        <?php foreach ($estudiantesPractica as $a):
+          $montoPagado = (float) $a['monto_pagado'];
+          $pendienteEstudiante = max(0, $cuotaConfirmada - $montoPagado);
+          $alDia = $pendienteEstudiante <= 0.005;
+        ?>
+          <tr>
+            <td class="cell-name"><?= e($a['nombre']) ?></td>
+            <td class="cell-muted"><?= e($a['grupo']) ?></td>
+            <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
+            <td>
+              <?php if ($puedeEditar): ?>
+                <form method="post" style="display:flex;align-items:center;gap:6px;">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="registrar_pago">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <input type="number" name="monto_pagado" min="0" step="0.01" value="<?= e((string) $montoPagado) ?>" style="width:110px;">
+                  <button class="btn btn-secondary btn-sm" type="submit">Guardar</button>
+                </form>
+              <?php else: ?>
+                <span class="mono"><?= money($montoPagado) ?></span>
+              <?php endif; ?>
+              <?php if ($montoPagado > 0 && $a['fecha_pago']): ?>
+                <div class="stat-hint" style="margin-top:4px;">Último pago: <?= fmtDate($a['fecha_pago']) ?></div>
+              <?php endif; ?>
+            </td>
+            <td>
+              <?php if ($alDia): ?>
+                <span class="chip chip-success"><?= icon('check') ?> Al día</span>
+              <?php else: ?>
+                <span class="chip chip-warning"><?= money($pendienteEstudiante) ?></span>
+              <?php endif; ?>
+            </td>
+            <td class="row-actions">
+              <?php if ($puedeEditar): ?>
+                <?php if (!$alDia): ?>
+                  <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                    <input type="hidden" name="accion" value="registrar_pago">
+                    <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                    <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
+                    <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
+                  </form>
+                <?php endif; ?>
+                <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de esta práctica?">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="quitar_estudiante">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Quitar de la práctica"><?= icon('x') ?></button>
+                </form>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+<?php elseif ($tab === 'gastos'): $esAdmin = ($usuarioActual['rol_nombre'] ?? '') === 'Administrador'; ?>
+  <div class="card card-pad" style="margin-bottom:16px;">
+    <div class="stat-hint">
+      Proyectado en recetas: <b class="mono"><?= money($costoMateriales) ?></b>
+      &nbsp;·&nbsp; Gastado en materiales: <b class="mono"><?= money($materialUsado) ?></b>
+      &nbsp;·&nbsp; Otros gastos: <b class="mono"><?= money($otrosUsado) ?></b> (+ <?= money($totalProyectado) ?> proyectado sin confirmar)
+      &nbsp;=&nbsp; Necesitarían en total ≈ <b class="mono"><?= money($totalProyeccionInversion) ?></b>
+    </div>
+    <?php if ($cuotas['material_excedido']): ?>
+      <div class="alert alert-error" style="margin-top:10px;padding:10px 12px;font-size:.85rem;">
+        <?= icon('alertTriangle') ?> El gasto en materiales superó lo proyectado en recetas por <b><?= money($cuotas['material_exceso']) ?></b>. Puede que haga falta ajustar la cuota o buscar más fondos.
+      </div>
+    <?php endif; ?>
+  </div>
+  <div class="toolbar">
+    <div class="cell-muted"><?= count($gastosPractica) ?> partida<?= count($gastosPractica) === 1 ? '' : 's' ?> registrada<?= count($gastosPractica) === 1 ? '' : 's' ?></div>
+    <?php if ($puedeCrearGasto): ?>
+      <a class="btn btn-secondary btn-sm" href="gasto_form.php?practica_id=<?= $id ?>"><?= icon('plus') ?> Agregar partida</a>
+    <?php endif; ?>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Estado</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Monto</th><th></th></tr></thead>
+      <tbody>
+        <?php if (!$gastosPractica): ?>
+          <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay gastos ni partidas proyectadas.</td></tr>
+        <?php endif; ?>
+        <?php foreach ($gastosPractica as $g): ?>
+          <tr>
+            <td>
+              <?php if ($g['estado'] === 'proyectado'): ?>
+                <span class="chip chip-warning">Proyectado</span>
+              <?php elseif ($g['estado'] === 'confirmado'): ?>
+                <span class="chip chip-neutral">Confirmado</span>
+              <?php else: ?>
+                <span class="chip chip-success">Pagado</span>
+              <?php endif; ?>
+              <?php if (!empty($g['es_material_receta'])): ?><div class="cell-muted" style="font-size:.72rem;margin-top:2px;">Material de receta</div><?php endif; ?>
+            </td>
+            <td class="cell-muted">
+              <?= fmtDate($g['fecha']) ?>
+              <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><div style="font-size:.72rem;">Pagado: <?= fmtDate($g['fecha_pago']) ?></div><?php endif; ?>
+            </td>
+            <td><span class="chip chip-neutral"><?= e($g['categoria']) ?></span></td>
+            <td><?= e($g['descripcion']) ?></td>
+            <td class="cell-muted"><?= e($g['proveedor']) ?></td>
+            <td class="mono">
+              <?= money(montoEfectivoGasto($g)) ?>
+              <?php if ($g['estado'] === 'pagado' && !empty($g['factura'])): ?>
+                <div><a href="<?= e($base . '/' . $g['factura']) ?>" target="_blank" rel="noopener" class="cell-muted" style="font-size:.78rem;"><?= icon('receipt') ?> Ver factura</a></div>
+              <?php endif; ?>
+            </td>
+            <td class="row-actions">
+              <?php if ($g['estado'] === 'proyectado' && $puedeEditarGasto): ?>
+              <form method="post" data-confirm="¿Confirmar esta partida por el monto indicado?" style="display:flex;gap:6px;align-items:center;">
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="accion" value="confirmar_gasto">
+                <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
+                <input type="number" name="monto_confirmado" min="0.01" step="0.01" value="<?= e((string) $g['monto']) ?>" style="width:100px;" title="Monto confirmado">
+                <button class="btn btn-primary btn-sm" type="submit"><?= icon('check') ?> Confirmar</button>
+              </form>
+              <?php endif; ?>
+              <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
+                <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
+              <?php endif; ?>
+              <?php if ($puedeEliminarGasto && ($g['estado'] !== 'pagado' || $esAdmin)): ?>
+              <form method="post" data-confirm="<?= $g['estado'] === 'pagado' ? '¿Eliminar este gasto ya pagado? Es una acción de auditoría, solo un Administrador puede hacerla.' : '¿Eliminar esta partida?' ?>">
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="accion" value="quitar_gasto">
+                <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
+                <button class="icon-btn" type="submit"><?= icon('trash') ?></button>
+              </form>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
     </table>
     </div>
   </div>

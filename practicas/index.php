@@ -37,14 +37,26 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $practicas = $stmt->fetchAll();
 
+$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
+
 // El costo estimado de materiales se calcula aquí igual que en el detalle
 // (misma lista de compra consolidada), para que el listado muestre el
-// mismo número que verían al entrar a la práctica.
+// mismo número que verían al entrar a la práctica. La cuota se calcula
+// igual que en eventos/index.php: costo de materiales (o el gasto real si
+// ya lo superó) más otros gastos, dividido entre los estudiantes asignados.
 foreach ($practicas as &$p) {
     $stmtR = db()->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
     $stmtR->execute([(int) $p['id']]);
     $recetasP = $stmtR->fetchAll();
     $p['costo_materiales'] = $recetasP ? listaCompraConsolidada(db(), $recetasP)['total'] : 0.0;
+
+    $stmtEst = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ?');
+    $stmtEst->execute([(int) $p['id']]);
+    $p['num_estudiantes'] = (int) $stmtEst->fetchColumn();
+
+    $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
+    $cuotas = calcularCuotas($p['costo_materiales'], $resumenGastos, $p['num_estudiantes']);
+    $p['cuota_confirmada'] = $cuotas['confirmada'];
 }
 unset($p);
 
@@ -92,6 +104,12 @@ require __DIR__ . '/../includes/layout_top.php';
         <div style="display:flex;flex-direction:column;gap:10px;">
           <div class="mini-row"><span>Recetas asignadas</span><span class="mono"><?= (int) $p['num_recetas'] ?></span></div>
           <div class="mini-row"><span>Costo estimado de materiales</span><span class="mono"><?= money($p['costo_materiales']) ?></span></div>
+          <?php if ($p['num_estudiantes'] > 0): ?>
+            <div class="mini-row"><span>Estudiantes asignados</span><span class="mono"><?= (int) $p['num_estudiantes'] ?></span></div>
+            <div class="mini-row"><span>Cuota confirmada</span><span class="mono"><?= money($p['cuota_confirmada']) ?></span></div>
+          <?php elseif ($puedeVerGastos): ?>
+            <div class="mini-row"><span>Cuota</span><span class="cell-muted">Asigna estudiantes para calcularla</span></div>
+          <?php endif; ?>
         </div>
         <div class="row-actions" style="justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
           <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $p['id'] ?>">Ver detalle</a>

@@ -633,7 +633,30 @@ CREATE TABLE IF NOT EXISTS practica_receta (
         REFERENCES recetas(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Gastos asociados a un evento
+-- Estudiantes asignados a una práctica + control de pago de su cuota —
+-- mismo propósito que evento_estudiante, pero tabla nueva desde el
+-- principio (a diferencia de evento_estudiante, que arrastra un
+-- "pagado" TINYINT heredado de antes de que existiera monto_pagado, esta
+-- nace directo con monto_pagado, sin ese paso intermedio que migrar).
+CREATE TABLE IF NOT EXISTS practica_estudiante (
+    practica_id INT UNSIGNED NOT NULL,
+    estudiante_id INT UNSIGNED NOT NULL,
+    monto_pagado DECIMAL(10,2) NOT NULL DEFAULT 0,
+    fecha_pago DATE NULL,
+    asignado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (practica_id, estudiante_id),
+    CONSTRAINT fk_pe_practica FOREIGN KEY (practica_id)
+        REFERENCES practicas(id) ON DELETE CASCADE,
+    CONSTRAINT fk_pe_estudiante FOREIGN KEY (estudiante_id)
+        REFERENCES estudiantes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Gastos asociados a un evento o a una práctica (uno de los dos, nunca
+-- ambos — lo decide qué columna viene NULL). Las columnas del ciclo de
+-- vida en tres etapas (monto_confirmado, monto_pagado, fecha_pago,
+-- factura, es_material_receta, eliminado_en) y practica_id se agregan
+-- siempre desde setup.php (migrarColumnasNuevas), nunca aquí en el CREATE
+-- TABLE, igual que ingrediente_id en la tabla ingredientes más arriba.
 CREATE TABLE IF NOT EXISTS gastos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     evento_id INT UNSIGNED NOT NULL,

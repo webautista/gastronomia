@@ -1,4 +1,5 @@
 <?php
+/** Registrar un gasto de una práctica — mismo patrón que eventos/gasto_form.php. */
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/auth.php';
@@ -7,16 +8,16 @@ $base = '..';
 $usuarioActual = requireLogin($base);
 requirePermission($usuarioActual, 'gastos', 'crear', $base);
 
-$eventoId = intOrNull($_GET['evento_id'] ?? null);
-if (!$eventoId) {
+$practicaId = intOrNull($_GET['practica_id'] ?? null);
+if (!$practicaId) {
     redirect('index.php');
 }
 
-$stmt = db()->prepare('SELECT * FROM eventos WHERE id = ?');
-$stmt->execute([$eventoId]);
-$evento = $stmt->fetch();
-if (!$evento) {
-    flash('Ese evento ya no existe.', 'error');
+$stmt = db()->prepare('SELECT * FROM practicas WHERE id = ?');
+$stmt->execute([$practicaId]);
+$practica = $stmt->fetch();
+if (!$practica) {
+    flash('Esa práctica ya no existe.', 'error');
     redirect('index.php');
 }
 
@@ -49,24 +50,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errores) {
-        // Si se crea directo como "confirmado", el monto confirmado inicial
-        // es el mismo que se acaba de escribir (se puede ajustar después
-        // desde la pestaña de Gastos, cada etapa tiene su propio monto).
         $montoConfirmadoInicial = $gasto['estado'] === 'confirmado' ? $gasto['monto'] : null;
-        $stmt = db()->prepare('INSERT INTO gastos (evento_id, categoria_id, descripcion, proveedor, monto, monto_confirmado, fecha, estado, es_material_receta) VALUES (?,?,?,?,?,?,?,?,?)');
-        $stmt->execute([$eventoId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $montoConfirmadoInicial, $gasto['fecha'], $gasto['estado'], $gasto['es_material_receta']]);
+        $stmt = db()->prepare('INSERT INTO gastos (practica_id, categoria_id, descripcion, proveedor, monto, monto_confirmado, fecha, estado, es_material_receta) VALUES (?,?,?,?,?,?,?,?,?)');
+        $stmt->execute([$practicaId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $montoConfirmadoInicial, $gasto['fecha'], $gasto['estado'], $gasto['es_material_receta']]);
         flash($gasto['estado'] === 'confirmado' ? 'Gasto registrado.' : 'Partida proyectada agregada.');
-        redirect('detalle.php?id=' . $eventoId . '&tab=gastos');
+        redirect('detalle.php?id=' . $practicaId . '&tab=gastos');
     }
 }
 
 $pageTitle = 'Registrar gasto';
-$activeNav = 'eventos';
-$breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $eventoId . '">' . e($evento['nombre']) . '</a> &nbsp;/&nbsp; <b>Registrar gasto</b>';
+$activeNav = 'practicas';
+$breadcrumb = '<a href="index.php">Prácticas</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $practicaId . '">' . e($practica['nombre']) . '</a> &nbsp;/&nbsp; <b>Registrar gasto</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
 
-<div class="page-head"><div><h1>Registrar gasto</h1><p><?= e($evento['nombre']) ?></p></div></div>
+<div class="page-head"><div><h1>Registrar gasto</h1><p><?= e($practica['nombre']) ?></p></div></div>
 
 <?php if ($errores): ?>
   <div class="alert alert-error"><?= implode('<br>', array_map('e', $errores)) ?></div>
@@ -90,7 +88,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <input type="checkbox" id="es_material_receta" name="es_material_receta" value="1" style="width:16px;height:16px;" <?= $gasto['es_material_receta'] ? 'checked' : '' ?>>
         Es para materiales de recetas
       </label>
-      <div class="hint">Actívalo si este gasto es parte de lo que ya se calculó como costo de materiales de las recetas del evento (ej. compras de ingredientes) — así no se suma aparte, sino que se compara contra esa proyección. Déjalo sin marcar para gastos que sí son adicionales (alquiler, logística, etc.).</div>
+      <div class="hint">Actívalo si este gasto es parte de lo que ya se calculó como costo de materiales de las recetas de la práctica — así no se suma aparte, sino que se compara contra esa proyección.</div>
     </div>
 
     <div class="field-row">
@@ -110,7 +108,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field">
       <label for="descripcion">Descripción</label>
-      <input type="text" id="descripcion" name="descripcion" required placeholder="Ej. Alquiler del salón" value="<?= e($gasto['descripcion']) ?>">
+      <input type="text" id="descripcion" name="descripcion" required placeholder="Ej. Ingredientes de la práctica" value="<?= e($gasto['descripcion']) ?>">
     </div>
 
     <div class="field-row">
@@ -125,7 +123,7 @@ require __DIR__ . '/../includes/layout_top.php';
     </div>
 
     <div class="form-actions">
-      <a class="btn btn-secondary" href="detalle.php?id=<?= $eventoId ?>&tab=gastos">Cancelar</a>
+      <a class="btn btn-secondary" href="detalle.php?id=<?= $practicaId ?>&tab=gastos">Cancelar</a>
       <button class="btn btn-primary" type="submit">Guardar</button>
     </div>
   </form>

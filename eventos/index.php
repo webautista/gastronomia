@@ -25,9 +25,7 @@ $busqueda = trim($_GET['q'] ?? '');
 
 $sql = 'SELECT ev.*, es.nombre AS estado,
           (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
-          (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado,
-          (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id AND g.estado = \'confirmado\') AS gastado,
-          (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id AND g.estado = \'proyectado\') AS proyectado
+          (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado
         FROM eventos ev
         JOIN estados_evento es ON es.id = ev.estado_id';
 $params = [];
@@ -42,12 +40,14 @@ $stmt->execute($params);
 $eventos = $stmt->fetchAll();
 
 // La cuota ya no se guarda: se calcula aquí mismo para cada evento igual
-// que en su detalle (costo de recetas + gastos, dividido entre los
-// estudiantes asignados), para que la lista siempre muestre el mismo
-// número que verían al entrar al evento.
+// que en su detalle (costo de recetas, o el gasto real en materiales si ya
+// lo superó, más los demás gastos, dividido entre los estudiantes
+// asignados), para que la lista siempre muestre el mismo número que
+// verían al entrar al evento.
 foreach ($eventos as &$ev) {
     $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
-    $cuotas = calcularCuotasEvento($costoRecetas, (float) $ev['proyectado'], (float) $ev['gastado'], (int) $ev['num_estudiantes']);
+    $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
+    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
     $ev['costo_recetas'] = $costoRecetas;
     $ev['total_proyeccion'] = $cuotas['total_proyeccion'];
     $ev['total_confirmado'] = $cuotas['total_confirmado'];

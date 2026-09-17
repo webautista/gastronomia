@@ -10,14 +10,33 @@ $puedeCrearEvento = can($usuarioActual, 'eventos', 'crear');
 
 $stmt = db()->query(
     'SELECT ev.*, es.nombre AS estado,
-       (SELECT COALESCE(SUM(g.monto),0) FROM gastos g WHERE g.evento_id = ev.id) AS gastado,
-       (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
-       (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id AND ee.pagado = 1) AS num_pagados
+       (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      ORDER BY ev.fecha ASC'
 );
 $eventos = $stmt->fetchAll();
+
+// El "gastado" (presupuesto usado) y la cuota ya no se leen de columnas
+// fijas (presupuesto/cuota, en desuso): se calculan igual que en el
+// detalle del evento, para que este panel nunca muestre un número
+// distinto al que se vería al entrar al evento. "Gastado" cuenta solo lo
+// confirmado/pagado — un gasto todavía proyectado nunca cuenta como
+// presupuesto usado (el bug reportado: una partida proyectada de
+// RD$3,000 aparecía como "usada" sin haberse confirmado).
+foreach ($eventos as &$ev) {
+    $costoRecetas = costoTotalRecetasEvento(db(), (int) $ev['id']);
+    $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
+    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
+    $ev['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
+    $ev['presupuesto_total'] = $cuotas['total_proyeccion'];
+    $ev['cuota_confirmada'] = $cuotas['confirmada'];
+
+    $stmtPag = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ? AND monto_pagado >= ?');
+    $stmtPag->execute([(int) $ev['id'], $cuotas['confirmada'] - 0.005]);
+    $ev['num_pagados'] = (int) $stmtPag->fetchColumn();
+}
+unset($ev);
 
 $activos = array_filter($eventos, fn($e) => $e['estado'] !== 'Finalizado');
 $proximo = null;
@@ -34,7 +53,7 @@ $pendMonto = 0.0;
 foreach ($eventos as $ev) {
     $pendientes = $ev['num_estudiantes'] - $ev['num_pagados'];
     $pendCount += $pendientes;
-    $pendMonto += $pendientes * $ev['cuota'];
+    $pendMonto += $pendientes * $ev['cuota_confirmada'];
 }
 
 $pageTitle = 'Panel general';
@@ -88,7 +107,7 @@ require __DIR__ . '/includes/layout_top.php';
     <thead><tr><th>Evento</th><th>Fecha</th><th>Estado</th><th>Presupuesto usado</th><th>Pagos</th></tr></thead>
     <tbody>
       <?php foreach ($eventos as $ev):
-        $pct = $ev['presupuesto'] > 0 ? round($ev['gastado'] / $ev['presupuesto'] * 100) : 0;
+        $pct = $ev['presupuesto_total'] > 0 ? round($ev['gastado'] / $ev['presupuesto_total'] * 100) : 0;
       ?>
         <tr style="cursor:pointer;" onclick="window.location='eventos/detalle.php?id=<?= (int) $ev['id'] ?>'">
           <td class="cell-name"><?= e($ev['nombre']) ?></td>

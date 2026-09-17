@@ -191,6 +191,55 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "opcional" agregada a la tabla ingredientes (por defecto, requerido); las líneas que ya existían quedaron marcadas como requeridas.';
     }
 
+    // Rediseño del ciclo de vida de un gasto: antes solo tenía dos estados
+    // (proyectado/confirmado) con un único monto. Ahora tiene tres etapas
+    // (proyectado → confirmado → pagado), cada una con su propio monto
+    // editable por separado (para no perder el historial de cuánto se
+    // estimó, cuánto se confirmó y cuánto se pagó al final), y el pago
+    // exige fecha + una foto de la factura. "es_material_receta" marca un
+    // gasto como parte del cálculo de materiales de las recetas (en vez de
+    // sumarse aparte como un gasto adicional), y "eliminado_en" es un soft
+    // delete (un gasto ya pagado nunca se borra de verdad, solo se marca
+    // eliminado, para auditoría) — ver includes/helpers.php,
+    // resumenGastosVinculo() y calcularCuotas().
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'monto_confirmado')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN monto_confirmado DECIMAL(10,2) NULL AFTER monto');
+        $mensajes[] = 'Columna "monto_confirmado" agregada a la tabla gastos.';
+    }
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'monto_pagado')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN monto_pagado DECIMAL(10,2) NULL AFTER monto_confirmado');
+        $mensajes[] = 'Columna "monto_pagado" agregada a la tabla gastos.';
+    }
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'fecha_pago')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN fecha_pago DATE NULL AFTER fecha');
+        $mensajes[] = 'Columna "fecha_pago" agregada a la tabla gastos.';
+    }
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'factura')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN factura VARCHAR(255) NULL AFTER fecha_pago');
+        $mensajes[] = 'Columna "factura" agregada a la tabla gastos (foto de la factura del gasto ya pagado).';
+    }
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'es_material_receta')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN es_material_receta TINYINT(1) NOT NULL DEFAULT 0 AFTER factura');
+        $mensajes[] = 'Columna "es_material_receta" agregada a la tabla gastos (marca los gastos que cuentan contra el cálculo de materiales de las recetas).';
+    }
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'eliminado_en')) {
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN eliminado_en DATETIME NULL AFTER es_material_receta');
+        $mensajes[] = 'Columna "eliminado_en" agregada a la tabla gastos (soft delete: un gasto ya pagado se marca eliminado, nunca se borra, para auditoría).';
+    }
+    // Un gasto ahora puede pertenecer a una práctica en vez de a un evento
+    // (evento_id se vuelve opcional). Las dos cosas nacieron juntas, así
+    // que comparten un solo guardado: si practica_id ya existe, esta parte
+    // ya corrió antes y no hay nada más que hacer.
+    if (columnaExiste($pdo, 'gastos', 'id') && !columnaExiste($pdo, 'gastos', 'practica_id')) {
+        $pdo->exec('ALTER TABLE gastos MODIFY COLUMN evento_id INT UNSIGNED NULL');
+        $pdo->exec('ALTER TABLE gastos ADD COLUMN practica_id INT UNSIGNED NULL AFTER evento_id');
+        if (columnaExiste($pdo, 'practicas', 'id')) {
+            $pdo->exec('ALTER TABLE gastos ADD CONSTRAINT fk_gastos_practica FOREIGN KEY (practica_id) REFERENCES practicas(id) ON DELETE CASCADE');
+            $pdo->exec('ALTER TABLE gastos ADD KEY idx_gastos_practica (practica_id)');
+        }
+        $mensajes[] = 'Columna "practica_id" agregada a la tabla gastos (un gasto ahora puede pertenecer a una práctica en vez de a un evento); "evento_id" se volvió opcional.';
+    }
+
     return $mensajes;
 }
 
@@ -476,6 +525,52 @@ function corregirUnidadUsoMantequillaGuineoAvena(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Padres antes no tenía ningún acceso a Prácticas (era planificación
+ * interna del taller). Ahora sí puede VER la pestaña "Estudiantes y pagos"
+ * de una práctica (mismo criterio que ya tiene en Eventos), pero sigue sin
+ * ver Recetas/Lista de Compra/Gastos de una práctica — eso lo controla la
+ * propia pantalla de practicas/detalle.php mostrando esa pestaña nada más,
+ * no un módulo de permisos aparte. Guardado: solo toca la fila si sigue en
+ * su estado sembrado original (0,0,0,0), para no pisar un ajuste manual
+ * que ya se haya hecho desde Usuarios y roles → Roles.
+ */
+function otorgarAccesoPadresAPracticas(PDO $pdo): array
+{
+    $mensajes = [];
+    $stmt = $pdo->prepare(
+        "UPDATE permisos_rol pr
+         JOIN roles r ON r.id = pr.rol_id
+         JOIN modulos m ON m.id = pr.modulo_id
+         SET pr.ver = 1
+         WHERE r.nombre = 'Padres' AND m.clave = 'practicas'
+           AND pr.ver = 0 AND pr.crear = 0 AND pr.editar = 0 AND pr.eliminar = 0"
+    );
+    $stmt->execute();
+    if ($stmt->rowCount() > 0) {
+        $mensajes[] = 'Rol "Padres": acceso de solo lectura otorgado a Prácticas (pestaña "Estudiantes y pagos"), igual que ya tenía en Eventos.';
+    }
+    return $mensajes;
+}
+
+/**
+ * El módulo "gastos" ahora cubre los gastos de Eventos Y de Prácticas (antes
+ * era solo de eventos), así que su nombre visible en la matriz de permisos
+ * (Usuarios y roles → Roles) se actualiza para no confundir. Guardado por
+ * el nombre viejo exacto: si alguien ya lo personalizó desde la base de
+ * datos a mano, esto no lo toca.
+ */
+function renombrarModuloGastos(PDO $pdo): array
+{
+    $mensajes = [];
+    $stmt = $pdo->prepare("UPDATE modulos SET nombre = 'Gastos' WHERE clave = 'gastos' AND nombre = 'Gastos de eventos'");
+    $stmt->execute();
+    if ($stmt->rowCount() > 0) {
+        $mensajes[] = 'Módulo "gastos" renombrado de "Gastos de eventos" a "Gastos" (ahora cubre tanto eventos como prácticas).';
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -513,6 +608,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, renombrarVainillaLiquidaAExtracto($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoLimonMielVainilla($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoMantequillaGuineoAvena($pdo));
+        $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
+        $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

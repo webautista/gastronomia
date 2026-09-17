@@ -94,14 +94,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         requirePermission($usuarioActual, 'gastos', 'eliminar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         if ($gastoId) {
-            $pdo->prepare('DELETE FROM gastos WHERE id=? AND evento_id=?')->execute([$gastoId, $id]);
+            $stmtG = $pdo->prepare("SELECT estado FROM gastos WHERE id = ? AND evento_id = ? AND eliminado_en IS NULL");
+            $stmtG->execute([$gastoId, $id]);
+            $estadoGasto = $stmtG->fetchColumn();
+            if ($estadoGasto === 'pagado' && ($usuarioActual['rol_nombre'] ?? '') !== 'Administrador') {
+                flash('Un gasto ya pagado solo puede eliminarlo un Administrador.', 'error');
+            } elseif ($estadoGasto) {
+                // Soft delete: se marca eliminado_en en vez de borrar la fila,
+                // para conservar el historial completo con fines de auditoría
+                // (sobre todo de los gastos que ya se pagaron).
+                $pdo->prepare('UPDATE gastos SET eliminado_en = NOW() WHERE id = ?')->execute([$gastoId]);
+                flash('Gasto eliminado.');
+            }
         }
     } elseif ($accion === 'confirmar_gasto') {
         requirePermission($usuarioActual, 'gastos', 'editar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
-        if ($gastoId) {
-            $pdo->prepare("UPDATE gastos SET estado = 'confirmado' WHERE id = ? AND evento_id = ? AND estado = 'proyectado'")
-                ->execute([$gastoId, $id]);
+        $montoConfirmado = isset($_POST['monto_confirmado']) ? (float) $_POST['monto_confirmado'] : 0;
+        if ($gastoId && $montoConfirmado > 0) {
+            $pdo->prepare("UPDATE gastos SET estado = 'confirmado', monto_confirmado = ? WHERE id = ? AND evento_id = ? AND estado = 'proyectado'")
+                ->execute([$montoConfirmado, $gastoId, $id]);
+            flash('Gasto confirmado.');
         }
     }
 
@@ -177,46 +190,45 @@ if ($idsFilasTodas) {
     }
 }
 
-// El total gastado alimenta el medidor de presupuesto del resumen, que se
-// muestra a todos los roles con acceso al evento; los renglones detallados
-// (categoría, proveedor, descripción) solo se cargan si el rol puede ver
-// el módulo de gastos. "Gastado" = solo lo confirmado (ya pagado); lo
-// proyectado todavía no cuenta como dinero efectivamente gastado.
-$stmtSumaGastos = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'confirmado'");
-$stmtSumaGastos->execute([$id]);
-$gastado = (float) $stmtSumaGastos->fetchColumn();
-
-$stmtSumaProyectado = db()->prepare("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE evento_id = ? AND estado = 'proyectado'");
-$stmtSumaProyectado->execute([$id]);
-$totalProyectado = (float) $stmtSumaProyectado->fetchColumn();
-
-// Cuánto necesitará el evento en total, calculado como referencia: el
-// costo de recetas (siempre live, no se guarda) + lo proyectado + lo ya
-// confirmado. Sirve para ver "cuánto vamos a necesitar" antes de que todo
-// esté pagado.
-$totalProyeccionInversion = $costoRecetasEvento + $totalProyectado + $gastado;
+// Resumen de gastos del evento en cuatro baldes (material vs. otros ×
+// proyectado vs. usado): un gasto solo proyectado NUNCA cuenta como
+// "usado" contra el presupuesto (la corrección al bug reportado de
+// "presupuesto usado" mostrando dinero que todavía no se había
+// confirmado). Los renglones detallados (categoría, proveedor,
+// descripción) solo se cargan si el rol puede ver el módulo de gastos.
+$resumenGastos = resumenGastosVinculo(db(), 'evento_id', $id);
+$materialUsado = $resumenGastos['material_usado'];
+$otrosUsado = $resumenGastos['otros_usado'];
+$totalProyectado = $resumenGastos['material_proyectado'] + $resumenGastos['otros_proyectado'];
+$gastado = $materialUsado + $otrosUsado;
 
 $gastosEvento = [];
 if ($puedeVerGastos) {
     $stmt = db()->prepare(
-        'SELECT g.*, cg.nombre AS categoria FROM gastos g
+        "SELECT g.*, cg.nombre AS categoria FROM gastos g
          JOIN categorias_gasto cg ON cg.id = g.categoria_id
-         WHERE g.evento_id = ? ORDER BY (g.estado = \'proyectado\') DESC, g.fecha DESC, g.id DESC'
+         WHERE g.evento_id = ? AND g.eliminado_en IS NULL
+         ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC, g.id DESC"
     );
     $stmt->execute([$id]);
     $gastosEvento = $stmt->fetchAll();
 }
 
-// La cuota ya no se escribe a mano: siempre es el costo de las recetas más
-// los gastos del evento, dividido entre los estudiantes asignados.
-// "Proyectada" es la estimación más completa (incluye lo aún no
-// confirmado); "confirmada" es solo lo que ya es gasto real, y es la que
-// se usa para cobrarle a cada estudiante.
+// La cuota ya no se escribe a mano: siempre es el costo de las recetas (o
+// el gasto real en materiales, el que sea mayor) más los "otros" gastos
+// del evento, dividido entre los estudiantes asignados. "Proyectada" es la
+// estimación más completa (incluye lo aún no confirmado); "confirmada" es
+// solo lo que ya es gasto real, y es la que se usa para cobrarle a cada
+// estudiante.
 $cantidadEstudiantes = count($estudiantesEvento);
-$cuotas = calcularCuotasEvento($costoRecetasEvento, $totalProyectado, $gastado, $cantidadEstudiantes);
+$cuotas = calcularCuotas($costoRecetasEvento, $resumenGastos, $cantidadEstudiantes);
 $cuotaProyectada = $cuotas['proyectada'];
 $cuotaConfirmada = $cuotas['confirmada'];
 $totalConfirmadoConRecetas = $cuotas['total_confirmado'];
+
+// Cuánto necesitará el evento en total, calculado como referencia (incluye
+// todo lo proyectado todavía sin confirmar, de cualquier balde).
+$totalProyeccionInversion = $cuotas['total_proyeccion'];
 
 // "Pagado" queda como referencia histórica; lo que de verdad importa ahora
 // es comparar lo que cada quien ya pagó (monto_pagado) contra la cuota
@@ -256,7 +268,12 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="stat-label">Inversión del evento</div>
     <div class="stat-value"><?= money($totalProyeccionInversion) ?></div>
     <?php if ($puedeVerGastos): ?>
-      <div class="stat-hint" style="margin-top:8px;">Recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b> + proyectado: <b class="mono"><?= money($totalProyectado) ?></b> + confirmado: <b class="mono"><?= money($gastado) ?></b></div>
+      <div class="stat-hint" style="margin-top:8px;">Proyectado en recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b> · Gastado en materiales: <b class="mono"><?= money($materialUsado) ?></b> <?php if ($otrosUsado > 0 || $totalProyectado > 0): ?>· Otros gastos: <b class="mono"><?= money($otrosUsado) ?></b> (+ <?= money($totalProyectado) ?> proyectado)<?php endif; ?></div>
+      <?php if ($cuotas['material_excedido']): ?>
+        <div class="alert alert-error" style="margin-top:10px;padding:10px 12px;font-size:.85rem;">
+          <?= icon('alertTriangle') ?> El gasto en materiales (<?= money($materialUsado) ?>) superó lo proyectado en recetas (<?= money($costoRecetasEvento) ?>) por <b><?= money($cuotas['material_exceso']) ?></b>. Puede que haga falta ajustar la cuota o buscar más fondos.
+        </div>
+      <?php endif; ?>
     <?php else: ?>
       <div class="stat-hint">Costo estimado de recetas + gastos del evento.</div>
     <?php endif; ?>
@@ -291,7 +308,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php if ($tab === 'resumen'):
   $catTotales = [];
   foreach ($gastosEvento as $g) {
-      $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + (float) $g['monto'];
+      $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + montoEfectivoGasto($g);
   }
   $maxCat = max(1, ...(array_values($catTotales) ?: [1]));
   $pendientes = count($estudiantesEvento) - $numPagados;
@@ -548,14 +565,19 @@ require __DIR__ . '/../includes/layout_top.php';
     </div>
   </div>
 
-<?php elseif ($tab === 'gastos'): ?>
+<?php elseif ($tab === 'gastos'): $esAdmin = ($usuarioActual['rol_nombre'] ?? '') === 'Administrador'; ?>
   <div class="card card-pad" style="margin-bottom:16px;">
     <div class="stat-hint">
-      Costo estimado de recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b>
-      &nbsp;+&nbsp; Proyectado (sin pagar todavía): <b class="mono"><?= money($totalProyectado) ?></b>
-      &nbsp;+&nbsp; Confirmado (ya pagado): <b class="mono"><?= money($gastado) ?></b>
+      Proyectado en recetas: <b class="mono"><?= money($costoRecetasEvento) ?></b>
+      &nbsp;·&nbsp; Gastado en materiales: <b class="mono"><?= money($materialUsado) ?></b>
+      &nbsp;·&nbsp; Otros gastos: <b class="mono"><?= money($otrosUsado) ?></b> (+ <?= money($totalProyectado) ?> proyectado sin confirmar)
       &nbsp;=&nbsp; Necesitarían en total ≈ <b class="mono"><?= money($totalProyeccionInversion) ?></b>
     </div>
+    <?php if ($cuotas['material_excedido']): ?>
+      <div class="alert alert-error" style="margin-top:10px;padding:10px 12px;font-size:.85rem;">
+        <?= icon('alertTriangle') ?> El gasto en materiales superó lo proyectado en recetas por <b><?= money($cuotas['material_exceso']) ?></b>. Puede que haga falta ajustar la cuota o buscar más fondos.
+      </div>
+    <?php endif; ?>
   </div>
   <div class="toolbar">
     <div class="cell-muted"><?= count($gastosEvento) ?> partida<?= count($gastosEvento) === 1 ? '' : 's' ?> registrada<?= count($gastosEvento) === 1 ? '' : 's' ?></div>
@@ -571,31 +593,46 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php if (!$gastosEvento): ?>
           <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay gastos ni partidas proyectadas.</td></tr>
         <?php endif; ?>
-        <?php foreach ($gastosEvento as $g): $esProyectado = $g['estado'] === 'proyectado'; ?>
+        <?php foreach ($gastosEvento as $g): ?>
           <tr>
             <td>
-              <?php if ($esProyectado): ?>
+              <?php if ($g['estado'] === 'proyectado'): ?>
                 <span class="chip chip-warning">Proyectado</span>
+              <?php elseif ($g['estado'] === 'confirmado'): ?>
+                <span class="chip chip-neutral">Confirmado</span>
               <?php else: ?>
-                <span class="chip chip-success">Confirmado</span>
+                <span class="chip chip-success">Pagado</span>
               <?php endif; ?>
+              <?php if (!empty($g['es_material_receta'])): ?><div class="cell-muted" style="font-size:.72rem;margin-top:2px;">Material de receta</div><?php endif; ?>
             </td>
-            <td class="cell-muted"><?= fmtDate($g['fecha']) ?></td>
+            <td class="cell-muted">
+              <?= fmtDate($g['fecha']) ?>
+              <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><div style="font-size:.72rem;">Pagado: <?= fmtDate($g['fecha_pago']) ?></div><?php endif; ?>
+            </td>
             <td><span class="chip chip-neutral"><?= e($g['categoria']) ?></span></td>
             <td><?= e($g['descripcion']) ?></td>
             <td class="cell-muted"><?= e($g['proveedor']) ?></td>
-            <td class="mono"><?= money($g['monto']) ?></td>
+            <td class="mono">
+              <?= money(montoEfectivoGasto($g)) ?>
+              <?php if ($g['estado'] === 'pagado' && !empty($g['factura'])): ?>
+                <div><a href="<?= e($base . '/' . $g['factura']) ?>" target="_blank" rel="noopener" class="cell-muted" style="font-size:.78rem;"><?= icon('receipt') ?> Ver factura</a></div>
+              <?php endif; ?>
+            </td>
             <td class="row-actions">
-              <?php if ($esProyectado && $puedeEditarGasto): ?>
-              <form method="post" data-confirm="¿Confirmar esta partida como gasto real ya pagado?">
+              <?php if ($g['estado'] === 'proyectado' && $puedeEditarGasto): ?>
+              <form method="post" data-confirm="¿Confirmar esta partida por el monto indicado?" style="display:flex;gap:6px;align-items:center;">
                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                 <input type="hidden" name="accion" value="confirmar_gasto">
                 <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
+                <input type="number" name="monto_confirmado" min="0.01" step="0.01" value="<?= e((string) $g['monto']) ?>" style="width:100px;" title="Monto confirmado">
                 <button class="btn btn-primary btn-sm" type="submit"><?= icon('check') ?> Confirmar</button>
               </form>
               <?php endif; ?>
-              <?php if ($puedeEliminarGasto): ?>
-              <form method="post" data-confirm="¿Eliminar esta partida?">
+              <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
+                <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
+              <?php endif; ?>
+              <?php if ($puedeEliminarGasto && ($g['estado'] !== 'pagado' || $esAdmin)): ?>
+              <form method="post" data-confirm="<?= $g['estado'] === 'pagado' ? '¿Eliminar este gasto ya pagado? Es una acción de auditoría, solo un Administrador puede hacerla.' : '¿Eliminar esta partida?' ?>">
                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                 <input type="hidden" name="accion" value="quitar_gasto">
                 <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
