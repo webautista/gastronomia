@@ -53,6 +53,12 @@
     var factor = nuevo / porcionesBase;
     var total = 0;
     card.querySelectorAll('[data-role="cant"]').forEach(function (celda) {
+      // "Al gusto": no hay cantidad medible que escalar, así que se deja el
+      // texto tal cual y no entra en el total (igual que costoTotalReceta()
+      // en includes/helpers.php).
+      if (celda.getAttribute('data-al-gusto') === '1') {
+        return;
+      }
       var base = parseFloat(celda.getAttribute('data-base')) || 0;
       var unidad = celda.getAttribute('data-unidad') || '';
       var esEntera = celda.getAttribute('data-entera') === '1';

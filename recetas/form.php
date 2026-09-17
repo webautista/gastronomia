@@ -8,9 +8,12 @@ $usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
 requirePermission($usuarioActual, 'recetas', $id ? 'editar' : 'crear', $base);
 
-$receta = ['nombre' => '', 'categoria_id' => '', 'porciones_base' => '', 'preparacion' => '', 'foto' => null];
-$ingredientes = [['ingrediente_id' => '', 'nombre' => '', 'cantidad' => '', 'unidad_id' => '', 'costo_unitario' => '']];
+$receta = ['nombre' => '', 'descripcion' => '', 'categoria_id' => '', 'porciones_base' => '', 'preparacion' => '', 'foto' => null];
+$ingredientes = [['ingrediente_id' => '', 'nombre' => '', 'cantidad' => '', 'unidad_id' => '', 'costo_unitario' => '', 'reemplazo' => '', 'al_gusto' => 0, 'opcional' => 0, 'acciones' => []]];
 $errores = [];
+
+$accionesIngrediente = db()->query('SELECT * FROM acciones_ingrediente WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
+$accionesValidas = array_column($accionesIngrediente, 'id');
 
 $categorias = db()->query('SELECT * FROM categorias_receta WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
@@ -61,6 +64,18 @@ if ($id) {
     $stmt->execute([$id]);
     $filas = $stmt->fetchAll();
     if ($filas) {
+        $idsFilas = array_column($filas, 'id');
+        $accionesPorFila = [];
+        $in = implode(',', array_fill(0, count($idsFilas), '?'));
+        $stmtAcc = db()->prepare("SELECT receta_ingrediente_id, accion_id FROM ingrediente_accion WHERE receta_ingrediente_id IN ($in)");
+        $stmtAcc->execute($idsFilas);
+        foreach ($stmtAcc->fetchAll() as $fa) {
+            $accionesPorFila[(int) $fa['receta_ingrediente_id']][] = (int) $fa['accion_id'];
+        }
+        foreach ($filas as &$fila) {
+            $fila['acciones'] = $accionesPorFila[(int) $fila['id']] ?? [];
+        }
+        unset($fila);
         $ingredientes = $filas;
     }
 }
@@ -68,6 +83,7 @@ if ($id) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
     $receta['nombre']         = trim($_POST['nombre'] ?? '');
+    $receta['descripcion']    = trim($_POST['descripcion'] ?? '');
     $receta['categoria_id']   = intOrNull($_POST['categoria_id'] ?? null);
     $receta['porciones_base'] = intOrNull($_POST['porciones_base'] ?? null);
     $receta['preparacion']    = trim($_POST['preparacion'] ?? '');
@@ -77,6 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ingUnidad         = $_POST['ing_unidad_id'] ?? [];
     $ingCosto          = $_POST['ing_costo'] ?? [];
     $ingIngredienteId  = $_POST['ing_ingrediente_id'] ?? [];
+    $ingReemplazo      = $_POST['ing_reemplazo'] ?? [];
+    $ingAlGusto        = $_POST['ing_al_gusto'] ?? [];
+    $ingOpcional       = $_POST['ing_opcional'] ?? [];
+    $ingAccionesPost   = $_POST['ing_acciones'] ?? [];
 
     $unidadesValidas = array_column($unidades, 'id');
     $unidadPorDefecto = $unidadesValidas[0] ?? null;
@@ -95,12 +115,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($ingredienteId, $idsCatalogoValidos, true)) {
             $ingredienteId = null;
         }
+        $esAlGusto = !empty($ingAlGusto[$i]);
+        $reemplazo = trim($ingReemplazo[$i] ?? '');
+        $accionesFila = [];
+        if (!empty($ingAccionesPost[$i]) && is_array($ingAccionesPost[$i])) {
+            foreach ($ingAccionesPost[$i] as $accId) {
+                $accId = intOrNull($accId);
+                if ($accId && in_array($accId, $accionesValidas, true)) {
+                    $accionesFila[] = $accId;
+                }
+            }
+        }
         $ingredientesNuevos[] = [
             'ingrediente_id' => $ingredienteId,
             'nombre'         => $nombreIng,
-            'cantidad'       => (float) ($ingCantidad[$i] ?? 0),
+            'cantidad'       => $esAlGusto ? 0 : (float) ($ingCantidad[$i] ?? 0),
             'unidad_id'      => $unidadId,
             'costo_unitario' => (float) ($ingCosto[$i] ?? 0),
+            'reemplazo'      => $reemplazo !== '' ? $reemplazo : null,
+            'al_gusto'       => $esAlGusto ? 1 : 0,
+            'opcional'       => !empty($ingOpcional[$i]) ? 1 : 0,
+            'acciones'       => array_values(array_unique($accionesFila)),
         ];
     }
 
@@ -166,19 +201,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
         $pdo->beginTransaction();
         try {
+            $descripcionFinal = $receta['descripcion'] !== '' ? $receta['descripcion'] : null;
             if ($id) {
-                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, categoria_id=?, porciones_base=?, preparacion=?, foto=? WHERE id=?');
-                $stmt->execute([$receta['nombre'], $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal, $id]);
+                $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, descripcion=?, categoria_id=?, porciones_base=?, preparacion=?, foto=? WHERE id=?');
+                $stmt->execute([$receta['nombre'], $descripcionFinal, $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal, $id]);
                 $pdo->prepare('DELETE FROM ingredientes WHERE receta_id = ?')->execute([$id]);
             } else {
-                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, categoria_id, porciones_base, preparacion, foto) VALUES (?,?,?,?,?)');
-                $stmt->execute([$receta['nombre'], $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal]);
+                $stmt = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion, foto) VALUES (?,?,?,?,?,?)');
+                $stmt->execute([$receta['nombre'], $descripcionFinal, $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal]);
                 $id = (int) $pdo->lastInsertId();
             }
 
-            $stmtIng = $pdo->prepare('INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, orden) VALUES (?,?,?,?,?,?,?)');
+            // Una consulta preparada por fila de ingrediente es inevitable (cada
+            // una necesita su propio lastInsertId() para poder enlazar sus
+            // acciones). Pero las acciones sí se acumulan aquí y se insertan
+            // todas juntas en un solo INSERT de varias filas al final, en vez
+            // de una consulta por cada combinación ingrediente+acción — con
+            // varios ingredientes y varias acciones por línea, esto puede ser
+            // la diferencia entre un puñado de consultas y varias decenas, lo
+            // que se nota sobre todo si el hosting o la conexión a la base de
+            // datos tiene algo de latencia.
+            $stmtIng = $pdo->prepare('INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden) VALUES (?,?,?,?,?,?,?,?,?,?)');
+            $paresAccion = [];
             foreach ($ingredientesNuevos as $orden => $ing) {
-                $stmtIng->execute([$id, $ing['ingrediente_id'], $ing['nombre'], $ing['cantidad'], $ing['unidad_id'], $ing['costo_unitario'], $orden]);
+                $stmtIng->execute([$id, $ing['ingrediente_id'], $ing['nombre'], $ing['cantidad'], $ing['unidad_id'], $ing['costo_unitario'], $ing['reemplazo'], $ing['al_gusto'], $ing['opcional'], $orden]);
+                $nuevoIngId = (int) $pdo->lastInsertId();
+                foreach ($ing['acciones'] as $accId) {
+                    $paresAccion[] = [$nuevoIngId, $accId];
+                }
+            }
+            if ($paresAccion) {
+                $marcadores = implode(',', array_fill(0, count($paresAccion), '(?,?)'));
+                $valores = [];
+                foreach ($paresAccion as $par) {
+                    $valores[] = $par[0];
+                    $valores[] = $par[1];
+                }
+                $pdo->prepare("INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES $marcadores")->execute($valores);
             }
 
             $pdo->commit();
@@ -207,12 +266,18 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php endif; ?>
 
 <div class="card card-pad form-card" style="max-width:760px;">
-  <form method="post" enctype="multipart/form-data">
+  <form method="post" enctype="multipart/form-data" id="formReceta">
     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
 
     <div class="field">
       <label for="nombre">Nombre de la receta</label>
       <input type="text" id="nombre" name="nombre" required value="<?= e($receta['nombre']) ?>">
+    </div>
+
+    <div class="field">
+      <label for="descripcion">Descripción</label>
+      <textarea id="descripcion" name="descripcion" rows="2" placeholder="Ej. Un clásico dominicano, cremoso y fácil de escalar para grupos grandes."><?= e($receta['descripcion']) ?></textarea>
+      <div class="hint">Opcional. Una presentación breve de la receta — se muestra en el listado y al ver la receta, antes de los ingredientes.</div>
     </div>
 
     <div class="field-row">
@@ -254,29 +319,42 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="field">
       <label>Ingredientes (por las porciones base indicadas)</label>
       <div class="ing-row ing-row-labels">
-        <span>Ingrediente</span><span>Cantidad</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span><span></span>
+        <span>Cantidad</span><span></span><span>Ingrediente</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span><span></span>
       </div>
       <div id="ingRows">
-        <?php foreach ($ingredientes as $ing): ?>
-          <div class="ing-row" data-ing-row>
-            <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off" value="<?= e($ing['nombre']) ?>">
-            <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="<?= e((string) ($ing['ingrediente_id'] ?? '')) ?>">
-            <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= e((string) $ing['cantidad']) ?>">
-            <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="<?= (int) ($ing['unidad_id'] ?? 0) ?>">
-              <?php foreach ($unidades as $u): ?>
-                <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
-              <?php endforeach; ?>
-            </select>
-            <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo" value="<?= e((string) $ing['costo_unitario']) ?>">
-            <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
-            <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
-            <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
-            <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
+        <?php foreach ($ingredientes as $ing): $esAlGusto = !empty($ing['al_gusto']); ?>
+          <div class="ing-row-block" data-ing-row>
+            <div class="ing-row">
+              <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= $esAlGusto ? '' : e((string) $ing['cantidad']) ?>" <?= $esAlGusto ? 'disabled' : '' ?>>
+              <label class="al-gusto-check"><input type="checkbox" data-role="ing-al-gusto-check" <?= $esAlGusto ? 'checked' : '' ?>> Al gusto</label>
+              <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off" value="<?= e($ing['nombre']) ?>">
+              <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="<?= e((string) ($ing['ingrediente_id'] ?? '')) ?>">
+              <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="<?= (int) ($ing['unidad_id'] ?? 0) ?>">
+                <?php foreach ($unidades as $u): ?>
+                  <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>" <?= (int) $u['id'] === (int) ($ing['unidad_id'] ?? 0) ? 'selected' : '' ?>><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+                <?php endforeach; ?>
+              </select>
+              <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo" value="<?= e((string) $ing['costo_unitario']) ?>">
+              <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
+              <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
+              <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
+              <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
+            </div>
+            <div class="ing-row-extra">
+              <label class="opcional-check"><input type="checkbox" name="ing_opcional[]" value="1" <?= !empty($ing['opcional']) ? 'checked' : '' ?>> Opcional</label>
+              <input type="text" name="ing_reemplazo[]" placeholder="Reemplazo (opcional, ej. o mantequilla de maní)" list="catalogoIngredientesList" value="<?= e((string) ($ing['reemplazo'] ?? '')) ?>" style="flex:1;min-width:200px;">
+              <div class="ing-acciones" data-role="ing-acciones-wrap">
+                <?php foreach ($accionesIngrediente as $ac): ?>
+                  <label class="chip-check"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>" <?= in_array((int) $ac['id'], $ing['acciones'] ?? [], true) ? 'checked' : '' ?>> <?= e($ac['nombre']) ?></label>
+                <?php endforeach; ?>
+              </div>
+            </div>
+            <input type="hidden" name="ing_al_gusto[]" data-role="ing-al-gusto-hidden" value="<?= $esAlGusto ? '1' : '0' ?>">
           </div>
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El botón <?= icon('refresh') ?> vuelve a traer el costo actual del catálogo para esa fila (útil en una receta ya guardada, si el precio del catálogo cambió o si la fila quedó con un costo mal convertido de antes). El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba — media manzana igual cuenta como una manzana comprada.</div>
+      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El botón <?= icon('refresh') ?> vuelve a traer el costo actual del catálogo para esa fila. Marca <b>Al gusto</b> cuando la cantidad no se mide (esa línea no entra en el costo total). <b>Opcional</b> es solo informativo (por defecto, toda línea es requerida). <b>Reemplazo</b> es para anotar una alternativa cuando la receta es "esto o lo otro" (ej. "o mantequilla de maní"). <b>Preparación</b> deja marcar uno o más cortes/acciones para esa línea (ej. Espinaca — Cocida y Picada) — se administran desde Configuración. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba.</div>
       <div class="ing-total">Costo total estimado de la receta: <span class="mono" id="ingCostoTotal">RD$ 0</span></div>
     </div>
 
@@ -288,7 +366,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="form-actions">
       <a class="btn btn-secondary" href="index.php">Cancelar</a>
-      <button class="btn btn-primary" type="submit"><?= $id ? 'Guardar cambios' : 'Crear receta' ?></button>
+      <button class="btn btn-primary" type="submit" id="btnGuardarReceta" data-texto-normal="<?= $id ? 'Guardar cambios' : 'Crear receta' ?>"><?= $id ? 'Guardar cambios' : 'Crear receta' ?></button>
     </div>
   </form>
 </div>
@@ -300,20 +378,33 @@ require __DIR__ . '/../includes/layout_top.php';
 </datalist>
 
 <template id="ingRowTemplate">
-  <div class="ing-row" data-ing-row>
-    <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off">
-    <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="">
-    <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad">
-    <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="">
-      <?php foreach ($unidades as $u): ?>
-        <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
-      <?php endforeach; ?>
-    </select>
-    <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo">
-    <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
-    <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
-    <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
-    <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
+  <div class="ing-row-block" data-ing-row>
+    <div class="ing-row">
+      <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad">
+      <label class="al-gusto-check"><input type="checkbox" data-role="ing-al-gusto-check"> Al gusto</label>
+      <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off">
+      <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="">
+      <select name="ing_unidad_id[]" data-role="ing-unidad" data-prev="">
+        <?php foreach ($unidades as $u): ?>
+          <option value="<?= (int) $u['id'] ?>" data-entera="<?= !empty($u['es_entera']) ? '1' : '0' ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option>
+        <?php endforeach; ?>
+      </select>
+      <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo">
+      <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
+      <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
+      <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
+      <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
+    </div>
+    <div class="ing-row-extra">
+      <label class="opcional-check"><input type="checkbox" name="ing_opcional[]" value="1"> Opcional</label>
+      <input type="text" name="ing_reemplazo[]" placeholder="Reemplazo (opcional, ej. o mantequilla de maní)" list="catalogoIngredientesList" style="flex:1;min-width:200px;">
+      <div class="ing-acciones" data-role="ing-acciones-wrap">
+        <?php foreach ($accionesIngrediente as $ac): ?>
+          <label class="chip-check"><input type="checkbox" data-role="ing-accion-check" value="<?= (int) $ac['id'] ?>"> <?= e($ac['nombre']) ?></label>
+        <?php endforeach; ?>
+      </div>
+    </div>
+    <input type="hidden" name="ing_al_gusto[]" data-role="ing-al-gusto-hidden" value="0">
   </div>
 </template>
 
@@ -456,13 +547,21 @@ require __DIR__ . '/../includes/layout_top.php';
     }
 
     function recalcularFila(fila) {
+      var montoEl = fila.querySelector('[data-role="ing-monto"]');
+      var hiddenAlGusto = fila.querySelector('[data-role="ing-al-gusto-hidden"]');
+      if (hiddenAlGusto && hiddenAlGusto.value === '1') {
+        // "Al gusto": no hay cantidad medible, así que no se puede estimar
+        // el costo de esta línea — se excluye del total (igual que en
+        // costoTotalReceta() en includes/helpers.php).
+        if (montoEl) montoEl.textContent = 'Al gusto';
+        return 0;
+      }
       var cantidad = parseFloat(fila.querySelector('[data-role="ing-cantidad"]').value) || 0;
       var costo = parseFloat(fila.querySelector('[data-role="ing-costo"]').value) || 0;
       var selectUnidad = fila.querySelector('[data-role="ing-unidad"]');
       var opcion = selectUnidad ? selectUnidad.options[selectUnidad.selectedIndex] : null;
       var esEntera = !!(opcion && opcion.getAttribute('data-entera') === '1');
       var monto = cantidadDeCompra(cantidad, esEntera) * costo;
-      var montoEl = fila.querySelector('[data-role="ing-monto"]');
       if (montoEl) montoEl.textContent = money(monto);
       return monto;
     }
@@ -548,6 +647,22 @@ require __DIR__ . '/../includes/layout_top.php';
       if (selectUnidad) {
         ajustarCostoPorCambioDeUnidad(selectUnidad);
         recalcularTotal();
+        return;
+      }
+      // "Al gusto": desactiva la cantidad numérica de esa fila (no aplica
+      // cuando no se mide) y sincroniza el campo oculto que sí se envía en
+      // el POST (el checkbox por sí solo no manda nada si está destildado).
+      var chkAlGusto = e.target.closest('[data-role="ing-al-gusto-check"]');
+      if (chkAlGusto) {
+        var filaAg = chkAlGusto.closest('[data-ing-row]');
+        var hiddenAg = filaAg ? filaAg.querySelector('[data-role="ing-al-gusto-hidden"]') : null;
+        var inputCantidadAg = filaAg ? filaAg.querySelector('[data-role="ing-cantidad"]') : null;
+        if (hiddenAg) hiddenAg.value = chkAlGusto.checked ? '1' : '0';
+        if (inputCantidadAg) {
+          inputCantidadAg.disabled = chkAlGusto.checked;
+          if (chkAlGusto.checked) inputCantidadAg.value = '';
+        }
+        recalcularTotal();
       }
     });
 
@@ -614,6 +729,36 @@ require __DIR__ . '/../includes/layout_top.php';
           modalErrores.hidden = false;
         });
     });
+
+    // Las acciones/cortes marcados en cada fila se envían como
+    // "ing_acciones[N][]" donde N es la posición de esa fila entre las
+    // filas de ingrediente en ese momento (0, 1, 2...). Se reasigna justo
+    // antes de enviar, recorriendo las filas en el mismo orden del DOM en
+    // que el navegador va a mandar el resto de los campos "ing_xxx[]" — así
+    // el índice N siempre corresponde a la fila correcta, sin importar
+    // cuántas filas se agregaron o quitaron mientras se editaba.
+    var formReceta = document.getElementById('formReceta');
+    if (formReceta) {
+      formReceta.addEventListener('submit', function () {
+        var filas = ingRows.querySelectorAll('[data-ing-row]');
+        filas.forEach(function (fila, idx) {
+          fila.querySelectorAll('[data-role="ing-accion-check"]').forEach(function (chk) {
+            chk.name = 'ing_acciones[' + idx + '][]';
+          });
+        });
+
+        // Al momento de enviar (ya pasó la validación del navegador, así que
+        // sí va a mandar el formulario): deja el botón "trabajando" para que
+        // los estudiantes no le den varias veces a Crear/Guardar mientras la
+        // página está guardando. No se usa preventDefault, así que el envío
+        // sigue su curso normal — esto solo cambia cómo se ve el botón.
+        var btnGuardar = document.getElementById('btnGuardarReceta');
+        if (btnGuardar) {
+          btnGuardar.disabled = true;
+          btnGuardar.innerHTML = '<span class="btn-spinner"></span> Guardando...';
+        }
+      });
+    }
 
     recalcularTotal();
   })();

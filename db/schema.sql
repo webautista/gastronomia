@@ -124,6 +124,25 @@ INSERT IGNORE INTO categorias_ingrediente (nombre, orden) VALUES
 ('Enlatado y conserva',130),('Panadería',140),('Bebida para cocinar',150),
 ('Repostería',155),('Otro',160);
 
+-- Acciones/cortes de preparación (dropdown de selección múltiple en cada
+-- línea de ingrediente de una receta: ej. "Espinaca — Cocida y Picada").
+-- Catálogo administrable desde Configuración, igual que los demás.
+CREATE TABLE IF NOT EXISTS acciones_ingrediente (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(60) NOT NULL,
+    orden INT UNSIGNED NOT NULL DEFAULT 0,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    UNIQUE KEY uq_acciones_ingrediente_nombre (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO acciones_ingrediente (nombre, orden) VALUES
+('Cortado en cuadritos',10),('Cortado en cubos',20),('Cortado a la juliana',30),
+('Cortado en rodajas',40),('Cortado en tiras',50),('Cortado en trozos',60),
+('Rebanado',70),('Rallado',80),('Cortado en mitades',90),
+('Picado',100),('Molido',110),('Batido',120),('Cocido',130),
+('Triturado',140),('Machacado',150),('Licuado',160),('Derretido',170),
+('Congelado',180),('Marinado',190);
+
 -- Catálogo maestro de ingredientes: nombre, categoría, ícono, unidad en que
 -- se usa dentro de las recetas, y precio de referencia. "unidad_compra" +
 -- "contenido_por_compra" separan cómo se COMPRA (ej. un cartón de 30
@@ -318,6 +337,24 @@ INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id
 ('Habichuelas blancas (secas)', (SELECT id FROM categorias_ingrediente WHERE nombre='Legumbre'), '🫘', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 50.57, 'Paquete de 800 g / 1.76 lb (marca Líder), precio equivalente a la libra'),
 ('Harina de maíz', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🌽', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 20.57, 'Paquete de 396.9 g / 14 oz (marca Bravo), precio equivalente a la libra');
 
+-- Quinta tanda: espinaca, queso rallado, mantequilla de maní, avena
+-- (integral e instantánea) por Taza, y cacao/chocolate de mesa, a pedido —
+-- mismos criterios (precios reales investigados en supermercadosrd.com y
+-- supermercadosnacional.com, septiembre de 2026). Queso rallado, las dos
+-- avenas y el cacao/chocolate se cargan aquí directamente con su unidad de
+-- uso correcta; la unidad de uso de Mantequilla, Guineo y la Avena
+-- genérica que YA existían de antes se corrige aparte en setup.php
+-- (corregirUnidadUsoMantequillaGuineoAvena), porque un INSERT IGNORE nunca
+-- toca una fila que ya existe.
+INSERT IGNORE INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra) VALUES
+('Espinaca', (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'), '🥬', (SELECT id FROM unidades_medida WHERE nombre='Libra'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1, 109.00, 'Bravo Hojas De Espinaca, 1 lb (supermercadosrd.com, sept. 2026)'),
+('Queso rallado', (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'), '🧀', (SELECT id FROM unidades_medida WHERE nombre='Taza'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 4, 215.00, 'Queso Mozzarella Wala Rallado, RD$215/lb (supermercadosrd.com) ≈ 4 tazas por libra (ref.: 4 oz de queso rallado ≈ 1 taza)'),
+('Mantequilla de maní', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🥜', (SELECT id FROM unidades_medida WHERE nombre='Taza'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 1.76, 118.95, 'Líder Creamy, frasco de 454 g / 1 lb, RD$118.95 (supermercadosnacional.com) ≈ 1.76 tazas por libra (ref.: 1 taza de mantequilla de maní ≈ 258 g)'),
+('Avena integral', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🌾', (SELECT id FROM unidades_medida WHERE nombre='Taza'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 5.3, 32.67, 'Bravo Avena Integral, 24 oz / 680.4 g, RD$49 ≈ RD$32.67/lb (supermercadosrd.com) ≈ 5.3 tazas por libra (ref.: 1 taza de avena en hojuelas ≈ 85 g)'),
+('Avena instantánea', (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'), '🌾', (SELECT id FROM unidades_medida WHERE nombre='Taza'), (SELECT id FROM unidades_medida WHERE nombre='Libra'), 5.3, 32.67, 'Bravo Avena Instantánea, 24 oz / 680.4 g, RD$49 ≈ RD$32.67/lb (supermercadosrd.com) ≈ 5.3 tazas por libra (misma referencia que la avena integral)'),
+('Cacao sin azúcar', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Gramo'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 200, 179.00, 'Bravo Cocoa En Polvo S/Azúcar, 200 g, RD$179 (supermercadosrd.com)'),
+('Chocolate de mesa', (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'), '🍫', (SELECT id FROM unidades_medida WHERE nombre='Unidad'), (SELECT id FROM unidades_medida WHERE nombre='Paquete'), 24, 320.00, 'Chocolate Crachi Cortés, funda de 24 pastillas / 312 g, RD$309-340 según tienda (supermercadosrd.com), se usa en pastillas para chocolate caliente');
+
 -- Módulos del sistema (pantallas/funcionalidades sobre las que se
 -- otorgan permisos por rol)
 CREATE TABLE IF NOT EXISTS modulos (
@@ -440,6 +477,35 @@ CREATE TABLE IF NOT EXISTS ingredientes (
     CONSTRAINT fk_ingredientes_unidad FOREIGN KEY (unidad_id) REFERENCES unidades_medida(id),
     CONSTRAINT fk_ingredientes_catalogo FOREIGN KEY (ingrediente_id) REFERENCES ingredientes_catalogo(id),
     KEY idx_ingredientes_receta (receta_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Dos columnas más de "ingredientes" (reemplazo, al_gusto, opcional) se
+-- agregan siempre desde setup.php (migrarColumnasNuevas), nunca aquí en el
+-- CREATE TABLE — mismo motivo que ingrediente_id más arriba: en una
+-- instalación nueva la tabla nacería ya con la columna y columnaExiste() la
+-- vería como "ya migrada" sin que corra ningún UPDATE de valores por
+-- defecto que hiciera falta.
+-- - reemplazo VARCHAR(150) NULL: alternativa anotada para esa línea (ej.
+--   "o mantequilla de maní"), para recetas donde es una cosa o la otra.
+-- - al_gusto TINYINT(1): la cantidad de esa línea no se mide, se ajusta al
+--   gusto de quien cocina; la cantidad numérica se ignora y el costo de esa
+--   línea no se puede estimar (se excluye del costo total de la receta).
+-- - opcional TINYINT(1): marca si ese ingrediente es opcional o requerido
+--   para la receta (por defecto, requerido).
+
+-- Selección múltiple de acciones/cortes de preparación por línea de
+-- ingrediente (ej. "Espinaca — Cocida y Picada"). Se llama
+-- "receta_ingrediente_id" (no "ingrediente_id") para no confundirse con la
+-- columna que ya existe en "ingredientes" y que enlaza al catálogo maestro
+-- — aquí lo que se enlaza es la LÍNEA de la receta (ingredientes.id).
+CREATE TABLE IF NOT EXISTS ingrediente_accion (
+    receta_ingrediente_id INT UNSIGNED NOT NULL,
+    accion_id INT UNSIGNED NOT NULL,
+    PRIMARY KEY (receta_ingrediente_id, accion_id),
+    CONSTRAINT fk_ia_ingrediente FOREIGN KEY (receta_ingrediente_id)
+        REFERENCES ingredientes(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ia_accion FOREIGN KEY (accion_id)
+        REFERENCES acciones_ingrediente(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------

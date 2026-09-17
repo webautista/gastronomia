@@ -142,6 +142,11 @@ foreach ($recetasEvento as &$rc) {
     $rc['ingredientes'] = $stmtIng->fetchAll();
     $rc['costo_total'] = 0;
     foreach ($rc['ingredientes'] as $ing) {
+        // "Al gusto": no hay cantidad medible, así que no entra en el costo
+        // (igual que costoTotalReceta() en includes/helpers.php).
+        if (!empty($ing['al_gusto'])) {
+            continue;
+        }
         $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
         $esEntera = (bool) ($ing['unidad_entera'] ?? false);
         $rc['costo_total'] += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
@@ -149,6 +154,28 @@ foreach ($recetasEvento as &$rc) {
     $costoRecetasEvento += $rc['costo_total'];
 }
 unset($rc);
+
+// Acciones/cortes marcados por línea (ver.php muestra lo mismo), para
+// mostrarlos junto al nombre del ingrediente en la pestaña "Recetas".
+$accionesPorFila = [];
+$idsFilasTodas = [];
+foreach ($recetasEvento as $rc) {
+    foreach ($rc['ingredientes'] as $ing) {
+        $idsFilasTodas[] = (int) $ing['id'];
+    }
+}
+if ($idsFilasTodas) {
+    $in = implode(',', array_fill(0, count($idsFilasTodas), '?'));
+    $stmtAcc = db()->prepare(
+        "SELECT ia.receta_ingrediente_id, ac.nombre FROM ingrediente_accion ia
+         JOIN acciones_ingrediente ac ON ac.id = ia.accion_id
+         WHERE ia.receta_ingrediente_id IN ($in) ORDER BY ac.orden ASC, ac.nombre ASC"
+    );
+    $stmtAcc->execute($idsFilasTodas);
+    foreach ($stmtAcc->fetchAll() as $fa) {
+        $accionesPorFila[(int) $fa['receta_ingrediente_id']][] = $fa['nombre'];
+    }
+}
 
 // El total gastado alimenta el medidor de presupuesto del resumen, que se
 // muestra a todos los roles con acceso al evento; los renglones detallados
@@ -426,15 +453,21 @@ require __DIR__ . '/../includes/layout_top.php';
         <thead><tr><th>Ingrediente</th><th>Cantidad base</th><th>Cantidad necesaria</th><th>Costo est.</th></tr></thead>
         <tbody>
           <?php foreach ($ingredientesReceta as $ing):
+            $esAlGusto = !empty($ing['al_gusto']);
             $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
             $esEntera = (bool) ($ing['unidad_entera'] ?? false);
             $costo = montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
           ?>
             <tr>
-              <td class="cell-name"><?= e($ing['nombre']) ?></td>
-              <td class="cell-muted mono"><?= numFmt($ing['cantidad']) ?> <?= e($ing['unidad']) ?></td>
-              <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= $esEntera ? '1' : '0' ?>"><?= numFmt($cantidad) ?> <?= e($ing['unidad']) ?></td>
-              <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= money($costo) ?></td>
+              <td class="cell-name">
+                <?= e($ing['nombre']) ?>
+                <?php if (!empty($ing['opcional'])): ?> <span class="chip chip-muted" style="font-size:.68rem;">Opcional</span><?php endif; ?>
+                <?php if (!empty($ing['reemplazo'])): ?><div class="cell-muted" style="font-size:.78rem;">o <?= e($ing['reemplazo']) ?></div><?php endif; ?>
+                <?php if (!empty($accionesPorFila[$ing['id']])): ?><div class="cell-muted" style="font-size:.78rem;"><?= e(implode(', ', $accionesPorFila[$ing['id']])) ?></div><?php endif; ?>
+              </td>
+              <td class="cell-muted mono"><?= $esAlGusto ? 'Al gusto' : numFmt($ing['cantidad']) . ' ' . e($ing['unidad']) ?></td>
+              <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= $esEntera ? '1' : '0' ?>" data-al-gusto="<?= $esAlGusto ? '1' : '0' ?>"><?= $esAlGusto ? 'Al gusto' : numFmt($cantidad) . ' ' . e($ing['unidad']) ?></td>
+              <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= $esAlGusto ? '—' : money($costo) ?></td>
             </tr>
           <?php endforeach; ?>
         </tbody>

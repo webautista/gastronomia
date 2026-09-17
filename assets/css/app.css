@@ -101,6 +101,9 @@ button{font-family:inherit;}
 .btn-secondary:hover{background:var(--surface-2);}
 .btn-sm{padding:6px 12px;font-size:.8rem;}
 .btn-danger{background:var(--danger);color:#fff;}
+.btn:disabled{opacity:.7;cursor:not-allowed;}
+.btn .btn-spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;display:inline-block;animation:btn-spin .7s linear infinite;}
+@keyframes btn-spin{to{transform:rotate(360deg);}}
 
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
 @media (max-width:900px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
@@ -214,7 +217,14 @@ table.table{width:100%;border-collapse:collapse;}
 .form-card{max-width:640px;}
 .form-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border);}
 
-.ing-row{display:grid;grid-template-columns:1.4fr 0.7fr 0.9fr 0.8fr 0.9fr auto auto auto;gap:8px;margin-bottom:8px;align-items:center;}
+/* Cada línea de ingrediente es un bloque de dos filas: .ing-row (los campos
+   principales: cantidad, nombre, unidad, costo, monto, botones) y
+   .ing-row-extra debajo (opcional, reemplazo, acciones/cortes) — agrupadas
+   visualmente con un separador sutil entre una línea de ingrediente y la
+   siguiente. */
+.ing-row-block{padding-bottom:10px;margin-bottom:10px;border-bottom:1px dashed var(--border);}
+.ing-row-block:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
+.ing-row{display:grid;grid-template-columns:0.7fr auto 1.3fr 0.9fr 0.8fr 0.9fr auto auto auto;gap:8px;margin-bottom:6px;align-items:center;}
 @media (max-width:600px){.ing-row{grid-template-columns:1fr 1fr;}}
 .ing-row input,.ing-row select{padding:7px 9px;font-size:.82rem;}
 .ing-row-labels{font-size:.7rem;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.02em;margin-bottom:2px;}
@@ -224,6 +234,16 @@ table.table{width:100%;border-collapse:collapse;}
 .icon-btn{background:none;border:1px solid var(--border);border-radius:8px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-secondary);flex-shrink:0;}
 .icon-btn:hover{background:var(--danger-soft);color:var(--danger);border-color:transparent;}
 .icon-btn.icon-btn-add:hover{background:var(--success-soft);color:var(--success);}
+
+/* Segunda fila de cada línea de ingrediente: opcional, reemplazo, acciones. */
+.ing-row-extra{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding-left:2px;}
+.ing-row-extra input[type="text"]{padding:6px 9px;font-size:.78rem;}
+.al-gusto-check,.opcional-check{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;color:var(--text-secondary);white-space:nowrap;cursor:pointer;}
+.al-gusto-check input,.opcional-check input{margin:0;}
+.ing-acciones{display:flex;flex-wrap:wrap;gap:6px;}
+.chip-check{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;background:var(--surface);white-space:nowrap;}
+.chip-check input{margin:0;}
+.chip-check:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);}
 
 /* Modal (alta rápida de ingrediente, etc.) */
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,20,15,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;}

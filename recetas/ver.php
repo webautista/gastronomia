@@ -41,11 +41,25 @@ $stmtIng = db()->prepare(
 $stmtIng->execute([$id]);
 $ingredientesReceta = $stmtIng->fetchAll();
 
-$porcionesBase = max(1, (int) $receta['porciones_base']);
-$costoTotalBase = 0;
-foreach ($ingredientesReceta as $ing) {
-    $costoTotalBase += montoLineaReceta((float) $ing['cantidad'], (float) $ing['costo_unitario'], (bool) ($ing['unidad_entera'] ?? false));
+// Acciones/cortes marcados por línea, para mostrarlos como chips junto al
+// nombre del ingrediente (ej. "Espinaca — Cocida y Picada").
+$accionesPorFila = [];
+if ($ingredientesReceta) {
+    $idsFilas = array_column($ingredientesReceta, 'id');
+    $in = implode(',', array_fill(0, count($idsFilas), '?'));
+    $stmtAcc = db()->prepare(
+        "SELECT ia.receta_ingrediente_id, ac.nombre FROM ingrediente_accion ia
+         JOIN acciones_ingrediente ac ON ac.id = ia.accion_id
+         WHERE ia.receta_ingrediente_id IN ($in) ORDER BY ac.orden ASC, ac.nombre ASC"
+    );
+    $stmtAcc->execute($idsFilas);
+    foreach ($stmtAcc->fetchAll() as $fa) {
+        $accionesPorFila[(int) $fa['receta_ingrediente_id']][] = $fa['nombre'];
+    }
 }
+
+$porcionesBase = max(1, (int) $receta['porciones_base']);
+$costoTotalBase = costoTotalReceta(db(), $id);
 
 $pageTitle = $receta['nombre'];
 $activeNav = 'recetas';
@@ -57,6 +71,9 @@ require __DIR__ . '/../includes/layout_top.php';
   <div>
     <h1><?= e($receta['nombre']) ?></h1>
     <p><?= e($receta['categoria']) ?> · base <?= $porcionesBase ?> porciones</p>
+    <?php if (trim((string) ($receta['descripcion'] ?? '')) !== ''): ?>
+      <p style="max-width:640px;"><?= nl2br(e($receta['descripcion'])) ?></p>
+    <?php endif; ?>
   </div>
   <?php if ($puedeEditar): ?>
     <a class="btn btn-secondary" href="form.php?id=<?= (int) $receta['id'] ?>"><?= icon('edit') ?> Editar</a>
@@ -83,11 +100,16 @@ require __DIR__ . '/../includes/layout_top.php';
   <table class="table">
     <thead><tr><th>Ingrediente</th><th>Cantidad</th><th>Costo est.</th></tr></thead>
     <tbody>
-      <?php foreach ($ingredientesReceta as $ing): ?>
+      <?php foreach ($ingredientesReceta as $ing): $esAlGusto = !empty($ing['al_gusto']); ?>
         <tr>
-          <td class="cell-name"><?= $ing['icono'] ? e($ing['icono']) . ' ' : '' ?><?= e($ing['nombre']) ?></td>
-          <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= !empty($ing['unidad_entera']) ? '1' : '0' ?>"><?= numFmt($ing['cantidad']) ?> <?= e($ing['unidad']) ?></td>
-          <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= money(montoLineaReceta((float) $ing['cantidad'], (float) $ing['costo_unitario'], (bool) ($ing['unidad_entera'] ?? false))) ?></td>
+          <td class="cell-name">
+            <?= $ing['icono'] ? e($ing['icono']) . ' ' : '' ?><?= e($ing['nombre']) ?>
+            <?php if (!empty($ing['opcional'])): ?> <span class="chip chip-muted" style="font-size:.68rem;">Opcional</span><?php endif; ?>
+            <?php if (!empty($ing['reemplazo'])): ?><div class="cell-muted" style="font-size:.78rem;">o <?= e($ing['reemplazo']) ?></div><?php endif; ?>
+            <?php if (!empty($accionesPorFila[$ing['id']])): ?><div class="cell-muted" style="font-size:.78rem;"><?= e(implode(', ', $accionesPorFila[$ing['id']])) ?></div><?php endif; ?>
+          </td>
+          <td class="mono" data-role="cant" data-base="<?= e((string) $ing['cantidad']) ?>" data-unidad="<?= e($ing['unidad']) ?>" data-entera="<?= !empty($ing['unidad_entera']) ? '1' : '0' ?>" data-al-gusto="<?= $esAlGusto ? '1' : '0' ?>"><?= $esAlGusto ? 'Al gusto' : numFmt($ing['cantidad']) . ' ' . e($ing['unidad']) ?></td>
+          <td class="mono" data-role="costo" data-costo="<?= e((string) $ing['costo_unitario']) ?>"><?= $esAlGusto ? '—' : money(montoLineaReceta((float) $ing['cantidad'], (float) $ing['costo_unitario'], (bool) ($ing['unidad_entera'] ?? false))) ?></td>
         </tr>
       <?php endforeach; ?>
     </tbody>

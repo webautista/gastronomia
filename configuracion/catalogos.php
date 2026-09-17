@@ -44,6 +44,10 @@ $catalogos = [
         'tabla' => 'categorias_ingrediente', 'label' => 'Categorías de ingrediente', 'abrev' => false,
         'ref_tabla' => 'ingredientes_catalogo', 'ref_col' => 'categoria_id',
     ],
+    'acciones_ingrediente' => [
+        'tabla' => 'acciones_ingrediente', 'label' => 'Acciones de preparación (cortes, etc.)', 'abrev' => false,
+        'ref_tabla' => 'ingrediente_accion', 'ref_col' => 'accion_id',
+    ],
 ];
 
 $tipo = $_GET['tipo'] ?? 'categorias_receta';

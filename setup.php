@@ -57,6 +57,14 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "preparacion" agregada a la tabla recetas.';
     }
 
+    // Descripción corta de la receta (debajo del nombre) — distinta de
+    // "preparacion" (los pasos a seguir): es una presentación breve de la
+    // receta, útil en el listado y en la vista de la receta.
+    if (columnaExiste($pdo, 'recetas', 'id') && !columnaExiste($pdo, 'recetas', 'descripcion')) {
+        $pdo->exec('ALTER TABLE recetas ADD COLUMN descripcion TEXT NULL AFTER nombre');
+        $mensajes[] = 'Columna "descripcion" agregada a la tabla recetas.';
+    }
+
     // unidades_medida pudo haber existido desde antes (de una versión previa
     // del catálogo de unidades) sin las columnas "activo"/"orden" que el
     // esquema actual espera. CREATE TABLE IF NOT EXISTS no las agrega porque
@@ -164,6 +172,23 @@ function migrarColumnasNuevas(PDO $pdo): array
              WHERE ee.pagado = 1'
         );
         $mensajes[] = 'Columna "monto_pagado" agregada a la tabla evento_estudiante; los estudiantes ya marcados como pagados quedaron con el monto de la cuota que tenía el evento en ese momento.';
+    }
+
+    // Reemplazo (alternativa anotada, ej. "o mantequilla de maní", para
+    // recetas donde es una cosa o la otra), "al gusto" (cantidad no medida,
+    // se excluye del costo total) y opcional/requerido por línea de
+    // ingrediente de una receta.
+    if (columnaExiste($pdo, 'ingredientes', 'id') && !columnaExiste($pdo, 'ingredientes', 'reemplazo')) {
+        $pdo->exec('ALTER TABLE ingredientes ADD COLUMN reemplazo VARCHAR(150) NULL AFTER nombre');
+        $mensajes[] = 'Columna "reemplazo" agregada a la tabla ingredientes (alternativa anotada para esa línea de la receta).';
+    }
+    if (columnaExiste($pdo, 'ingredientes', 'id') && !columnaExiste($pdo, 'ingredientes', 'al_gusto')) {
+        $pdo->exec('ALTER TABLE ingredientes ADD COLUMN al_gusto TINYINT(1) NOT NULL DEFAULT 0 AFTER costo_unitario');
+        $mensajes[] = 'Columna "al_gusto" agregada a la tabla ingredientes (cantidad "Al gusto", sin costo estimado).';
+    }
+    if (columnaExiste($pdo, 'ingredientes', 'id') && !columnaExiste($pdo, 'ingredientes', 'opcional')) {
+        $pdo->exec('ALTER TABLE ingredientes ADD COLUMN opcional TINYINT(1) NOT NULL DEFAULT 0 AFTER al_gusto');
+        $mensajes[] = 'Columna "opcional" agregada a la tabla ingredientes (por defecto, requerido); las líneas que ya existían quedaron marcadas como requeridas.';
     }
 
     return $mensajes;
@@ -407,6 +432,50 @@ function corregirUnidadUsoLimonMielVainilla(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Tercera ronda del mismo problema de "unidad de uso" mal modelada (ver
+ * corregirUnidadUsoEspecias y corregirUnidadUsoLimonMielVainilla): tres
+ * ingredientes más que ya existían en el catálogo desde antes se escriben
+ * en una receta real por Cucharadita/Taza/Unidad, no por Libra entera —
+ * Mantequilla (para repostería, casi siempre por cucharadita), Guineo
+ * (por unidad, no por peso) y Avena (por taza, no por libra). Igual que
+ * las rondas anteriores: cada UPDATE solo corre si esa fila SIGUE en su
+ * unidad vieja, así que no pisa un ajuste manual hecho después desde
+ * Ingredientes, y una segunda corrida de setup.php ya no encuentra nada
+ * que cambiar.
+ */
+function corregirUnidadUsoMantequillaGuineoAvena(PDO $pdo): array
+{
+    $mensajes = [];
+    $idLibra = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Libra'")->fetchColumn();
+    $idUnidad = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Unidad'")->fetchColumn();
+    $idTaza = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Taza'")->fetchColumn();
+    $idCucharadita = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Cucharadita'")->fetchColumn();
+    if (!$idLibra || !$idUnidad || !$idTaza || !$idCucharadita) {
+        return $mensajes;
+    }
+
+    // nombre => [unidad_id vieja, unidad_id nueva, contenido_por_compra, precio_compra (por libra, sin cambiar), nota_compra]
+    $correcciones = [
+        'Mantequilla' => [$idLibra, $idCucharadita, 96, 140.00, '1 libra de mantequilla ≈ 2 tazas ≈ 96 cucharaditas (equivalencia estándar de repostería)'],
+        'Guineo'      => [$idLibra, $idUnidad, 5, 19.00, 'Libra de guineo ≈ 5 unidades (rango real observado: 3 a 7 según tamaño, refs. Supermercados Nacional y Superxtra)'],
+        'Avena'       => [$idLibra, $idTaza, 5.3, 45.00, '1 libra de avena en hojuelas ≈ 5.3 tazas (a ~85 g por taza)'],
+    ];
+
+    $stmt = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, contenido_por_compra = ?, precio_compra = ?, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    foreach ($correcciones as $nombre => [$idViejo, $idNuevo, $contenido, $precio, $nota]) {
+        $stmt->execute([$idNuevo, $contenido, $precio, $nota, $nombre, $idViejo]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": unidad de uso corregida para poder usarse en la unidad en que de verdad se escribe en una receta (antes el costo no se podía convertir al cambiar la unidad).";
+        }
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -443,6 +512,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, corregirUnidadUsoEspecias($pdo));
         $mensajes = array_merge($mensajes, renombrarVainillaLiquidaAExtracto($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoLimonMielVainilla($pdo));
+        $mensajes = array_merge($mensajes, corregirUnidadUsoMantequillaGuineoAvena($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

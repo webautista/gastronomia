@@ -178,17 +178,53 @@ function montoLineaReceta(float $cantidad, float $costoUnitario, bool $esEntera)
 }
 
 /**
- * Costo total en vivo de las recetas asignadas a un evento (la misma suma
- * que ya se calculaba receta por receta dentro del detalle del evento),
- * expuesto aquí como función compartida para que la página pública y el
- * listado de eventos puedan usarlo sin repetir la consulta. Nunca se
- * guarda en ninguna tabla — siempre se recalcula a partir de los precios
- * actuales del catálogo.
+ * Costo total en vivo de UNA receta, escalado a $porcionesDeseadas (o a sus
+ * propias porciones base si no se indica) — la misma suma que ya se
+ * calculaba a mano dentro de la vista de receta y del detalle de un evento,
+ * expuesta aquí como función compartida para que el listado de recetas, la
+ * vista de solo lectura, el detalle de evento y la página pública usen
+ * siempre el mismo número. Nunca se guarda en ninguna tabla — siempre se
+ * recalcula a partir de los precios actuales del catálogo. Las líneas
+ * marcadas "Al gusto" no tienen una cantidad medible, así que se excluyen
+ * del costo (no se puede estimar cuánto cuesta "sal al gusto").
+ */
+function costoTotalReceta(PDO $pdo, int $recetaId, ?int $porcionesDeseadas = null): float
+{
+    $stmt = $pdo->prepare('SELECT porciones_base FROM recetas WHERE id = ?');
+    $stmt->execute([$recetaId]);
+    $porcionesBase = max(1, (int) $stmt->fetchColumn());
+    if ($porcionesDeseadas === null || $porcionesDeseadas <= 0) {
+        $porcionesDeseadas = $porcionesBase;
+    }
+
+    $stmtIng = $pdo->prepare(
+        'SELECT i.cantidad, i.costo_unitario, i.al_gusto, um.es_entera AS unidad_entera FROM ingredientes i
+         JOIN unidades_medida um ON um.id = i.unidad_id
+         WHERE i.receta_id = ?'
+    );
+    $stmtIng->execute([$recetaId]);
+
+    $total = 0.0;
+    foreach ($stmtIng->fetchAll() as $ing) {
+        if (!empty($ing['al_gusto'])) {
+            continue;
+        }
+        $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, $porcionesDeseadas);
+        $esEntera = (bool) ($ing['unidad_entera'] ?? false);
+        $total += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
+    }
+    return $total;
+}
+
+/**
+ * Costo total en vivo de las recetas asignadas a un evento: la suma de
+ * costoTotalReceta() de cada receta, escalada a las porciones que hace
+ * falta preparar para ese evento (no a las porciones base de la receta).
  */
 function costoTotalRecetasEvento(PDO $pdo, int $eventoId): float
 {
     $stmt = $pdo->prepare(
-        'SELECT er.porciones_necesarias, r.id, r.porciones_base FROM evento_receta er
+        'SELECT er.porciones_necesarias, r.id FROM evento_receta er
          JOIN recetas r ON r.id = er.receta_id
          WHERE er.evento_id = ?'
     );
@@ -197,18 +233,7 @@ function costoTotalRecetasEvento(PDO $pdo, int $eventoId): float
 
     $total = 0.0;
     foreach ($recetas as $rc) {
-        $porcionesBase = max(1, (int) $rc['porciones_base']);
-        $stmtIng = $pdo->prepare(
-            'SELECT i.cantidad, i.costo_unitario, um.es_entera AS unidad_entera FROM ingredientes i
-             JOIN unidades_medida um ON um.id = i.unidad_id
-             WHERE i.receta_id = ?'
-        );
-        $stmtIng->execute([$rc['id']]);
-        foreach ($stmtIng->fetchAll() as $ing) {
-            $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
-            $esEntera = (bool) ($ing['unidad_entera'] ?? false);
-            $total += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
-        }
+        $total += costoTotalReceta($pdo, (int) $rc['id'], (int) $rc['porciones_necesarias']);
     }
     return $total;
 }
