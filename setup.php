@@ -606,6 +606,8 @@ function establecerDensidadIngredientes(PDO $pdo): array
     $valores = [
         'Mantequilla'     => [0.9553, '226 g por taza'],
         'Harina de trigo' => [0.5072, '120 g por taza'],
+        'Azúcar blanca'   => [0.8369, '198 g por taza, azúcar granulada (King Arthur Baking)'],
+        'Nueces'          => [0.4776, '113 g por taza, nueces picadas (King Arthur Baking)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
@@ -663,6 +665,189 @@ function renombrarModuloGastos(PDO $pdo): array
     return $mensajes;
 }
 
+/** Busca el id de una fila por su columna de nombre; null si no existe. */
+function idPorNombre(PDO $pdo, string $tabla, string $columna, string $nombre): ?int
+{
+    $stmt = $pdo->prepare("SELECT id FROM `$tabla` WHERE `$columna` = ?");
+    $stmt->execute([$nombre]);
+    $id = $stmt->fetchColumn();
+    return $id !== false ? (int) $id : null;
+}
+
+/**
+ * Primera tanda de recetas nuevas pedidas por Eyaelkys por chat (panadería
+ * dulce): Panqué de Plátano con Nuez, Pastel de Plátano, Manzana y Nueces,
+ * y Mini Muffins de Manzana, Pasas y Avena. Cada receta se crea solo si su
+ * nombre no existe todavía en la tabla, así una receta que ella ya haya
+ * editado a mano no se pisa, y una segunda corrida de setup.php no la
+ * duplica.
+ *
+ * Un ingrediente nuevo tuvo que entrar al catálogo para poder montar estas
+ * recetas: "Pasas" (no existía). Precio de referencia investigado en
+ * supermercadosnacional.com en septiembre de 2026 (ver su nota_compra más
+ * abajo) — se puede editar libremente desde Ingredientes si el precio real
+ * es otro.
+ *
+ * Dos ingredientes que ya existían se piden en estas recetas por "taza",
+ * pero el catálogo solo los tenía en peso (Azúcar blanca y Nueces, ambos
+ * en Libra) — sin la densidad g/ml del ingrediente no hay forma de
+ * convertir entre peso y volumen (ver convertirCantidadEntreUnidades() en
+ * includes/helpers.php), así que a los dos se les agregó su densidad en
+ * establecerDensidadIngredientes() (misma función que ya traía la de
+ * Mantequilla y Harina de trigo), con referencia de King Arthur Baking.
+ * Con esa densidad puesta, el costo de cada línea se calculó con la misma
+ * fórmula que usa el formulario de recetas (costoPorUnidadUso() +
+ * convertirCostoPorUnidad()), no a mano, para que salga igual que si ella
+ * las hubiera escrito una por una desde la pantalla de Recetas.
+ */
+function sembrarRecetasReposteria1(PDO $pdo): array
+{
+    $mensajes = [];
+
+    // Único ingrediente nuevo que hizo falta para esta tanda de recetas.
+    $pdo->exec("INSERT IGNORE INTO ingredientes_catalogo
+        (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+        VALUES (
+            'Pasas',
+            (SELECT id FROM categorias_ingrediente WHERE nombre='Fruta'),
+            '🍇',
+            (SELECT id FROM unidades_medida WHERE nombre='Taza'),
+            (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+            1.71, 122.95,
+            'Líder sin semilla, bolsa 9 oz/255 g, RD\$122.95 (supermercadosnacional.com) ≈ 1.71 tazas/bolsa (1 taza sueltas ≈ 149 g, King Arthur)'
+        )");
+
+    $idCategoriaPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    if (!$idCategoriaPostre) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $crearReceta = function (string $nombre, int $porcionesBase, string $preparacion, array $lineas) use (
+        $pdo, $idCategoriaPostre, $insLinea, $insAccion, $u, $ing, $accion, &$mensajes
+    ) {
+        $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+        $yaExiste->execute([$nombre]);
+        if ((int) $yaExiste->fetchColumn() > 0) {
+            return;
+        }
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?)');
+        $stmtR->execute([$nombre, $idCategoriaPostre, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional]) {
+            $insLinea->execute([
+                $recetaId,
+                $catNombre ? $ing($catNombre) : null,
+                $nombreLinea,
+                $cantidad,
+                $u($unidadNombre),
+                $costo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = $accion($accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $mensajes[] = "Receta \"$nombre\" creada ($porcionesBase porciones base, " . count($lineas) . ' ingredientes).';
+    };
+
+    $crearReceta(
+        'Panqué de Plátano con Nuez',
+        10,
+        "Precalienta el horno a 180 °C. Engrasa y enharina el molde (aprox. 22 × 12 cm) o cúbrelo con papel para hornear.\n\n" .
+        "Coloca los plátanos maduros en un recipiente y aplástalos con un tenedor hasta obtener un puré.\n\n" .
+        "Añade los huevos, el azúcar, la mantequilla derretida y la vainilla. Mezcla hasta integrar.\n\n" .
+        "En otro recipiente, combina la harina, el bicarbonato, el polvo para hornear, la canela y la sal.\n\n" .
+        "Incorpora los ingredientes secos a la mezcla de plátano. Remueve suavemente hasta que no queden rastros de harina; evita batir demasiado.\n\n" .
+        "Agrega las nueces picadas y mézclalas con movimientos envolventes.\n\n" .
+        "Vierte la preparación en el molde. Decora con el plátano adicional cortado longitudinalmente y algunas nueces.\n\n" .
+        "Hornea entre 50 y 60 minutos, o hasta que al insertar un palillo en el centro salga limpio.\n\n" .
+        'Deja reposar durante 15 minutos antes de desmoldar. Colócalo sobre una rejilla y espera a que se enfríe.',
+        [
+            ['Plátano maduro', 'Plátano maduro', 3, 'Unidad', 20.00, [], false, false],
+            ['Huevo', 'Huevo', 2, 'Unidad', 6.50, [], false, false],
+            ['Mantequilla', 'Mantequilla derretida', 0.5, 'Taza', 70.00, ['Derretido'], false, false],
+            ['Azúcar blanca', 'Azúcar', 0.75, 'Taza', 15.50, [], false, false],
+            ['Extracto de vainilla', 'Esencia de vainilla', 1, 'Cucharadita', 44.99, [], false, false],
+            ['Harina de trigo', 'Harina de trigo', 1.5, 'Taza', 7.51, [], false, false],
+            ['Bicarbonato de sodio', 'Bicarbonato de sodio', 1, 'Cucharadita', 1.04, [], false, false],
+            ['Polvo de hornear', 'Polvo para hornear', 0.5, 'Cucharadita', 2.50, [], false, false],
+            ['Canela en polvo', 'Canela molida', 0.5, 'Cucharadita', 3.80, [], false, false],
+            ['Sal', 'Sal', 0.25, 'Cucharadita', 0.20, [], false, false],
+            ['Nueces', 'Nueces picadas', 0.75, 'Taza', 96.03, ['Picado'], false, false],
+            ['Plátano maduro', 'Plátano adicional para decorar', 1, 'Unidad', 20.00, [], false, true],
+            ['Nueces', 'Nueces enteras para decorar', 0, 'Taza', 96.03, [], true, true],
+        ]
+    );
+
+    $crearReceta(
+        'Pastel de Plátano, Manzana y Nueces',
+        10,
+        "Precalienta el horno a 180 °C.\n\n" .
+        "Corta los plátanos y las manzanas en cubitos y colócalos en un bol.\n\n" .
+        "Añade la avena, el azúcar, la canela, las nueces troceadas y el polvo de hornear.\n\n" .
+        "En otro bol, bate los huevos junto con el aceite de coco hasta que estén bien integrados.\n\n" .
+        "Incorpora los ingredientes secos a la mezcla líquida y mezcla con una espátula hasta obtener una masa homogénea.\n\n" .
+        "Engrasa un molde con mantequilla y espolvorea un poco de harina.\n\n" .
+        "Vierte la mezcla en el molde y hornea durante aproximadamente 45 minutos.\n\n" .
+        'Haz la prueba del palillo: si sale limpio, el pastel está listo.',
+        [
+            ['Huevo', 'Huevo', 3, 'Unidad', 6.50, [], false, false],
+            ['Avena integral', 'Avena en hojuelas finas', 1.5, 'Taza', 6.16, [], false, false],
+            ['Aceite de coco', 'Aceite de coco', 0.5, 'Taza', 162.37, [], false, false],
+            ['Azúcar blanca', 'Azúcar', 1, 'Taza', 15.50, [], false, false],
+            ['Plátano maduro', 'Plátano maduro', 3, 'Unidad', 20.00, [], false, false],
+            ['Manzana', 'Manzana roja', 3, 'Unidad', 40.00, ['Cortado en cuadritos'], false, false],
+            ['Pasas', 'Pasas', 0.5, 'Taza', 71.90, [], false, false],
+            ['Nueces', 'Nueces troceadas', 0.5, 'Taza', 96.03, ['Cortado en trozos'], false, false],
+            ['Polvo de hornear', 'Polvo de hornear', 1, 'Cucharada', 7.50, [], false, false],
+            ['Canela en polvo', 'Canela en polvo', 1, 'Cucharada', 11.40, [], false, false],
+        ]
+    );
+
+    $crearReceta(
+        'Mini Muffins de Manzana, Pasas y Avena',
+        20,
+        "Precalienta el horno a 180 °C. Engrasa un molde para mini muffins o coloca capacillos de papel o silicona.\n\n" .
+        "En un bol grande, tritura bien el plátano con un tenedor. Agrega los huevos y la esencia de vainilla si decides utilizarla. Mezcla hasta integrar todos los ingredientes.\n\n" .
+        "Ralla la manzana (con piel) directamente sobre la mezcla anterior.\n\n" .
+        "Añade la avena, la canela, el polvo de hornear y las pasas. Mezcla con una cuchara hasta que todos los ingredientes queden bien distribuidos.\n\n" .
+        "Con ayuda de una cuchara, llena cada cavidad del molde hasta ¾ de su capacidad, ya que subirán ligeramente al hornearse.\n\n" .
+        "Lleva al horno durante 18 a 20 minutos. Comprueba la cocción insertando un palillo; si sale limpio, estarán listos.\n\n" .
+        'Déjalos enfriar durante unos minutos antes de desmoldarlos para que conserven su forma.',
+        [
+            ['Manzana', 'Manzana mediana rallada (con piel)', 1, 'Unidad', 40.00, ['Rallado'], false, false],
+            ['Plátano maduro', 'Plátano maduro triturado', 1, 'Unidad', 20.00, ['Triturado'], false, false],
+            ['Huevo', 'Huevo', 2, 'Unidad', 6.50, [], false, false],
+            ['Avena integral', 'Hojuelas de avena', 1, 'Taza', 6.16, [], false, false],
+            ['Pasas', 'Pasas', 0.33, 'Taza', 71.90, [], false, false],
+            ['Canela en polvo', 'Canela en polvo', 1, 'Cucharadita', 3.80, [], false, false],
+            ['Polvo de hornear', 'Polvo de hornear', 1, 'Cucharadita', 2.50, [], false, false],
+            ['Extracto de vainilla', 'Esencia de vainilla', 0.5, 'Cucharadita', 44.99, [], false, true],
+        ]
+    );
+
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -704,6 +889,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, establecerDensidadIngredientes($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasReposteria1($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
