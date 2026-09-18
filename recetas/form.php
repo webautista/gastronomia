@@ -202,7 +202,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // pidió quitarla) justo antes de guardar en la base de datos.
         $fotoFinal = $receta['foto'] ?? null;
         if ($subioArchivoValido) {
-            $directorioDestino = __DIR__ . '/../assets/uploads/recetas';
+            // Las fotos de recetas son contenido público del sistema, así que
+            // se guardan en el almacenamiento compartido fuera del repositorio
+            // (enlace `public/` en la raíz del proyecto -> ../shared/public),
+            // para que sobrevivan a los despliegues y no se suban a git.
+            $directorioDestino = __DIR__ . '/../public/recetas';
             if (!is_dir($directorioDestino)) {
                 mkdir($directorioDestino, 0775, true);
             }
@@ -211,7 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($fotoFinal) {
                     @unlink(__DIR__ . '/../' . $fotoFinal);
                 }
-                $fotoFinal = 'assets/uploads/recetas/' . $nombreArchivo;
+                $fotoFinal = 'public/recetas/' . $nombreArchivo;
             } else {
                 $errores[] = 'No se pudo guardar la foto en el servidor. Vuelve a intentarlo.';
             }

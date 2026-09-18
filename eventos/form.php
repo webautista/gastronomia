@@ -86,7 +86,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // pidió quitarlo) justo antes de guardar en la base de datos.
         $bannerFinal = $evento['banner'] ?? null;
         if ($subioBannerValido) {
-            $directorioDestino = __DIR__ . '/../assets/uploads/eventos';
+            // El banner se ve en la página pública ("Próximos eventos"), así
+            // que se guarda en el almacenamiento compartido fuera del
+            // repositorio (enlace `public/` en la raíz del proyecto ->
+            // ../shared/public), para que sobreviva a los despliegues y no
+            // se suba a git.
+            $directorioDestino = __DIR__ . '/../public/eventos';
             if (!is_dir($directorioDestino)) {
                 mkdir($directorioDestino, 0775, true);
             }
@@ -95,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($bannerFinal) {
                     @unlink(__DIR__ . '/../' . $bannerFinal);
                 }
-                $bannerFinal = 'assets/uploads/eventos/' . $nombreArchivo;
+                $bannerFinal = 'public/eventos/' . $nombreArchivo;
             } else {
                 $errores[] = 'No se pudo guardar el banner en el servidor. Vuelve a intentarlo.';
             }
