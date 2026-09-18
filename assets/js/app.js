@@ -33,6 +33,30 @@
     return n.toLocaleString('es-DO', { maximumFractionDigits: 2 });
   }
 
+  // Espejo de fraccionCantidad()/fraccionSufijo() en includes/helpers.php:
+  // busca la fracción de cocina más cercana (medios, tercios, cuartos,
+  // octavos) a la parte decimal, para mostrarla junto al número mientras se
+  // previsualiza el cambio de porciones (antes de guardar).
+  var FRACCIONES_COMUNES = [
+    [1, 8, 0.125], [1, 4, 0.25], [1, 3, 1 / 3], [3, 8, 0.375],
+    [1, 2, 0.5], [5, 8, 0.625], [2, 3, 2 / 3], [3, 4, 0.75], [7, 8, 0.875]
+  ];
+  var TOLERANCIA_FRACCION = 0.008;
+
+  function fraccionSufijo(valor) {
+    if (!(valor > 0)) return '';
+    var entero = Math.floor(valor + 0.0001);
+    var resto = valor - entero;
+    for (var i = 0; i < FRACCIONES_COMUNES.length; i++) {
+      var num = FRACCIONES_COMUNES[i][0], den = FRACCIONES_COMUNES[i][1], exacto = FRACCIONES_COMUNES[i][2];
+      if (Math.abs(resto - exacto) <= TOLERANCIA_FRACCION) {
+        var texto = num + '/' + den;
+        return entero > 0 ? ' (' + entero + ' ' + texto + ')' : ' (' + texto + ')';
+      }
+    }
+    return '';
+  }
+
   // Igual que cantidadDeCompra()/montoLineaReceta() en includes/helpers.php:
   // si la unidad se compra completa (data-entera="1", ej. Unidad, Lata), una
   // cantidad fraccionaria redondea hacia arriba porque no se puede comprar
@@ -63,7 +87,7 @@
       var unidad = celda.getAttribute('data-unidad') || '';
       var esEntera = celda.getAttribute('data-entera') === '1';
       var cantidad = base * factor;
-      celda.textContent = numFmt(cantidad) + ' ' + unidad;
+      celda.textContent = numFmt(cantidad) + ' ' + unidad + fraccionSufijo(cantidad);
       var costoCelda = celda.closest('tr').querySelector('[data-role="costo"]');
       if (costoCelda) {
         var costoUnit = parseFloat(costoCelda.getAttribute('data-costo')) || 0;

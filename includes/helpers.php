@@ -31,6 +31,55 @@ function numFmt($valor, int $decimales = 2): string
     return $formateado === '' ? '0' : $formateado;
 }
 
+/**
+ * Busca la fracción de cocina más cercana (medios, tercios, cuartos, octavos
+ * — las que se leen en tazas y cucharas medidoras) a la parte decimal de un
+ * valor, y la devuelve como texto (ej. "1/4", "1 1/2"). Devuelve null si el
+ * decimal no se acerca a ninguna de esas fracciones comunes, para no
+ * mostrarle a los estudiantes una fracción fea/inexacta (ej. "0.37" se deja
+ * solo, no se fuerza a un octavo cercano).
+ */
+function fraccionCantidad(float $valor): ?string
+{
+    if ($valor <= 0) {
+        return null;
+    }
+
+    $entero = (int) floor($valor + 0.0001);
+    $resto = $valor - $entero;
+
+    // [numerador, denominador, valor decimal exacto]. La tolerancia (0.008)
+    // cubre el redondeo a 2 decimales con el que se guarda `cantidad` en la
+    // base de datos (ej. 1/8 = 0.125 se guarda como 0.13) sin confundir una
+    // fracción con otra: entre fracciones vecinas siempre hay más de 0.06
+    // de diferencia.
+    $fraccionesComunes = [
+        [1, 8, 0.125], [1, 4, 0.25], [1, 3, 1 / 3], [3, 8, 0.375],
+        [1, 2, 0.5], [5, 8, 0.625], [2, 3, 2 / 3], [3, 4, 0.75], [7, 8, 0.875],
+    ];
+    $tolerancia = 0.008;
+
+    foreach ($fraccionesComunes as [$num, $den, $exacto]) {
+        if (abs($resto - $exacto) <= $tolerancia) {
+            $texto = $num . '/' . $den;
+            return $entero > 0 ? $entero . ' ' . $texto : $texto;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Sufijo listo para concatenar después de una cantidad+unidad ya formateada
+ * (ej. "0.25 taza" . fraccionSufijo(0.25) = "0.25 taza (1/4)"), o cadena
+ * vacía si el valor no tiene una fracción común equivalente.
+ */
+function fraccionSufijo(float $valor): string
+{
+    $fraccion = fraccionCantidad($valor);
+    return $fraccion !== null ? ' (' . $fraccion . ')' : '';
+}
+
 /** Convierte una fecha ISO (YYYY-MM-DD) a "18 de octubre de 2026". */
 function fmtDate(?string $iso): string
 {
