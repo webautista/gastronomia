@@ -848,6 +848,184 @@ function sembrarRecetasReposteria1(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Segunda tanda de recetas nuevas pedidas por Eyaelkys por chat: Quinoa con
+ * Leche estilo Arroz con Leche (Postre) y Pan de Zanahoria y Avena en 10
+ * Minutos (Panadería). A diferencia de sembrarRecetasReposteria1(), cada
+ * receta puede ir en una categoría distinta, así que la categoría se pasa
+ * por receta en vez de fijarla una sola vez para toda la tanda.
+ *
+ * Un tercer texto que llegó en el mismo mensaje ("Pastel de Naranja") no se
+ * pudo sembrar: el texto que ella pegó nunca incluye una lista de
+ * ingredientes con cantidades (solo pasos de preparación, y repetidos/
+ * desordenados) — sin cantidades no hay forma de calcular costos ni de
+ * armar las líneas de ingredientes, así que se dejó pendiente hasta que
+ * ella la reenvíe completa.
+ *
+ * Tres ingredientes nuevos entraron al catálogo para esta tanda —
+ * precios de referencia investigados por chat en septiembre de 2026 (ver
+ * cada nota_compra), se pueden editar libremente desde Ingredientes si el
+ * precio real es otro:
+ * - "Quinoa" (Quinoa Blanca Líder, supermercadosrd.com).
+ * - "Leche descremada" (Rica 0% grasa, supermercadosnacional.com).
+ * - "Canela en rama" (Canela Entera Líder, supermercadosrd.com) — el peso
+ *   por palito (≈4 g) es un promedio de referencia (canela cassia, 3
+ *   pulgadas), no un dato exacto del paquete, porque el tamaño de cada
+ *   palito varía bastante.
+ *
+ * Tres líneas de ingrediente no se pudieron convertir con
+ * convertirCostoPorUnidad() porque la unidad que pide la receta no es del
+ * mismo tipo (masa/volumen) que la unidad del catálogo, y no hay una
+ * "densidad" que sirva de puente para una unidad discreta como "Unidad" o
+ * "Pizca" (eso solo aplica entre masa y volumen — ver
+ * convertirCantidadEntreUnidades() en includes/helpers.php). Para esas se
+ * calculó el costo a mano, con una referencia citada en el comentario de
+ * cada línea más abajo:
+ * - "Corteza de limón" (1 Unidad) a partir del precio por libra de Limón
+ *   verde (≈13 limones/libra).
+ * - "Zanahoria" (Unidad, no por libra) a partir de su precio por libra y
+ *   el peso de una zanahoria mediana (USDA: 50-72 g, se usó 61 g).
+ * - "Sal" (Pizca) a partir de su costo por cucharadita, usando la
+ *   equivalencia estándar de cocina 1 pizca = 1/16 cucharadita.
+ *
+ * Ninguna de las dos recetas indicó explícitamente cuántas porciones
+ * rinde, salvo el pan de zanahoria y avena ("rinde aproximadamente 8
+ * porciones", tomado tal cual). Para la quinoa con leche se estimaron 6
+ * porciones (vasitos individuales) a partir de las cantidades de la
+ * receta — a revisar por Eyaelkys.
+ */
+function sembrarRecetasReposteria2(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $pdo->exec("INSERT IGNORE INTO ingredientes_catalogo
+        (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+        VALUES
+        ('Quinoa',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'),
+         '🌾',
+         (SELECT id FROM unidades_medida WHERE nombre='Taza'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         2.00, 109.00,
+         'Quinoa Blanca Líder, paquete de 340.2 g, RD\$109 ≈ 2 tazas/paquete (1 taza de quinoa cruda ≈ 170 g) (supermercadosrd.com)'),
+        ('Leche descremada',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'),
+         '🥛',
+         (SELECT id FROM unidades_medida WHERE nombre='Litro'),
+         (SELECT id FROM unidades_medida WHERE nombre='Litro'),
+         1.00, 79.95,
+         'Leche Descremada 0% Grasa Rica, botella de 1 L, RD\$79.95 (supermercadosnacional.com)'),
+        ('Canela en rama',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Condimento y especia'),
+         '🟤',
+         (SELECT id FROM unidades_medida WHERE nombre='Rama'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         22.50, 109.00,
+         'Canela Entera Líder, paquete de 90 g, RD\$109 ≈ 22.5 ramas/paquete (1 rama ≈ 4 g, canela cassia) (supermercadosrd.com)')");
+
+    $idPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    $idPanaderia = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Panadería');
+    if (!$idPostre || !$idPanaderia) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $crearReceta = function (int $categoriaId, string $nombre, int $porcionesBase, string $preparacion, array $lineas) use (
+        $pdo, $insLinea, $insAccion, $u, $ing, $accion, &$mensajes
+    ) {
+        $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+        $yaExiste->execute([$nombre]);
+        if ((int) $yaExiste->fetchColumn() > 0) {
+            return;
+        }
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?)');
+        $stmtR->execute([$nombre, $categoriaId, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+            $insLinea->execute([
+                $recetaId,
+                $catNombre ? $ing($catNombre) : null,
+                $nombreLinea,
+                $cantidad,
+                $u($unidadNombre),
+                $costo,
+                $reemplazo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = $accion($accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $mensajes[] = "Receta \"$nombre\" creada ($porcionesBase porciones base, " . count($lineas) . ' ingredientes).';
+    };
+
+    $crearReceta(
+        $idPostre,
+        'Quinoa con Leche estilo Arroz con Leche',
+        6,
+        "Coloca la leche en un cazo junto con el palo de canela y la corteza de limón, para aromatizar y crear el fondo de sabor del postre.\n\n" .
+        "Mientras se calienta la leche, lava la quinoa con agua fría para eliminar impurezas y ponla a hervir con el agua durante unos 15 minutos, hasta que esté lista (puedes usar quinoa ya preparada para ahorrarte este paso).\n\n" .
+        "Añade el azúcar a la leche e incorpora la quinoa cocida. Retira el palo de canela y la corteza de limón, y agrega la esencia de vainilla al gusto.\n\n" .
+        "Remueve todos los ingredientes hasta obtener una mezcla consistente, similar a un arroz con leche pero más suave y ligera por efecto de la quinoa.\n\n" .
+        "Baja el fuego y deja que la quinoa suelte su gelatina natural para que la leche espese. Cuando empiece a espesar, retira del fuego.\n\n" .
+        "Vierte la mezcla en vasitos individuales y refrigera.\n\n" .
+        'Sirve fría, espolvoreada con un poco de canela por encima.',
+        [
+            ['Quinoa', 'Quinoa', 1, 'Taza', 54.50, [], false, false, null],
+            ['Agua', 'Agua', 1.5, 'Taza', 0, [], false, false, null],
+            ['Leche descremada', 'Leche desnatada', 3, 'Taza', 19.19, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 200, 'Gramo', 0.08, [], false, false, null],
+            // Costo a mano: precio por libra de Limón verde ÷ 13 limones/libra (ver nota_compra del catálogo).
+            ['Limón verde', 'Corteza de limón (ralladura de 1 limón)', 1, 'Unidad', 5.23, [], false, false, null],
+            ['Canela en rama', 'Palo de canela', 1, 'Rama', 4.84, [], false, false, null],
+            ['Extracto de vainilla', 'Esencia de vainilla', 0, 'Cucharadita', 44.99, [], true, false, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPanaderia,
+        'Pan de Zanahoria y Avena en 10 Minutos',
+        8,
+        "Ralla las zanahorias y mide todos los ingredientes en un bol grande.\n\n" .
+        "Combina la avena, la zanahoria rallada, los huevos, la miel, el aceite, el polvo de hornear, la canela y la sal. Mezcla bien hasta obtener una masa homogénea.\n\n" .
+        "Unta ligeramente 8 moldes para muffins o ramequines y reparte la masa de forma pareja entre ellos.\n\n" .
+        "Cocina en el microondas a máxima potencia por 2-3 minutos por tanda (o todos juntos si caben), hasta que estén firmes al tacto. Usa un microondas de referencia de 1000 W para estos tiempos; ajústalos si el tuyo es diferente.\n\n" .
+        'Sirve tibio, con yogur o untado con mantequilla de maní. Se conserva en el refrigerador hasta 3 días.',
+        [
+            ['Avena integral', 'Avena en hojuelas', 1, 'Taza', 6.16, [], false, false, null],
+            // Costo a mano: precio por libra de Zanahoria × peso de una zanahoria mediana (USDA: 50-72 g, se usó 61 g).
+            ['Zanahoria', 'Zanahoria rallada', 2, 'Unidad', 4.17, ['Rallado'], false, false, null],
+            ['Huevo', 'Huevo', 2, 'Unidad', 6.50, [], false, false, null],
+            ['Miel de abeja', 'Miel', 0.25, 'Taza', 189.05, [], false, false, 'Azúcar'],
+            ['Aceite de coco', 'Aceite de coco', 0.25, 'Taza', 162.37, [], false, false, 'Aceite vegetal'],
+            ['Polvo de hornear', 'Polvo de hornear', 1, 'Cucharadita', 2.50, [], false, false, null],
+            ['Canela en polvo', 'Canela en polvo', 1, 'Cucharadita', 3.80, [], false, false, null],
+            // Costo a mano: costo por cucharadita de Sal ÷ 16 (1 pizca = 1/16 cucharadita).
+            ['Sal', 'Sal', 1, 'Pizca', 0.01, [], false, false, null],
+        ]
+    );
+
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -890,6 +1068,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria1($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasReposteria2($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
