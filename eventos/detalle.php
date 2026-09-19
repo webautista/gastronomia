@@ -7,17 +7,44 @@ $base = '..';
 $usuarioActual = requireLogin($base);
 requirePermission($usuarioActual, 'eventos', 'ver', $base);
 $puedeEditarEvento = can($usuarioActual, 'eventos', 'editar');
-$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
-$puedeCrearGasto = can($usuarioActual, 'gastos', 'crear');
-$puedeEditarGasto = can($usuarioActual, 'gastos', 'editar');
-$puedeEliminarGasto = can($usuarioActual, 'gastos', 'eliminar');
+
+// Permisos independientes por pestaña (sección de permisos "por pestaña" en
+// Usuarios y roles → Roles): cada uno controla si el rol ve esa pestaña del
+// evento, y qué puede hacer dentro de ella — separado de "eventos_recetas"/
+// "eventos_gastos"/etc. de una Práctica, que son módulos distintos.
+$puedeVerEstudiantesTab = can($usuarioActual, 'eventos_estudiantes', 'ver');
+$puedeCrearEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'crear');
+$puedeEditarEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'editar');
+$puedeEliminarEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'eliminar');
+$puedeVerRecetasTab = can($usuarioActual, 'eventos_recetas', 'ver');
+$puedeCrearRecetaTab = can($usuarioActual, 'eventos_recetas', 'crear');
+$puedeEditarRecetaTab = can($usuarioActual, 'eventos_recetas', 'editar');
+$puedeEliminarRecetaTab = can($usuarioActual, 'eventos_recetas', 'eliminar');
+$puedeVerCompras = can($usuarioActual, 'eventos_lista_compra', 'ver');
+$puedeEditarCompras = can($usuarioActual, 'eventos_lista_compra', 'editar');
+$puedeVerGastos = can($usuarioActual, 'eventos_gastos', 'ver');
+$puedeCrearGasto = can($usuarioActual, 'eventos_gastos', 'crear');
+$puedeEditarGasto = can($usuarioActual, 'eventos_gastos', 'editar');
+$puedeEliminarGasto = can($usuarioActual, 'eventos_gastos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
     redirect('index.php');
 }
 
-$tabsValidos = ['resumen', 'estudiantes', 'recetas', 'compras'];
+// "Resumen" siempre está disponible para cualquiera que pueda ver el
+// evento (no tiene permiso propio); las demás pestañas solo aparecen si el
+// rol tiene "ver" en su módulo correspondiente.
+$tabsValidos = ['resumen'];
+if ($puedeVerEstudiantesTab) {
+    $tabsValidos[] = 'estudiantes';
+}
+if ($puedeVerRecetasTab) {
+    $tabsValidos[] = 'recetas';
+}
+if ($puedeVerCompras) {
+    $tabsValidos[] = 'compras';
+}
 if ($puedeVerGastos) {
     $tabsValidos[] = 'gastos';
 }
@@ -44,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pdo = db();
 
     if ($accion === 'registrar_pago') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_estudiantes', 'editar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         $monto = isset($_POST['monto_pagado']) ? (float) $_POST['monto_pagado'] : null;
         if ($estudianteId && $monto !== null && $monto >= 0) {
@@ -53,13 +80,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$monto, $monto > 0 ? 1 : 0, $fechaPago, $id, $estudianteId]);
         }
     } elseif ($accion === 'quitar_estudiante') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_estudiantes', 'eliminar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         if ($estudianteId) {
             $pdo->prepare('DELETE FROM evento_estudiante WHERE evento_id=? AND estudiante_id=?')->execute([$id, $estudianteId]);
         }
     } elseif ($accion === 'asignar_estudiantes') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_estudiantes', 'crear', $base);
         $ids = array_map('intval', $_POST['estudiante_ids'] ?? []);
         $stmt = $pdo->prepare('INSERT IGNORE INTO evento_estudiante (evento_id, estudiante_id, pagado) VALUES (?,?,0)');
         foreach ($ids as $eid) {
@@ -68,13 +95,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'quitar_receta') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_recetas', 'eliminar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         if ($recetaId) {
             $pdo->prepare('DELETE FROM evento_receta WHERE evento_id=? AND receta_id=?')->execute([$id, $recetaId]);
         }
     } elseif ($accion === 'asignar_recetas') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_recetas', 'crear', $base);
         $ids = array_map('intval', $_POST['receta_ids'] ?? []);
         $stmt = $pdo->prepare('INSERT IGNORE INTO evento_receta (evento_id, receta_id, porciones_necesarias) VALUES (?,?,?)');
         foreach ($ids as $rid) {
@@ -83,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'actualizar_porciones') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_recetas', 'editar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         $porciones = intOrNull($_POST['porciones_necesarias'] ?? null);
         if ($recetaId && $porciones && $porciones > 0) {
@@ -91,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$porciones, $id, $recetaId]);
         }
     } elseif ($accion === 'quitar_gasto') {
-        requirePermission($usuarioActual, 'gastos', 'eliminar', $base);
+        requirePermission($usuarioActual, 'eventos_gastos', 'eliminar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         if ($gastoId) {
             $stmtG = $pdo->prepare("SELECT estado FROM gastos WHERE id = ? AND evento_id = ? AND eliminado_en IS NULL");
@@ -108,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'confirmar_gasto') {
-        requirePermission($usuarioActual, 'gastos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_gastos', 'editar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         $montoConfirmado = isset($_POST['monto_confirmado']) ? (float) $_POST['monto_confirmado'] : 0;
         if ($gastoId && $montoConfirmado > 0) {
@@ -117,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('Gasto confirmado.');
         }
     } elseif ($accion === 'guardar_decision_compra') {
-        requirePermission($usuarioActual, 'eventos', 'editar', $base);
+        requirePermission($usuarioActual, 'eventos_lista_compra', 'editar', $base);
         $catalogoId = intOrNull($_POST['catalogo_id'] ?? null);
         $comprarPaquete = !empty($_POST['comprar_paquete']) ? 1 : 0;
         $precioPaquete = isset($_POST['precio_paquete']) && $_POST['precio_paquete'] !== '' ? (float) $_POST['precio_paquete'] : null;
@@ -323,9 +350,15 @@ require __DIR__ . '/../includes/layout_top.php';
 
 <div class="tabs">
   <a class="tab <?= $tab === 'resumen' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=resumen">Resumen</a>
-  <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
-  <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas e ingredientes</a>
-  <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
+  <?php if ($puedeVerEstudiantesTab): ?>
+    <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
+  <?php endif; ?>
+  <?php if ($puedeVerRecetasTab): ?>
+    <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas e ingredientes</a>
+  <?php endif; ?>
+  <?php if ($puedeVerCompras): ?>
+    <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
+  <?php endif; ?>
   <?php if ($puedeVerGastos): ?>
     <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
   <?php endif; ?>
@@ -377,7 +410,7 @@ require __DIR__ . '/../includes/layout_top.php';
         · cuota confirmada: <span class="mono"><?= money($cuotaConfirmada) ?></span> c/u
       <?php endif; ?>
     </div>
-    <?php if ($puedeEditarEvento): ?>
+    <?php if ($puedeCrearEstudianteTab): ?>
       <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
     <?php endif; ?>
   </div>
@@ -399,7 +432,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-muted"><?= e($a['grupo']) ?></td>
             <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
             <td>
-              <?php if ($puedeEditarEvento): ?>
+              <?php if ($puedeEditarEstudianteTab): ?>
                 <form method="post" style="display:flex;align-items:center;gap:6px;">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="registrar_pago">
@@ -422,16 +455,16 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php endif; ?>
             </td>
             <td class="row-actions">
-              <?php if ($puedeEditarEvento): ?>
-                <?php if (!$alDia): ?>
-                  <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
-                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                    <input type="hidden" name="accion" value="registrar_pago">
-                    <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                    <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
-                    <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
-                  </form>
-                <?php endif; ?>
+              <?php if ($puedeEditarEstudianteTab && !$alDia): ?>
+                <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="registrar_pago">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
+                  <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
+                </form>
+              <?php endif; ?>
+              <?php if ($puedeEliminarEstudianteTab): ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="quitar_estudiante">
@@ -454,7 +487,7 @@ require __DIR__ . '/../includes/layout_top.php';
       <?php if (count($recetasEvento) > 1): ?>
         <button class="btn btn-secondary btn-sm" type="button" data-role="toggle-todas-recetas" data-contenedor="lista-recetas-evento">Colapsar todo</button>
       <?php endif; ?>
-      <?php if ($puedeEditarEvento): ?>
+      <?php if ($puedeCrearRecetaTab): ?>
         <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
       <?php endif; ?>
     </div>
@@ -480,7 +513,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones · <span class="mono" data-role="costo-total-badge"><?= money($costoTotal) ?></span></div>
           </div>
         </div>
-        <?php if ($puedeEditarEvento): ?>
+        <?php if ($puedeEditarRecetaTab): ?>
           <form method="post" class="no-print" style="display:flex;align-items:center;gap:14px;">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="actualizar_porciones">
@@ -491,14 +524,16 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
           </form>
+        <?php else: ?>
+          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
+        <?php endif; ?>
+        <?php if ($puedeEliminarRecetaTab): ?>
           <form method="post" class="no-print" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="quitar_receta">
             <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
             <button class="icon-btn" type="submit" title="Quitar receta"><?= icon('trash') ?></button>
           </form>
-        <?php else: ?>
-          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
         <?php endif; ?>
       </div>
       <div class="recipe-card-body">
@@ -574,7 +609,7 @@ require __DIR__ . '/../includes/layout_top.php';
                     <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
                   <?php endif; ?>
                 </div>
-                <?php if ($puedeEditarEvento): ?>
+                <?php if ($puedeEditarCompras): ?>
                 <form method="post" class="no-print" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-weight:400;">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="guardar_decision_compra">

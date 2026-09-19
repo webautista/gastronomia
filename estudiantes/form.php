@@ -10,7 +10,7 @@ requirePermission($usuarioActual, 'estudiantes', $id ? 'editar' : 'crear', $base
 
 $grupos = db()->query('SELECT * FROM grupos_estudiante WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 
-$estudiante = ['nombre' => '', 'telefono' => '', 'email' => '', 'grupo_id' => null, 'grupo_nuevo' => ''];
+$estudiante = ['nombre' => '', 'telefono' => '', 'email' => '', 'padre_tutor' => '', 'telefono_padre_tutor' => '', 'grupo_id' => null, 'grupo_nuevo' => ''];
 $errores = [];
 
 if ($id) {
@@ -27,9 +27,11 @@ if ($id) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
-    $estudiante['nombre']      = trim($_POST['nombre'] ?? '');
-    $estudiante['telefono']    = trim($_POST['telefono'] ?? '');
-    $estudiante['email']       = trim($_POST['email'] ?? '');
+    $estudiante['nombre']               = trim($_POST['nombre'] ?? '');
+    $estudiante['telefono']             = trim($_POST['telefono'] ?? '');
+    $estudiante['email']                = trim($_POST['email'] ?? '');
+    $estudiante['padre_tutor']          = trim($_POST['padre_tutor'] ?? '');
+    $estudiante['telefono_padre_tutor'] = trim($_POST['telefono_padre_tutor'] ?? '');
     $estudiante['grupo_id']    = intOrNull($_POST['grupo_id'] ?? null);
     $estudiante['grupo_nuevo'] = trim($_POST['grupo_nuevo'] ?? '');
 
@@ -58,12 +60,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE estudiantes SET nombre=?, telefono=?, email=?, grupo_id=? WHERE id=?');
-            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $grupoIdFinal, $id]);
+            $stmt = db()->prepare('UPDATE estudiantes SET nombre=?, telefono=?, email=?, padre_tutor=?, telefono_padre_tutor=?, grupo_id=? WHERE id=?');
+            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $estudiante['padre_tutor'], $estudiante['telefono_padre_tutor'], $grupoIdFinal, $id]);
             flash('Estudiante actualizado.');
         } else {
-            $stmt = db()->prepare('INSERT INTO estudiantes (nombre, telefono, email, grupo_id) VALUES (?,?,?,?)');
-            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $grupoIdFinal]);
+            $stmt = db()->prepare('INSERT INTO estudiantes (nombre, telefono, email, padre_tutor, telefono_padre_tutor, grupo_id) VALUES (?,?,?,?,?,?)');
+            $stmt->execute([$estudiante['nombre'], $estudiante['telefono'], $estudiante['email'], $estudiante['padre_tutor'], $estudiante['telefono_padre_tutor'], $grupoIdFinal]);
             flash('Estudiante agregado.');
         }
         redirect('index.php');
@@ -117,6 +119,17 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="field">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" value="<?= e($estudiante['email']) ?>">
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="padre_tutor">Padre, madre o tutor</label>
+        <input type="text" id="padre_tutor" name="padre_tutor" placeholder="Nombre del responsable" value="<?= e($estudiante['padre_tutor']) ?>">
+      </div>
+      <div class="field">
+        <label for="telefono_padre_tutor">Teléfono del padre/tutor</label>
+        <input type="text" id="telefono_padre_tutor" name="telefono_padre_tutor" placeholder="809-555-0100" value="<?= e($estudiante['telefono_padre_tutor']) ?>">
+      </div>
     </div>
 
     <div class="form-actions">

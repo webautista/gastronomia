@@ -252,7 +252,7 @@ table.table{width:100%;border-collapse:collapse;}
    siguiente. */
 .ing-row-block{padding-bottom:10px;margin-bottom:10px;border-bottom:1px dashed var(--border);}
 .ing-row-block:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
-.ing-row{display:grid;grid-template-columns:0.7fr auto 1.3fr 0.9fr 0.8fr 0.9fr auto auto auto;gap:8px;margin-bottom:6px;align-items:center;}
+.ing-row{display:grid;grid-template-columns:0.55fr auto 2fr 1fr 0.7fr 0.8fr auto auto auto;gap:8px;margin-bottom:6px;align-items:center;}
 @media (max-width:600px){.ing-row{grid-template-columns:1fr 1fr;}}
 .ing-row input,.ing-row select{padding:7px 9px;font-size:.82rem;}
 .ing-row-labels{font-size:.7rem;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.02em;margin-bottom:2px;}

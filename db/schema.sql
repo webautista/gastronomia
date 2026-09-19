@@ -445,7 +445,26 @@ CREATE TABLE IF NOT EXISTS modulos (
 INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('panel', 'Panel general', 10),
 ('eventos', 'Eventos', 20),
+-- Permisos independientes por pestaña dentro del detalle de un Evento (para
+-- poder, por ejemplo, ocultarle Recetas a un rol pero sí mostrarle Lista de
+-- Compra y Gastos, o dar de alta un tesorero que solo gestione Gastos de
+-- Prácticas y no de Eventos). El módulo "eventos" de arriba sigue
+-- controlando el acceso general al módulo, el listado, y crear/editar/
+-- eliminar el evento mismo (nombre, fecha, lugar...) — la pestaña "Resumen"
+-- se muestra a cualquiera que pueda ver el evento, sin permiso aparte.
+('eventos_recetas', 'Recetas', 21),
+('eventos_lista_compra', 'Lista de Compra', 22),
+('eventos_gastos', 'Gastos', 23),
+('eventos_estudiantes', 'Estudiantes y pagos', 24),
 ('practicas', 'Prácticas', 25),
+-- Lo mismo, pero para el detalle de una Práctica.
+('practicas_recetas', 'Recetas', 26),
+('practicas_lista_compra', 'Lista de Compra', 27),
+('practicas_gastos', 'Gastos', 28),
+('practicas_estudiantes', 'Estudiantes y pagos', 29),
+-- "gastos" queda en desuso a partir de esta versión (ver "eventos_gastos" y
+-- "practicas_gastos" arriba) — se deja la fila para no romper datos viejos,
+-- pero ningún código ni la matriz de permisos la usan ya.
 ('gastos', 'Gastos de eventos', 30),
 ('estudiantes', 'Estudiantes', 40),
 ('recetas', 'Recetas', 50),

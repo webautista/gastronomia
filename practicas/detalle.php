@@ -7,30 +7,49 @@ $base = '..';
 $usuarioActual = requireLogin($base);
 requirePermission($usuarioActual, 'practicas', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'practicas', 'editar');
-$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
-$puedeCrearGasto = can($usuarioActual, 'gastos', 'crear');
-$puedeEditarGasto = can($usuarioActual, 'gastos', 'editar');
-$puedeEliminarGasto = can($usuarioActual, 'gastos', 'eliminar');
+
+// Permisos independientes por pestaña (igual que en Eventos, ver
+// eventos/detalle.php) — reemplaza la regla vieja de "solo ver+editar
+// practicas ve Recetas/Lista de Compra/Gastos, solo ver entra a
+// Estudiantes y pagos nada más", que estaba escrita directo aquí. Ahora
+// cada pestaña se muestra u oculta según su propio módulo de permiso.
+$puedeVerEstudiantesTab = can($usuarioActual, 'practicas_estudiantes', 'ver');
+$puedeCrearEstudianteTab = can($usuarioActual, 'practicas_estudiantes', 'crear');
+$puedeEditarEstudianteTab = can($usuarioActual, 'practicas_estudiantes', 'editar');
+$puedeEliminarEstudianteTab = can($usuarioActual, 'practicas_estudiantes', 'eliminar');
+$puedeVerRecetasTab = can($usuarioActual, 'practicas_recetas', 'ver');
+$puedeCrearRecetaTab = can($usuarioActual, 'practicas_recetas', 'crear');
+$puedeEditarRecetaTab = can($usuarioActual, 'practicas_recetas', 'editar');
+$puedeEliminarRecetaTab = can($usuarioActual, 'practicas_recetas', 'eliminar');
+$puedeVerCompras = can($usuarioActual, 'practicas_lista_compra', 'ver');
+$puedeEditarCompras = can($usuarioActual, 'practicas_lista_compra', 'editar');
+$puedeVerGastos = can($usuarioActual, 'practicas_gastos', 'ver');
+$puedeCrearGasto = can($usuarioActual, 'practicas_gastos', 'crear');
+$puedeEditarGasto = can($usuarioActual, 'practicas_gastos', 'editar');
+$puedeEliminarGasto = can($usuarioActual, 'practicas_gastos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
     redirect('index.php');
 }
 
-// Un rol que solo puede VER prácticas (ej. Padres) entra únicamente a
-// "Estudiantes y pagos" — la planificación de la práctica (Recetas, Lista
-// de Compra) es interna del taller. Un rol que además puede editar
-// (Administrador, o cualquier rol de staff configurado así desde Usuarios
-// y roles) sí ve las pestañas completas, igual que en Eventos.
-$tabsValidos = ['estudiantes'];
-if ($puedeEditar) {
+// A diferencia de Eventos, una Práctica no tiene una pestaña "Resumen"
+// siempre visible — si el rol no tiene "ver" en ninguna de las cuatro, no
+// hay ninguna pestaña que mostrar (ver el aviso más abajo, junto a "tabs").
+$tabsValidos = [];
+if ($puedeVerEstudiantesTab) {
+    $tabsValidos[] = 'estudiantes';
+}
+if ($puedeVerRecetasTab) {
     $tabsValidos[] = 'recetas';
+}
+if ($puedeVerCompras) {
     $tabsValidos[] = 'compras';
 }
 if ($puedeVerGastos) {
     $tabsValidos[] = 'gastos';
 }
-$tabPorDefecto = $puedeEditar ? 'recetas' : 'estudiantes';
+$tabPorDefecto = $tabsValidos[0] ?? '';
 $tab = in_array($_GET['tab'] ?? '', $tabsValidos, true) ? $_GET['tab'] : $tabPorDefecto;
 
 $stmt = db()->prepare('SELECT * FROM practicas WHERE id = ?');
@@ -48,13 +67,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pdo = db();
 
     if ($accion === 'quitar_receta') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_recetas', 'eliminar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         if ($recetaId) {
             $pdo->prepare('DELETE FROM practica_receta WHERE practica_id=? AND receta_id=?')->execute([$id, $recetaId]);
         }
     } elseif ($accion === 'asignar_recetas') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_recetas', 'crear', $base);
         $ids = array_map('intval', $_POST['receta_ids'] ?? []);
         $stmtPorciones = $pdo->prepare('SELECT porciones_base FROM recetas WHERE id = ?');
         $stmt = $pdo->prepare('INSERT IGNORE INTO practica_receta (practica_id, receta_id, porciones_necesarias) VALUES (?,?,?)');
@@ -66,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'actualizar_porciones') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_recetas', 'editar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
         $porciones = intOrNull($_POST['porciones_necesarias'] ?? null);
         if ($recetaId && $porciones && $porciones > 0) {
@@ -74,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$porciones, $id, $recetaId]);
         }
     } elseif ($accion === 'registrar_pago') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_estudiantes', 'editar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         $monto = isset($_POST['monto_pagado']) ? (float) $_POST['monto_pagado'] : null;
         if ($estudianteId && $monto !== null && $monto >= 0) {
@@ -83,13 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$monto, $fechaPago, $id, $estudianteId]);
         }
     } elseif ($accion === 'quitar_estudiante') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_estudiantes', 'eliminar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         if ($estudianteId) {
             $pdo->prepare('DELETE FROM practica_estudiante WHERE practica_id=? AND estudiante_id=?')->execute([$id, $estudianteId]);
         }
     } elseif ($accion === 'asignar_estudiantes') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_estudiantes', 'crear', $base);
         $ids = array_map('intval', $_POST['estudiante_ids'] ?? []);
         $stmt = $pdo->prepare('INSERT IGNORE INTO practica_estudiante (practica_id, estudiante_id) VALUES (?,?)');
         foreach ($ids as $eid) {
@@ -98,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'quitar_gasto') {
-        requirePermission($usuarioActual, 'gastos', 'eliminar', $base);
+        requirePermission($usuarioActual, 'practicas_gastos', 'eliminar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         if ($gastoId) {
             $stmtG = $pdo->prepare("SELECT estado FROM gastos WHERE id = ? AND practica_id = ? AND eliminado_en IS NULL");
@@ -112,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($accion === 'confirmar_gasto') {
-        requirePermission($usuarioActual, 'gastos', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_gastos', 'editar', $base);
         $gastoId = intOrNull($_POST['gasto_id'] ?? null);
         $montoConfirmado = isset($_POST['monto_confirmado']) ? (float) $_POST['monto_confirmado'] : 0;
         if ($gastoId && $montoConfirmado > 0) {
@@ -121,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('Gasto confirmado.');
         }
     } elseif ($accion === 'guardar_decision_compra') {
-        requirePermission($usuarioActual, 'practicas', 'editar', $base);
+        requirePermission($usuarioActual, 'practicas_lista_compra', 'editar', $base);
         $catalogoId = intOrNull($_POST['catalogo_id'] ?? null);
         $comprarPaquete = !empty($_POST['comprar_paquete']) ? 1 : 0;
         $precioPaquete = isset($_POST['precio_paquete']) && $_POST['precio_paquete'] !== '' ? (float) $_POST['precio_paquete'] : null;
@@ -304,15 +323,26 @@ require __DIR__ . '/../includes/layout_top.php';
 </div>
 
 <div class="tabs">
-  <?php if ($puedeEditar): ?>
+  <?php if ($puedeVerEstudiantesTab): ?>
+    <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
+  <?php endif; ?>
+  <?php if ($puedeVerRecetasTab): ?>
     <a class="tab <?= $tab === 'recetas' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=recetas">Recetas</a>
+  <?php endif; ?>
+  <?php if ($puedeVerCompras): ?>
     <a class="tab <?= $tab === 'compras' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=compras"><?= icon('clipboardList') ?> Lista de Compra</a>
   <?php endif; ?>
-  <a class="tab <?= $tab === 'estudiantes' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=estudiantes">Estudiantes y pagos</a>
   <?php if ($puedeVerGastos): ?>
     <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
   <?php endif; ?>
 </div>
+
+<?php if (!$tabsValidos): ?>
+  <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+    <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin acceso</div>
+    <div>Tu rol no tiene permiso para ver ninguna sección de esta práctica.</div>
+  </div></div>
+<?php endif; ?>
 
 <?php if ($tab === 'recetas'): ?>
   <div class="toolbar no-print">
@@ -321,7 +351,7 @@ require __DIR__ . '/../includes/layout_top.php';
       <?php if (count($recetasPractica) > 1): ?>
         <button class="btn btn-secondary btn-sm" type="button" data-role="toggle-todas-recetas" data-contenedor="lista-recetas-practica">Colapsar todo</button>
       <?php endif; ?>
-      <?php if ($puedeEditar): ?>
+      <?php if ($puedeCrearRecetaTab): ?>
         <a class="btn btn-secondary btn-sm" href="asignar_receta.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar receta</a>
       <?php endif; ?>
     </div>
@@ -347,7 +377,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones · <span class="mono" data-role="costo-total-badge"><?= money($costoTotal) ?></span></div>
           </div>
         </div>
-        <?php if ($puedeEditar): ?>
+        <?php if ($puedeEditarRecetaTab): ?>
           <form method="post" class="no-print" style="display:flex;align-items:center;gap:14px;">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="actualizar_porciones">
@@ -358,14 +388,16 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
           </form>
+        <?php else: ?>
+          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
+        <?php endif; ?>
+        <?php if ($puedeEliminarRecetaTab): ?>
           <form method="post" class="no-print" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de esta práctica?">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="quitar_receta">
             <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
             <button class="icon-btn" type="submit" title="Quitar receta"><?= icon('trash') ?></button>
           </form>
-        <?php else: ?>
-          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
         <?php endif; ?>
       </div>
       <div class="recipe-card-body">
@@ -437,7 +469,7 @@ require __DIR__ . '/../includes/layout_top.php';
                     <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
                   <?php endif; ?>
                 </div>
-                <?php if ($puedeEditar): ?>
+                <?php if ($puedeEditarCompras): ?>
                 <form method="post" class="no-print" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-weight:400;">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="guardar_decision_compra">
@@ -487,7 +519,7 @@ require __DIR__ . '/../includes/layout_top.php';
         · cuota confirmada: <span class="mono"><?= money($cuotaConfirmada) ?></span> c/u
       <?php endif; ?>
     </div>
-    <?php if ($puedeEditar): ?>
+    <?php if ($puedeCrearEstudianteTab): ?>
       <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
     <?php endif; ?>
   </div>
@@ -509,7 +541,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-muted"><?= e($a['grupo']) ?></td>
             <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
             <td>
-              <?php if ($puedeEditar): ?>
+              <?php if ($puedeEditarEstudianteTab): ?>
                 <form method="post" style="display:flex;align-items:center;gap:6px;">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="registrar_pago">
@@ -532,16 +564,16 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php endif; ?>
             </td>
             <td class="row-actions">
-              <?php if ($puedeEditar): ?>
-                <?php if (!$alDia): ?>
-                  <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
-                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                    <input type="hidden" name="accion" value="registrar_pago">
-                    <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                    <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
-                    <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
-                  </form>
-                <?php endif; ?>
+              <?php if ($puedeEditarEstudianteTab && !$alDia): ?>
+                <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="registrar_pago">
+                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
+                  <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
+                  <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
+                </form>
+              <?php endif; ?>
+              <?php if ($puedeEliminarEstudianteTab): ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de esta práctica?">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="quitar_estudiante">

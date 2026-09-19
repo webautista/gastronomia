@@ -267,6 +267,19 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "cuota_publica" agregada a eventos (controla si la cuota de ese evento se muestra en la página pública; por defecto oculta).';
     }
 
+    // Padre/madre o tutor y su teléfono de contacto, separado del teléfono
+    // del propio estudiante (que puede no tener uno todavía, sobre todo si
+    // es menor de edad) — pedido para poder localizar al responsable de
+    // cada estudiante sin depender de un solo número de contacto.
+    if (columnaExiste($pdo, 'estudiantes', 'id') && !columnaExiste($pdo, 'estudiantes', 'padre_tutor')) {
+        $pdo->exec('ALTER TABLE estudiantes ADD COLUMN padre_tutor VARCHAR(150) NULL AFTER nombre');
+        $mensajes[] = 'Columna "padre_tutor" agregada a la tabla estudiantes.';
+    }
+    if (columnaExiste($pdo, 'estudiantes', 'id') && !columnaExiste($pdo, 'estudiantes', 'telefono_padre_tutor')) {
+        $pdo->exec('ALTER TABLE estudiantes ADD COLUMN telefono_padre_tutor VARCHAR(30) NULL AFTER padre_tutor');
+        $mensajes[] = 'Columna "telefono_padre_tutor" agregada a la tabla estudiantes.';
+    }
+
     return $mensajes;
 }
 
@@ -661,6 +674,107 @@ function renombrarModuloGastos(PDO $pdo): array
     $stmt->execute();
     if ($stmt->rowCount() > 0) {
         $mensajes[] = 'Módulo "gastos" renombrado de "Gastos de eventos" a "Gastos" (ahora cubre tanto eventos como prácticas).';
+    }
+    return $mensajes;
+}
+
+/**
+ * El módulo "gastos" (un solo permiso compartido entre Eventos y
+ * Prácticas, ver renombrarModuloGastos() arriba) no dejaba, por ejemplo,
+ * armar un rol de tesorero que registre gastos en Prácticas pero no en
+ * Eventos — a pedido explícito de Eyaelkys, se reemplaza por dos módulos
+ * separados: "eventos_gastos" y "practicas_gastos" (schema.sql), y junto
+ * con ellos otros seis para poder mostrar/ocultar por rol, también por
+ * separado, las pestañas Recetas, Lista de Compra y Estudiantes y pagos de
+ * cada uno.
+ *
+ * A cada rol que ya tenía algún permiso en el módulo viejo "gastos" se le
+ * copian esos mismos ver/crear/editar/eliminar a "eventos_gastos" Y a
+ * "practicas_gastos" — así nadie pierde de golpe el acceso que ya tenía al
+ * actualizar; Eyaelkys ajusta después, rol por rol, quién gestiona gastos
+ * en cuál de los dos desde Usuarios y roles → Roles. El módulo "gastos"
+ * viejo se deja tal cual en la base de datos (por si acaso) pero ya no lo
+ * usa ninguna pantalla, y roles/form.php ya no lo muestra en la matriz.
+ * Guardado: solo crea una fila nueva si el rol todavía no tiene ninguna
+ * para ese módulo nuevo, así una corrida posterior nunca pisa un ajuste
+ * manual que ya se haya hecho desde la pantalla de Roles.
+ */
+function migrarPermisosGastosPorContexto(PDO $pdo): array
+{
+    $mensajes = [];
+    $idGastos = idPorNombre($pdo, 'modulos', 'clave', 'gastos');
+    $idEventosGastos = idPorNombre($pdo, 'modulos', 'clave', 'eventos_gastos');
+    $idPracticasGastos = idPorNombre($pdo, 'modulos', 'clave', 'practicas_gastos');
+    if (!$idGastos || !$idEventosGastos || !$idPracticasGastos) {
+        return $mensajes;
+    }
+    $stmt = $pdo->prepare('SELECT rol_id, ver, crear, editar, eliminar FROM permisos_rol WHERE modulo_id = ?');
+    $stmt->execute([$idGastos]);
+    $filas = $stmt->fetchAll();
+    $existeStmt = $pdo->prepare('SELECT 1 FROM permisos_rol WHERE rol_id = ? AND modulo_id = ?');
+    $insStmt = $pdo->prepare('INSERT INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar) VALUES (?,?,?,?,?,?)');
+    $copiadas = 0;
+    foreach ($filas as $fila) {
+        foreach ([$idEventosGastos, $idPracticasGastos] as $idDestino) {
+            $existeStmt->execute([$fila['rol_id'], $idDestino]);
+            if (!$existeStmt->fetchColumn()) {
+                $insStmt->execute([$fila['rol_id'], $idDestino, $fila['ver'], $fila['crear'], $fila['editar'], $fila['eliminar']]);
+                $copiadas++;
+            }
+        }
+    }
+    if ($copiadas > 0) {
+        $mensajes[] = "Permisos del módulo \"Gastos\" copiados a los módulos separados \"Eventos → Gastos\" y \"Prácticas → Gastos\" ($copiadas asignaciones de rol) — revisa Usuarios y roles → Roles para separar quién gestiona gastos en Eventos y quién en Prácticas.";
+    }
+    return $mensajes;
+}
+
+/**
+ * Antes de esta ronda, qué pestañas veía Padres dentro de un Evento o
+ * Práctica no era un permiso de verdad — estaba escrito directo en
+ * eventos/detalle.php y practicas/detalle.php (Padres veía Resumen,
+ * Estudiantes y pagos, Recetas y Lista de Compra en Eventos, nunca Gastos;
+ * y solo Estudiantes y pagos en Prácticas). Ahora que cada pestaña tiene su
+ * propio módulo de permiso, hace falta sembrar aquí los valores nuevos que
+ * Eyaelkys pidió expresamente: Padres deja de ver la pestaña Recetas de un
+ * evento (para no revelar el menú sorpresa), y a cambio sí ve Gastos (solo
+ * para consultar, no para crear/editar/eliminar) — Estudiantes y pagos y
+ * Lista de Compra se mantienen. "eventos_recetas" y todo lo de Prácticas
+ * fuera de "Estudiantes y pagos" se dejan sin ninguna fila para Padres: al
+ * no existir, cuentan como "no" en can(), que es exactamente lo que se
+ * quiere. Guardado: solo crea la fila si todavía no existe ninguna para
+ * ese rol y módulo, así una corrida posterior nunca pisa un ajuste manual
+ * que Eyaelkys ya haya hecho desde Usuarios y roles → Roles.
+ */
+function establecerPermisosPadresPorPestana(PDO $pdo): array
+{
+    $mensajes = [];
+    $idRolPadres = idPorNombre($pdo, 'roles', 'nombre', 'Padres');
+    if (!$idRolPadres) {
+        return $mensajes;
+    }
+    $otorgar = [
+        'eventos_estudiantes'   => [1, 0, 0, 0],
+        'eventos_lista_compra'  => [1, 0, 0, 0],
+        'eventos_gastos'        => [1, 0, 0, 0],
+        'practicas_estudiantes' => [1, 0, 0, 0],
+    ];
+    $existeStmt = $pdo->prepare('SELECT 1 FROM permisos_rol WHERE rol_id = ? AND modulo_id = ?');
+    $insStmt = $pdo->prepare('INSERT INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar) VALUES (?,?,?,?,?,?)');
+    $creadas = 0;
+    foreach ($otorgar as $clave => [$ver, $crear, $editar, $eliminar]) {
+        $idModulo = idPorNombre($pdo, 'modulos', 'clave', $clave);
+        if (!$idModulo) {
+            continue;
+        }
+        $existeStmt->execute([$idRolPadres, $idModulo]);
+        if (!$existeStmt->fetchColumn()) {
+            $insStmt->execute([$idRolPadres, $idModulo, $ver, $crear, $editar, $eliminar]);
+            $creadas++;
+        }
+    }
+    if ($creadas > 0) {
+        $mensajes[] = 'Rol "Padres": permisos sembrados por pestaña — ve Estudiantes y pagos, Lista de Compra y Gastos (solo consulta) en Eventos, y Estudiantes y pagos en Prácticas; ya NO ve la pestaña Recetas de un evento (antes sí la veía).';
     }
     return $mensajes;
 }
@@ -1067,6 +1181,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, establecerDensidadIngredientes($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
+        // Orden importante: primero se siembran los valores nuevos que
+        // Eyaelkys pidió explícitamente para Padres (incluye ver=1 en
+        // "eventos_gastos", aunque el viejo módulo compartido "gastos" no le
+        // daba acceso). Si migrarPermisosGastosPorContexto() corriera
+        // primero, copiaría el ver=0 heredado de "gastos" a "eventos_gastos"
+        // para Padres, y el guardado de establecerPermisosPadresPorPestana()
+        // (que no pisa una fila que ya existe) se quedaría con ese ver=0 en
+        // vez del ver=1 que se pidió.
+        $mensajes = array_merge($mensajes, establecerPermisosPadresPorPestana($pdo));
+        $mensajes = array_merge($mensajes, migrarPermisosGastosPorContexto($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria1($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria2($pdo));
 

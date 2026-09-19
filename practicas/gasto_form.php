@@ -6,7 +6,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 $base = '..';
 $usuarioActual = requireLogin($base);
-requirePermission($usuarioActual, 'gastos', 'crear', $base);
+requirePermission($usuarioActual, 'practicas_gastos', 'crear', $base);
 
 $practicaId = intOrNull($_GET['practica_id'] ?? null);
 if (!$practicaId) {

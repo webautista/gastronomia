@@ -8,7 +8,12 @@ $usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
 requirePermission($usuarioActual, 'usuarios', $id ? 'editar' : 'crear', $base);
 
-$modulos = db()->query('SELECT * FROM modulos ORDER BY orden ASC')->fetchAll();
+// "gastos" queda excluido a propósito: es el módulo compartido viejo,
+// reemplazado por "eventos_gastos"/"practicas_gastos" (y los otros seis
+// permisos por pestaña) — ver migrarPermisosGastosPorContexto() en
+// setup.php. La fila sigue en la base de datos, pero ya no se muestra ni
+// se guarda desde esta pantalla.
+$modulos = db()->query("SELECT * FROM modulos WHERE clave <> 'gastos' ORDER BY orden ASC")->fetchAll();
 $acciones = ['ver' => 'Ver', 'crear' => 'Crear', 'editar' => 'Editar', 'eliminar' => 'Eliminar'];
 
 $rol = ['nombre' => '', 'descripcion' => '', 'es_sistema' => 0];
@@ -149,9 +154,11 @@ require __DIR__ . '/../includes/layout_top.php';
         </tr>
       </thead>
       <tbody>
-        <?php foreach ($modulos as $m): ?>
+        <?php foreach ($modulos as $m): $esSubPestana = str_contains($m['clave'], '_'); ?>
           <tr>
-            <td class="cell-name"><?= e($m['nombre']) ?></td>
+            <td class="cell-name" <?= $esSubPestana ? 'style="padding-left:30px;font-weight:400;color:var(--text-secondary);"' : '' ?>>
+              <?= $esSubPestana ? '↳ ' : '' ?><?= e($m['nombre']) ?>
+            </td>
             <?php foreach ($acciones as $clave => $label): ?>
               <td style="text-align:center;">
                 <input type="checkbox" name="permisos[<?= (int) $m['id'] ?>][<?= $clave ?>]" value="1"
@@ -164,7 +171,7 @@ require __DIR__ . '/../includes/layout_top.php';
     </table>
     </div>
     <?php if (!$rol['es_sistema']): ?>
-      <p class="cell-muted" style="font-size:.82rem;margin-top:8px;">Marcar Crear, Editar o Eliminar activa "Ver" automáticamente en esa pantalla.</p>
+      <p class="cell-muted" style="font-size:.82rem;margin-top:8px;">Marcar Crear, Editar o Eliminar activa "Ver" automáticamente en esa pantalla. Las filas con "↳" son pestañas específicas dentro del detalle de un Evento o Práctica (independientes entre sí y entre Eventos/Prácticas) — en "Lista de Compra" solo Ver y Editar tienen efecto (Editar controla aceptar/rechazar la sugerencia de compra); Crear/Eliminar no aplican ahí.</p>
     <?php endif; ?>
 
     <div class="form-actions">

@@ -37,7 +37,7 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $practicas = $stmt->fetchAll();
 
-$puedeVerGastos = can($usuarioActual, 'gastos', 'ver');
+$puedeVerGastos = can($usuarioActual, 'practicas_gastos', 'ver');
 
 // El costo estimado de materiales se calcula aquí igual que en el detalle
 // (misma lista de compra consolidada), para que el listado muestre el

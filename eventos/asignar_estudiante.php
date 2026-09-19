@@ -5,7 +5,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 $base = '..';
 $usuarioActual = requireLogin($base);
-requirePermission($usuarioActual, 'eventos', 'editar', $base);
+requirePermission($usuarioActual, 'eventos_estudiantes', 'crear', $base);
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {

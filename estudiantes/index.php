@@ -30,9 +30,9 @@ $sql = 'SELECT e.*, ge.nombre AS grupo,
         LEFT JOIN grupos_estudiante ge ON ge.id = e.grupo_id';
 $params = [];
 if ($busqueda !== '') {
-    $sql .= ' WHERE e.nombre LIKE ? OR ge.nombre LIKE ?';
+    $sql .= ' WHERE e.nombre LIKE ? OR ge.nombre LIKE ? OR e.padre_tutor LIKE ?';
     $like = '%' . $busqueda . '%';
-    $params = [$like, $like];
+    $params = [$like, $like, $like];
 }
 $sql .= ' ORDER BY e.nombre ASC';
 
@@ -58,7 +58,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="toolbar">
   <form class="search" method="get" action="index.php">
     <?= icon('search') ?>
-    <input type="text" name="q" placeholder="Buscar por nombre o grupo..." value="<?= e($busqueda) ?>">
+    <input type="text" name="q" placeholder="Buscar por nombre, grupo o padre/tutor..." value="<?= e($busqueda) ?>">
   </form>
 </div>
 
@@ -66,11 +66,11 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="table-wrap">
   <table class="table">
     <thead>
-      <tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Email</th><th>Eventos</th><th></th></tr>
+      <tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Email</th><th>Padre/madre o tutor</th><th>Eventos</th><th></th></tr>
     </thead>
     <tbody>
       <?php if (!$estudiantes): ?>
-        <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Sin resultados.</td></tr>
+        <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Sin resultados.</td></tr>
       <?php endif; ?>
       <?php foreach ($estudiantes as $st): ?>
         <tr>
@@ -78,6 +78,16 @@ require __DIR__ . '/../includes/layout_top.php';
           <td class="cell-muted"><?= e($st['grupo'] ?? '—') ?></td>
           <td class="cell-muted mono"><?= e($st['telefono']) ?></td>
           <td class="cell-muted"><?= e($st['email']) ?></td>
+          <td class="cell-muted">
+            <?php if (trim((string) ($st['padre_tutor'] ?? '')) !== ''): ?>
+              <?= e($st['padre_tutor']) ?>
+              <?php if (trim((string) ($st['telefono_padre_tutor'] ?? '')) !== ''): ?>
+                <div class="cell-muted mono" style="font-size:.78rem;"><?= e($st['telefono_padre_tutor']) ?></div>
+              <?php endif; ?>
+            <?php else: ?>
+              —
+            <?php endif; ?>
+          </td>
           <td class="cell-muted"><?= (int) $st['num_eventos'] ?></td>
           <td class="row-actions">
             <?php if ($puedeEditar): ?>
