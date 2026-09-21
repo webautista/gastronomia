@@ -255,6 +255,47 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "densidad_g_ml" agregada a ingredientes_catalogo (permite convertir el costo de un ingrediente entre unidades de masa y de volumen, ej. mantequilla en cucharadas o en gramos).';
     }
 
+    // Peso (en gramos) que pesa 1 "Unidad" de este ingrediente en
+    // particular: el mismo tipo de puente que densidad_g_ml, pero para
+    // convertir el costo entre la unidad de conteo "Unidad" y una unidad de
+    // masa/volumen (Gramo, Libra, Taza...) — una unidad de fresa no pesa lo
+    // mismo que una de guineo, así que no hay una equivalencia universal.
+    // Opcional: NULL para la enorme mayoría de ingredientes, que o no se
+    // cuentan por Unidad o ya tienen su "unidad de uso" fijada en Unidad sin
+    // necesitar convertir hacia otra. Ver tipoYFactorDeUnidad() y
+    // convertirCantidadEntreUnidades() en includes/helpers.php, y
+    // establecerPesoUnidadIngredientes() más abajo.
+    if (columnaExiste($pdo, 'ingredientes_catalogo', 'id') && !columnaExiste($pdo, 'ingredientes_catalogo', 'peso_unidad_g')) {
+        $pdo->exec('ALTER TABLE ingredientes_catalogo ADD COLUMN peso_unidad_g DECIMAL(8,2) NULL AFTER densidad_g_ml');
+        $mensajes[] = 'Columna "peso_unidad_g" agregada a ingredientes_catalogo (permite convertir el costo de un ingrediente entre la unidad "Unidad" (contado) y sus unidades de masa/volumen, ej. fresas en unidad, gramo, libra, kilogramo o taza).';
+    }
+
+    // Modo de compra por defecto para la Lista de Compra, cuando la unidad
+    // de compra de un ingrediente es distinta de la de uso: por defecto
+    // (NULL) se sigue asumiendo que hay que comprar el paquete/caja
+    // completa, igual que siempre. 'cantidad_exacta' es para ingredientes
+    // como el Huevo, que NO se deben forzar a comprar por cartón completo
+    // cuando la receta solo necesita una parte — ahí el monto se queda en
+    // el costo exacto ya prorrateado por unidad, sin redondear a un
+    // paquete. Ver establecerModoCompraDefecto() más abajo (siembra Huevo)
+    // y el docblock de listaCompraConsolidada() en includes/helpers.php.
+    if (columnaExiste($pdo, 'ingredientes_catalogo', 'id') && !columnaExiste($pdo, 'ingredientes_catalogo', 'modo_compra_defecto')) {
+        $pdo->exec("ALTER TABLE ingredientes_catalogo ADD COLUMN modo_compra_defecto ENUM('paquete_completo','cantidad_exacta') NULL AFTER peso_unidad_g");
+        $mensajes[] = 'Columna "modo_compra_defecto" agregada a ingredientes_catalogo (permite que un ingrediente como el Huevo no se compre por cartón/paquete completo en la Lista de Compra cuando solo hace falta una parte).';
+    }
+
+    // Tercer modo para una decisión de compra guardada por evento/práctica
+    // (ver docblock de la tabla compra_decisiones en db/schema.sql y de
+    // listaCompraConsolidada() en includes/helpers.php): además de
+    // comprar_paquete (paquete completo / ya lo tiene), ahora se puede
+    // guardar 'exacto' (comprar solo lo necesario, sin redondear a
+    // paquete). NULL = no hay decisión guardada con este campo todavía; se
+    // usa comprar_paquete o el modo por defecto del catálogo.
+    if (columnaExiste($pdo, 'compra_decisiones', 'id') && !columnaExiste($pdo, 'compra_decisiones', 'modo')) {
+        $pdo->exec("ALTER TABLE compra_decisiones ADD COLUMN modo ENUM('paquete','exacto','ya_tiene') NULL AFTER comprar_paquete");
+        $mensajes[] = 'Columna "modo" agregada a compra_decisiones (agrega un tercer estado, "comprar solo lo necesario", además de paquete completo / ya lo tiene).';
+    }
+
     // Control de publicación de la cuota en la Home pública: mientras un
     // evento todavía se está presupuestando, la cuota puede ir variando, y
     // mostrarla en la página pública daría una cifra errática. Por defecto
@@ -696,12 +737,89 @@ function establecerDensidadIngredientes(PDO $pdo): array
         // Agregada al preparar "Mousse de chinola" (½ taza de crema para
         // batir), que en el catálogo está por Libra.
         'Crema para batir' => [1.0102, '239 g por taza, heavy cream/crema para batir (ref. cuporgram.com)'],
+        // Agregada a pedido de Eyaelkys de poder manejar la Fresa también en
+        // Gramo/Libra/Kilogramo además de en Taza (ver
+        // establecerPesoUnidadIngredientes() para el puente hacia Unidad).
+        'Fresa' => [0.7083, '170 g por taza, fresas enteras (medidasrecetascocina.com)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
         $stmt->execute([$densidad, $nombre]);
         if ($stmt->rowCount() > 0) {
             $mensajes[] = "Ingrediente \"$nombre\": densidad agregada ($densidad g/ml, ref. $nota) para poder usarse tanto en gramo/libra/kilogramo como en cucharada/cucharadita/taza dentro de una receta.";
+        }
+    }
+    return $mensajes;
+}
+
+/**
+ * Siembra, para el primer ingrediente que lo necesita (Fresa), cuántos
+ * gramos pesa 1 "Unidad" de ese ingrediente en particular — el mismo tipo
+ * de puente que establecerDensidadIngredientes() ya usa para masa↔volumen
+ * (ver esa función más arriba), pero para convertir el costo entre la
+ * unidad de conteo "Unidad" y las unidades de masa/volumen del catálogo.
+ * Pedido de Eyaelkys: "necesito manejar la fresa por libra, gramo,
+ * kilogramo, taza y unidad" — con esto más la densidad ya agregada arriba,
+ * las cinco quedan disponibles: Libra/Gramo/Kilogramo ya eran convertibles
+ * entre sí (misma tipo_medida "masa"), Taza lo es gracias a la densidad, y
+ * Unidad lo es gracias a este valor. Guardado igual que las demás
+ * correcciones: solo toca la fila si peso_unidad_g sigue en NULL, para no
+ * pisar un ajuste manual hecho después desde Ingredientes.
+ */
+function establecerPesoUnidadIngredientes(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'ingredientes_catalogo', 'peso_unidad_g')) {
+        return $mensajes;
+    }
+    // nombre => [gramos por 1 Unidad, nota para el mensaje]
+    $valores = [
+        // Fresa grande — la misma referencia ya usada a mano en la línea
+        // "Fresas grandes" de la receta "Brochetas de frutas" (sección 26):
+        // con este valor, esa misma línea ya se podría cargar hoy con el
+        // costo calculado solo por la aplicación, en vez de a mano.
+        'Fresa' => [28.0, '28 g por fresa grande (ref. pasteleriamarianohernandez.es)'],
+    ];
+    $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET peso_unidad_g = ? WHERE nombre = ? AND peso_unidad_g IS NULL');
+    foreach ($valores as $nombre => [$peso, $nota]) {
+        $stmt->execute([$peso, $nombre]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": peso por unidad agregado ($peso g, ref. $nota) para poder usarse también en Unidad (contado) dentro de una receta.";
+        }
+    }
+    return $mensajes;
+}
+
+/**
+ * Modo de compra por defecto (ver modo_compra_defecto en
+ * ingredientes_catalogo, docblock en db/schema.sql) para ingredientes que
+ * NO se deben forzar a comprar por paquete/caja completa en la Lista de
+ * Compra. Pedido real de Eyaelkys (bug reportado desde una práctica en
+ * producción): "SI necesito solo 3 huevos no me puedes mandar a comprar el
+ * paquete. El costo del huevo para la lista de compra debe mantenerse a
+ * nivel de la unidad." Con 'cantidad_exacta', listaCompraConsolidada() deja
+ * el monto en el costo exacto ya prorrateado por unidad de uso (Unidad, en
+ * el caso del Huevo) en vez de saltar al precio del cartón/Paquete
+ * completo. Guardado igual que las demás correcciones: solo toca la fila
+ * si modo_compra_defecto sigue en NULL, para no pisar un ajuste manual
+ * hecho después desde Ingredientes (donde también se puede activar para
+ * cualquier otro ingrediente con el mismo problema).
+ */
+function establecerModoCompraDefecto(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'ingredientes_catalogo', 'modo_compra_defecto')) {
+        return $mensajes;
+    }
+    // nombre => nota para el mensaje
+    $valores = [
+        'Huevo' => 'se compra por cartón/Paquete pero se usa por Unidad; no tiene sentido forzar el cartón completo cuando una receta solo necesita unos pocos',
+    ];
+    $stmt = $pdo->prepare("UPDATE ingredientes_catalogo SET modo_compra_defecto = 'cantidad_exacta' WHERE nombre = ? AND modo_compra_defecto IS NULL");
+    foreach ($valores as $nombre => $nota) {
+        $stmt->execute([$nombre]);
+        if ($stmt->rowCount() > 0) {
+            $mensajes[] = "Ingrediente \"$nombre\": modo de compra por defecto puesto en \"cantidad exacta\" en vez de \"paquete completo\" ($nota).";
         }
     }
     return $mensajes;
@@ -1569,6 +1687,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, corregirUnidadUsoPasta($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoFresaYGelatina($pdo));
         $mensajes = array_merge($mensajes, establecerDensidadIngredientes($pdo));
+        $mensajes = array_merge($mensajes, establecerPesoUnidadIngredientes($pdo));
+        $mensajes = array_merge($mensajes, establecerModoCompraDefecto($pdo));
         $mensajes = array_merge($mensajes, agregarAccionesTemperatura($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));

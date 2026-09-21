@@ -406,9 +406,35 @@ function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidad
 }
 
 /**
+ * Tipo de medida y factor_base EFECTIVOS de una unidad, para
+ * convertirCantidadEntreUnidades()/convertirCostoPorUnidad(). Para casi
+ * cualquier unidad es simplemente lo que ya trae su fila de
+ * unidades_medida (tipo_medida/factor_base). La única excepción es la
+ * unidad de conteo "Unidad": por sí sola no tiene un tamaño universal (una
+ * unidad de guineo no pesa lo mismo que una de mango), pero cuando el
+ * ingrediente en cuestión sí tiene su propio "peso por unidad" cargado
+ * (ingredientes_catalogo.peso_unidad_g, $pesoUnidadG aquí), se puede tratar
+ * como si fuera una unidad de masa cuyo factor_base es ESE peso — el mismo
+ * truco que densidad_g_ml ya usa para puentear masa↔volumen, aplicado aquí
+ * a Unidad↔masa. Devuelve [tipo_medida ('masa'/'volumen'/null), factor_base].
+ */
+function tipoYFactorDeUnidad(array $unidad, ?float $pesoUnidadG): array
+{
+    $tipo = $unidad['tipo_medida'] ?? null;
+    $factor = (float) ($unidad['factor_base'] ?? 0);
+    if ($tipo && $factor > 0) {
+        return [$tipo, $factor];
+    }
+    if ($pesoUnidadG !== null && $pesoUnidadG > 0 && ($unidad['nombre'] ?? '') === 'Unidad') {
+        return ['masa', $pesoUnidadG];
+    }
+    return [null, 0.0];
+}
+
+/**
  * Convierte una CANTIDAD (no un costo) de una unidad a otra — hace posible
  * que una línea de receta escrita en Cucharadita se pueda comparar/sumar con
- * otra escrita en Gramo del mismo ingrediente. Dos casos:
+ * otra escrita en Gramo del mismo ingrediente. Tres casos:
  *
  * 1) Mismo tipo_medida (masa con masa, o volumen con volumen): conversión
  *    universal vía factor_base — 1 Onza siempre son 28.35 g, para
@@ -422,15 +448,40 @@ function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidad
  *    caso más común: la enorme mayoría de ingredientes no la tienen
  *    cargada porque solo se usan en un tipo de medida).
  *
- * En ambos casos, también devuelve null para unidades "de conteo" (Unidad,
- * Lata, Diente...) sin tipo_medida/factor_base — ahí no hay forma de saber,
- * por ejemplo, cuántos gramos "es" media lata, y el valor se debe ajustar a
- * mano. $unidadOrigen / $unidadDestino son filas de unidades_medida (o
- * null). Se usa en listaCompraConsolidada() para consolidar cantidades del
- * mismo ingrediente escritas en unidades distintas, y como base de
- * convertirCostoPorUnidad() (ver más abajo).
+ * 3) La unidad de conteo "Unidad" puente hacia masa/volumen: tampoco hay
+ *    una equivalencia universal (una unidad de fresa no pesa lo mismo que
+ *    una de guineo), así que hace falta el "peso por unidad" de ESE
+ *    ingrediente en particular ($pesoUnidadG, columna
+ *    ingredientes_catalogo.peso_unidad_g) — ver tipoYFactorDeUnidad() más
+ *    arriba. Sin él, "Unidad" sigue sin ser convertible, como siempre.
+ *
+ * Cualquier otra unidad "de conteo" (Lata, Diente, Rebanada...) sigue sin
+ * tipo_medida/factor_base y por lo tanto sin convertir — ahí no hay forma
+ * de saber, por ejemplo, cuántos gramos "es" media lata, y el valor se debe
+ * ajustar a mano. $unidadOrigen / $unidadDestino son filas de
+ * unidades_medida (o null). Se usa en listaCompraConsolidada() para
+ * consolidar cantidades del mismo ingrediente escritas en unidades
+ * distintas, y como base de convertirCostoPorUnidad() (ver más abajo).
+ *
+ * 4) Unidad de uso ↔ unidad de compra del propio catálogo (ej. Gelatina sin
+ *    sabor: se USA por Cucharadita pero se COMPRA por Paquete, y
+ *    contenido_por_compra dice cuántas cucharaditas trae un paquete). A
+ *    diferencia de la densidad o el peso por unidad, este dato SIEMPRE
+ *    existe para cualquier ingrediente del catálogo (unidad_id,
+ *    unidad_compra_id y contenido_por_compra son obligatorios), así que
+ *    esta conversión aplica de una vez, sin necesitar carga extra — es lo
+ *    que permite, por ejemplo, que una receta que escribe "1 paquete de
+ *    gelatina" y otra que escribe "1.5 cucharaditas" se consoliden en una
+ *    sola línea en la Lista de Compra. Para lograrlo se pasa $catalogo (la
+ *    fila de ingredientes_catalogo de ESTE ingrediente: unidad_id,
+ *    unidad_compra_id, contenido_por_compra) y $unidadesPorId (mapa id →
+ *    fila de unidades_medida, para poder ubicar la unidad de uso del
+ *    catálogo como "escalón" intermedio al encadenar, ej. Paquete → uso →
+ *    Gramo). Si el destino/origen final no es ni la unidad de uso ni la de
+ *    compra, se encadena UNA vez a través de la unidad de uso y desde ahí
+ *    se sigue con los casos 1-3 normalmente.
  */
-function convertirCantidadEntreUnidades(float $cantidadOrigen, ?array $unidadOrigen, ?array $unidadDestino, ?float $densidadGml = null): ?float
+function convertirCantidadEntreUnidades(float $cantidadOrigen, ?array $unidadOrigen, ?array $unidadDestino, ?float $densidadGml = null, ?float $pesoUnidadG = null, ?array $catalogo = null, ?array $unidadesPorId = null): ?float
 {
     if (!$unidadOrigen || !$unidadDestino) {
         return null;
@@ -438,14 +489,36 @@ function convertirCantidadEntreUnidades(float $cantidadOrigen, ?array $unidadOri
     if ((int) $unidadOrigen['id'] === (int) $unidadDestino['id']) {
         return $cantidadOrigen;
     }
-    $tipoOrigen = $unidadOrigen['tipo_medida'] ?? null;
-    $tipoDestino = $unidadDestino['tipo_medida'] ?? null;
-    if (!$tipoOrigen || !$tipoDestino) {
-        return null;
+
+    if ($catalogo && $unidadesPorId) {
+        $idUso = (int) ($catalogo['unidad_id'] ?? 0);
+        $idCompra = (int) ($catalogo['unidad_compra_id'] ?? 0);
+        $contenido = (float) ($catalogo['contenido_por_compra'] ?? 0);
+        $idOrigen = (int) $unidadOrigen['id'];
+        $idDestino = (int) $unidadDestino['id'];
+        if ($idUso > 0 && $idCompra > 0 && $idUso !== $idCompra && $contenido > 0) {
+            if ($idOrigen === $idCompra && $idDestino === $idUso) {
+                return $cantidadOrigen * $contenido;
+            }
+            if ($idOrigen === $idUso && $idDestino === $idCompra) {
+                return $cantidadOrigen / $contenido;
+            }
+            $unidadUso = $unidadesPorId[$idUso] ?? null;
+            if ($unidadUso && $idOrigen === $idCompra) {
+                // Compra -> uso (vía contenido_por_compra) -> lo que pida el destino.
+                return convertirCantidadEntreUnidades($cantidadOrigen * $contenido, $unidadUso, $unidadDestino, $densidadGml, $pesoUnidadG, null, $unidadesPorId);
+            }
+            if ($unidadUso && $idDestino === $idCompra) {
+                // Origen -> uso -> compra (vía contenido_por_compra).
+                $enUso = convertirCantidadEntreUnidades($cantidadOrigen, $unidadOrigen, $unidadUso, $densidadGml, $pesoUnidadG, null, $unidadesPorId);
+                return $enUso !== null ? $enUso / $contenido : null;
+            }
+        }
     }
-    $factorOrigen = (float) ($unidadOrigen['factor_base'] ?? 0);
-    $factorDestino = (float) ($unidadDestino['factor_base'] ?? 0);
-    if ($factorOrigen <= 0 || $factorDestino <= 0) {
+
+    [$tipoOrigen, $factorOrigen] = tipoYFactorDeUnidad($unidadOrigen, $pesoUnidadG);
+    [$tipoDestino, $factorDestino] = tipoYFactorDeUnidad($unidadDestino, $pesoUnidadG);
+    if (!$tipoOrigen || !$tipoDestino || $factorOrigen <= 0 || $factorDestino <= 0) {
         return null;
     }
     if ($tipoOrigen === $tipoDestino) {
@@ -478,15 +551,18 @@ function convertirCantidadEntreUnidades(float $cantidadOrigen, ?array $unidadOri
  * función). Se apoya en convertirCantidadEntreUnidades(): si 1 unidadOrigen
  * equivale a X unidadDestino, 1 unidadOrigen cuesta lo mismo que X
  * unidadDestino, así que el costo por unidadDestino es el costo por
- * unidadOrigen ÷ X. $densidadGml se pasa igual que en esa función, para
- * poder convertir también entre masa y volumen cuando el ingrediente la
- * tiene cargada (ej. mantequilla de Cucharadita a Gramo).
+ * unidadOrigen ÷ X. $densidadGml y $pesoUnidadG se pasan igual que en esa
+ * función, para poder convertir también entre masa y volumen cuando el
+ * ingrediente tiene densidad cargada (ej. mantequilla de Cucharadita a
+ * Gramo), o desde/hacia la unidad de conteo "Unidad" cuando tiene su peso
+ * por unidad cargado (ej. fresas de Taza a Unidad).
  *
  * Devuelve null cuando no son convertibles automáticamente (ver
  * convertirCantidadEntreUnidades) — en ese caso el costo se debe ajustar a
- * mano.
+ * mano. $catalogo / $unidadesPorId: igual que en convertirCantidadEntreUnidades(),
+ * para poder usar también el puente unidad de uso ↔ unidad de compra.
  */
-function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrigen, ?array $unidadDestino, ?float $densidadGml = null): ?float
+function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrigen, ?array $unidadDestino, ?float $densidadGml = null, ?float $pesoUnidadG = null, ?array $catalogo = null, ?array $unidadesPorId = null): ?float
 {
     if (!$unidadOrigen || !$unidadDestino) {
         return null;
@@ -494,7 +570,7 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
     if ((int) $unidadOrigen['id'] === (int) $unidadDestino['id']) {
         return $costoPorUnidadOrigen;
     }
-    $equivalencia = convertirCantidadEntreUnidades(1.0, $unidadOrigen, $unidadDestino, $densidadGml);
+    $equivalencia = convertirCantidadEntreUnidades(1.0, $unidadOrigen, $unidadDestino, $densidadGml, $pesoUnidadG, $catalogo, $unidadesPorId);
     if ($equivalencia === null || $equivalencia <= 0) {
         return null;
     }
@@ -563,11 +639,16 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
     }
 
     $catalogoPorId = [];
-    foreach ($pdo->query('SELECT id, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, densidad_g_ml FROM ingredientes_catalogo')->fetchAll() as $c) {
+    foreach ($pdo->query('SELECT id, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, densidad_g_ml, peso_unidad_g, modo_compra_defecto FROM ingredientes_catalogo')->fetchAll() as $c) {
         $catalogoPorId[(int) $c['id']] = $c;
     }
 
     $grupos = [];
+    // Para cada ingrediente (claveBase), lista de las claves de grupo ya
+    // creadas para él — normalmente solo una, pero puede haber más de una
+    // cuando de verdad no hay ningún puente de conversión conocido entre
+    // las unidades usadas (ver más abajo).
+    $gruposPorIngrediente = [];
     $alGusto = [];
 
     foreach ($recetasConPorciones as $rp) {
@@ -608,22 +689,47 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             $densidadIngrediente = $catalogoDeEstaLinea && $catalogoDeEstaLinea['densidad_g_ml'] !== null
                 ? (float) $catalogoDeEstaLinea['densidad_g_ml']
                 : null;
+            $pesoUnidadIngrediente = $catalogoDeEstaLinea && ($catalogoDeEstaLinea['peso_unidad_g'] ?? null) !== null
+                ? (float) $catalogoDeEstaLinea['peso_unidad_g']
+                : null;
 
             $unidadIng = $unidadesPorId[(int) $ing['unidad_id']] ?? null;
-            $tipoMedida = $unidadIng['tipo_medida'] ?? null;
-            // Si el ingrediente tiene densidad cargada, masa y volumen son
-            // convertibles entre sí para él, así que una misma línea de
-            // agrupación sirve para ambas (ej. una receta que pide la
-            // mantequilla en cucharaditas y otra en gramos se consolidan
-            // juntas); si no, se sigue separando por tipo_medida como antes.
-            $clave = $claveBase . '|' . ($densidadIngrediente ? 'convertible' : ($tipoMedida ?: ('u' . $ing['unidad_id'])));
-
             $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, $porcionesNecesarias);
             $esEntera = (bool) ($unidadIng['es_entera'] ?? false);
             $costoUnit = (float) $ing['costo_unitario'];
 
-            if (!isset($grupos[$clave])) {
-                $grupos[$clave] = [
+            // Un solo renglón por ingrediente en la Lista de Compra: en vez
+            // de separar por tipo_medida (como antes), se busca entre los
+            // grupos YA creados para este mismo ingrediente uno cuya unidad
+            // ancla sea convertible con la de ESTA línea — misma unidad,
+            // mismo tipo_medida, o vía cualquiera de los puentes de
+            // convertirCantidadEntreUnidades() (densidad, peso por unidad, o
+            // la unidad de compra del catálogo, que siempre existe). Solo
+            // cuando de verdad no hay NINGÚN puente conocido entre las
+            // unidades usadas (ej. un ingrediente sin catálogo, en unidades
+            // no relacionadas) se crea un renglón aparte — que es lo único
+            // que se puede hacer sin inventar una equivalencia.
+            $claveGrupo = null;
+            foreach ($gruposPorIngrediente[$claveBase] ?? [] as $candidata) {
+                $unidadAncla = $grupos[$candidata]['unidad_ancla'];
+                if (!$unidadIng || !$unidadAncla) {
+                    continue;
+                }
+                if ((int) $unidadIng['id'] === (int) $unidadAncla['id']) {
+                    $claveGrupo = $candidata;
+                    break;
+                }
+                $convertible = convertirCantidadEntreUnidades(1.0, $unidadIng, $unidadAncla, $densidadIngrediente, $pesoUnidadIngrediente, $catalogoDeEstaLinea, $unidadesPorId);
+                if ($convertible !== null) {
+                    $claveGrupo = $candidata;
+                    break;
+                }
+            }
+
+            if ($claveGrupo === null) {
+                $claveGrupo = $claveBase . '#' . (count($gruposPorIngrediente[$claveBase] ?? []) + 1);
+                $gruposPorIngrediente[$claveBase][] = $claveGrupo;
+                $grupos[$claveGrupo] = [
                     'nombre' => $nombre,
                     'catalogo_id' => !empty($ing['ingrediente_id']) ? (int) $ing['ingrediente_id'] : null,
                     'unidad_ancla' => $unidadIng,
@@ -646,17 +752,17 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             // calcular el costo, que ya se sumó arriba sin necesitar
             // conversión.
             $cantidadEnAncla = $cantidad;
-            $unidadAncla = $grupos[$clave]['unidad_ancla'];
+            $unidadAncla = $grupos[$claveGrupo]['unidad_ancla'];
             if ($unidadIng && $unidadAncla && (int) $unidadIng['id'] !== (int) $unidadAncla['id']) {
-                $convertida = convertirCantidadEntreUnidades($cantidad, $unidadIng, $unidadAncla, $densidadIngrediente);
+                $convertida = convertirCantidadEntreUnidades($cantidad, $unidadIng, $unidadAncla, $densidadIngrediente, $pesoUnidadIngrediente, $catalogoDeEstaLinea, $unidadesPorId);
                 if ($convertida !== null) {
                     $cantidadEnAncla = $convertida;
                 }
             }
 
-            $grupos[$clave]['cantidad'] += $cantidadEnAncla;
-            $grupos[$clave]['monto_sin_redondear'] += $cantidad * $costoUnit;
-            $grupos[$clave]['recetas'][$nombreReceta] = true;
+            $grupos[$claveGrupo]['cantidad'] += $cantidadEnAncla;
+            $grupos[$claveGrupo]['monto_sin_redondear'] += $cantidad * $costoUnit;
+            $grupos[$claveGrupo]['recetas'][$nombreReceta] = true;
         }
     }
 
@@ -693,8 +799,9 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             $unidadCompra = $unidadesPorId[$unidadCompraId] ?? null;
             $unidadUsoCatalogo = isset($catalogo['unidad_id']) ? ($unidadesPorId[(int) $catalogo['unidad_id']] ?? null) : null;
             $densidadCatalogo = $catalogo['densidad_g_ml'] !== null ? (float) $catalogo['densidad_g_ml'] : null;
+            $pesoUnidadCatalogo = ($catalogo['peso_unidad_g'] ?? null) !== null ? (float) $catalogo['peso_unidad_g'] : null;
             if ($unidadCompra && $contenidoPorCompra > 0 && $unidadCompraId !== (int) ($g['unidad_ancla']['id'] ?? 0)) {
-                $cantidadEnUsoCatalogo = convertirCantidadEntreUnidades($g['cantidad'], $g['unidad_ancla'], $unidadUsoCatalogo, $densidadCatalogo);
+                $cantidadEnUsoCatalogo = convertirCantidadEntreUnidades($g['cantidad'], $g['unidad_ancla'], $unidadUsoCatalogo, $densidadCatalogo, $pesoUnidadCatalogo, $catalogo, $unidadesPorId);
                 if ($cantidadEnUsoCatalogo !== null && $cantidadEnUsoCatalogo > 0) {
                     $unidadesNecesarias = $cantidadEnUsoCatalogo / $contenidoPorCompra;
                     if (!empty($unidadCompra['es_entera'])) {
@@ -708,24 +815,58 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             }
         }
 
-        // Cuando hay una sugerencia de compra (hay que llevar el paquete,
-        // no la porción exacta), el monto de la línea pasa a depender de la
-        // decisión de la usuaria: por defecto se asume que sí va a comprar
-        // el paquete completo (a su precio, editable), y ella puede marcar
-        // que ya lo tiene — en ese caso la línea no suma al total.
+        // Cuando hay una sugerencia de compra (hay que llevar el paquete, no
+        // la porción exacta), el monto de la línea depende del MODO de
+        // compra, que puede venir de tres lugares (en este orden de
+        // prioridad):
+        //   1) una decisión guardada para este evento/práctica en concreto
+        //      (compra_decisiones.modo — la usuaria la cambió ahí mismo);
+        //   2) si esa entidad guardó una decisión ANTES de que existiera
+        //      este tercer modo (solo tiene el viejo comprar_paquete
+        //      booleano), se respeta tal cual para no alterar nada ya
+        //      decidido;
+        //   3) si no hay nada guardado para esta entidad, el modo por
+        //      defecto de ESE ingrediente en el catálogo
+        //      (ingredientes_catalogo.modo_compra_defecto) — 'paquete_completo'
+        //      para casi todos (comportamiento histórico, sin cambios), o
+        //      'cantidad_exacta' para ingredientes como el Huevo, que ella
+        //      no quiere comprar por cartón completo cuando solo hace falta
+        //      una parte.
+        // Los tres modos posibles:
+        //   'paquete'   → comprar el paquete/caja completo, a su precio
+        //                 (editable): monto = precio_paquete × cantidad de compra.
+        //   'exacto'    → comprar solo lo necesario: el monto se queda en
+        //                 el costo exacto por unidad de uso ya sumado
+        //                 (monto_porcion), sin redondear a un paquete completo.
+        //   'ya_tiene'  → ya lo tiene, no hay que comprarlo: no suma al total.
         $decisionCompra = null;
         if ($compra !== null && $g['catalogo_id']) {
             $precioSugerido = isset($catalogo['precio_compra']) ? (float) $catalogo['precio_compra'] : 0.0;
             $guardada = $decisiones[$g['catalogo_id']] ?? null;
-            $comprarPaquete = $guardada['comprar_paquete'] ?? true;
+            if ($guardada && !empty($guardada['modo'])) {
+                $modo = $guardada['modo'];
+            } elseif ($guardada && array_key_exists('comprar_paquete', $guardada)) {
+                // Decisión guardada antes de que existiera el modo 'exacto':
+                // se respeta tal cual (true = paquete completo, false = ya lo tiene).
+                $modo = $guardada['comprar_paquete'] ? 'paquete' : 'ya_tiene';
+            } else {
+                $modo = ($catalogo['modo_compra_defecto'] ?? null) === 'cantidad_exacta' ? 'exacto' : 'paquete';
+            }
             $precioPaquete = ($guardada['precio_paquete'] ?? null) !== null ? (float) $guardada['precio_paquete'] : $precioSugerido;
             $decisionCompra = [
-                'comprar_paquete' => $comprarPaquete,
+                'modo' => $modo,
+                // Se conserva por compatibilidad (renderListaCompraTexto() y
+                // cualquier vista que aún no se haya actualizado a 'modo').
+                'comprar_paquete' => $modo === 'paquete',
                 'precio_paquete' => $precioPaquete,
                 'precio_sugerido' => $precioSugerido,
                 'monto_porcion' => $montoPorcion,
             ];
-            $monto = $comprarPaquete ? ($precioPaquete * $compra['cantidad']) : 0.0;
+            $monto = match ($modo) {
+                'paquete' => $precioPaquete * $compra['cantidad'],
+                'exacto' => $montoPorcion,
+                default => 0.0, // 'ya_tiene'
+            };
         }
         $total += $monto;
 
@@ -763,7 +904,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
 function cargarDecisionesCompra(PDO $pdo, string $entidadTipo, int $entidadId): array
 {
     $stmt = $pdo->prepare(
-        'SELECT ingrediente_catalogo_id, comprar_paquete, precio_paquete
+        'SELECT ingrediente_catalogo_id, comprar_paquete, precio_paquete, modo
          FROM compra_decisiones WHERE entidad_tipo = ? AND entidad_id = ?'
     );
     $stmt->execute([$entidadTipo, $entidadId]);
@@ -772,6 +913,7 @@ function cargarDecisionesCompra(PDO $pdo, string $entidadTipo, int $entidadId): 
         $decisiones[(int) $d['ingrediente_catalogo_id']] = [
             'comprar_paquete' => (bool) $d['comprar_paquete'],
             'precio_paquete' => $d['precio_paquete'] !== null ? (float) $d['precio_paquete'] : null,
+            'modo' => $d['modo'] ?? null,
         ];
     }
     return $decisiones;
@@ -798,10 +940,12 @@ function renderListaCompraTexto(string $titulo, array $consolidado): string
     foreach ($consolidado['lineas'] as $l) {
         $compraTxt = '';
         if (!empty($l['compra'])) {
-            $yaLoTiene = $l['compra_decision'] && !$l['compra_decision']['comprar_paquete'];
-            $compraTxt = $yaLoTiene
-                ? ' [ya lo tienes, no se compra]'
-                : sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad']), $l['compra']['unidad']);
+            $modo = $l['compra_decision']['modo'] ?? 'paquete';
+            $compraTxt = match ($modo) {
+                'ya_tiene' => ' [ya lo tienes, no se compra]',
+                'exacto' => ' [comprar solo lo necesario, costo exacto]',
+                default => sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad']), $l['compra']['unidad']),
+            };
         }
         $lineas[] = sprintf('[ ] %s — %s %s (%s)%s', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']), $compraTxt);
     }

@@ -71,7 +71,30 @@ foreach ($catalogoIngredientes as $ci) {
         // (ej. mantequilla, harina) — le permite al JS convertir su costo
         // entre unidades de masa y de volumen. null para la mayoría.
         'densidad_g_ml' => $ci['densidad_g_ml'] !== null ? (float) $ci['densidad_g_ml'] : null,
+        // Gramos que pesa 1 "Unidad" de este ingrediente, cuando la tiene
+        // cargada (ej. fresa) — le permite al JS convertir su costo
+        // desde/hacia la unidad de conteo "Unidad". null para la mayoría.
+        'peso_unidad_g' => ($ci['peso_unidad_g'] ?? null) !== null ? (float) $ci['peso_unidad_g'] : null,
+        // Unidad de compra y cuántas unidades de uso trae (ej. Gelatina sin
+        // sabor: se usa por Cucharadita pero se compra por Paquete, y trae
+        // 3 cucharaditas) — le permite al JS convertir el costo también
+        // hacia/desde la unidad de compra, aunque no haya densidad ni peso
+        // por unidad cargados (ver convertirCantidadEntreUnidades() "caso
+        // 4" en includes/helpers.php). Es el mismo puente que ya existe
+        // siempre en el catálogo, ahora también disponible aquí.
+        'unidad_compra_id' => (int) $ci['unidad_compra_id'],
+        'contenido_por_compra' => (float) $ci['contenido_por_compra'],
     ];
+}
+// Id de la unidad de conteo "Unidad", para que el JS sepa cuándo aplicar el
+// puente peso_unidad_g (ver tipoYFactorDeUnidad() en includes/helpers.php,
+// misma idea del lado del servidor).
+$idUnidadConteo = null;
+foreach ($unidades as $u) {
+    if ($u['nombre'] === 'Unidad') {
+        $idUnidadConteo = (int) $u['id'];
+        break;
+    }
 }
 
 if ($id) {
@@ -538,6 +561,9 @@ require __DIR__ . '/../includes/layout_top.php';
   (function () {
     var CATALOGO = <?= json_encode($catalogoPorNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
     var UNIDADES_INFO = <?= json_encode($unidadesInfo, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    // Id de la unidad de conteo "Unidad" (o null si por algún motivo no
+    // existe en este catálogo de unidades) — ver tipoYFactorDeUnidadJs().
+    var ID_UNIDAD_CONTEO = <?= $idUnidadConteo !== null ? (int) $idUnidadConteo : 'null' ?>;
     var datalist = document.getElementById('catalogoIngredientesList');
     var modal = document.getElementById('modalNuevoIngrediente');
     var modalNombre = document.getElementById('modalIngNombre');
@@ -564,33 +590,75 @@ require __DIR__ . '/../includes/layout_top.php';
       return esEntera ? Math.ceil(cantidad - 0.0000001) : cantidad;
     }
 
+    // Igual que tipoYFactorDeUnidad() en includes/helpers.php: tipo_medida y
+    // factor_base EFECTIVOS de una unidad. Para casi cualquier unidad es lo
+    // que ya trae UNIDADES_INFO; la excepción es la unidad de conteo
+    // "Unidad", que por sí sola no tiene tamaño universal (una unidad de
+    // fresa no pesa lo mismo que una de guineo) — pero si el ingrediente
+    // tiene su propio "peso por unidad" cargado (pesoUnidadG), se trata como
+    // si fuera una unidad de masa cuyo factor_base es ese peso.
+    function tipoYFactorDeUnidadJs(idUnidad, pesoUnidadG) {
+      var u = UNIDADES_INFO[idUnidad];
+      if (!u) return { tipo: null, factor: 0 };
+      if (u.tipo_medida && u.factor_base) {
+        return { tipo: u.tipo_medida, factor: u.factor_base };
+      }
+      if (pesoUnidadG && ID_UNIDAD_CONTEO !== null && idUnidad === ID_UNIDAD_CONTEO) {
+        return { tipo: 'masa', factor: pesoUnidadG };
+      }
+      return { tipo: null, factor: 0 };
+    }
+
     // Igual que convertirCantidadEntreUnidades() en includes/helpers.php:
     // convierte una cantidad de una unidad a otra. Mismo tipo_medida (masa
     // con masa, o volumen con volumen) usa el factor universal de cada
     // unidad; tipo_medida distinto (masa vs. volumen) solo es posible si se
     // conoce la densidad (g/ml) de ESTE ingrediente en particular (una
     // cucharada de mantequilla no pesa lo mismo que una de harina) — sin
-    // ella, devuelve null.
-    function convertirCantidadEntreUnidadesJs(cantidadOrigen, idOrigen, idDestino, densidadGml) {
+    // ella, devuelve null. La unidad de conteo "Unidad" entra al mismo
+    // mecanismo vía tipoYFactorDeUnidadJs() cuando el ingrediente tiene su
+    // "peso por unidad" cargado (pesoUnidadG). idUnidadUsoCat/idUnidadCompraCat/
+    // contenidoPorCompra (opcionales): igual que $catalogo en la versión PHP
+    // — permiten además puentear directo entre la unidad de uso y la de
+    // compra del catálogo (ej. Gelatina sin sabor: Cucharadita <-> Paquete),
+    // encadenando hacia el resto cuando hace falta.
+    function convertirCantidadEntreUnidadesJs(cantidadOrigen, idOrigen, idDestino, densidadGml, pesoUnidadG, idUnidadUsoCat, idUnidadCompraCat, contenidoPorCompra) {
       if (!idOrigen || !idDestino) return null;
       if (idOrigen === idDestino) return cantidadOrigen;
-      var uo = UNIDADES_INFO[idOrigen], ud = UNIDADES_INFO[idDestino];
-      if (!uo || !ud || !uo.tipo_medida || !ud.tipo_medida) return null;
-      if (!uo.factor_base || !ud.factor_base) return null;
-      if (uo.tipo_medida === ud.tipo_medida) {
-        return cantidadOrigen * (uo.factor_base / ud.factor_base);
+
+      if (idUnidadUsoCat && idUnidadCompraCat && idUnidadUsoCat !== idUnidadCompraCat && contenidoPorCompra > 0) {
+        if (idOrigen === idUnidadCompraCat && idDestino === idUnidadUsoCat) {
+          return cantidadOrigen * contenidoPorCompra;
+        }
+        if (idOrigen === idUnidadUsoCat && idDestino === idUnidadCompraCat) {
+          return cantidadOrigen / contenidoPorCompra;
+        }
+        if (idOrigen === idUnidadCompraCat) {
+          return convertirCantidadEntreUnidadesJs(cantidadOrigen * contenidoPorCompra, idUnidadUsoCat, idDestino, densidadGml, pesoUnidadG);
+        }
+        if (idDestino === idUnidadCompraCat) {
+          var enUso = convertirCantidadEntreUnidadesJs(cantidadOrigen, idOrigen, idUnidadUsoCat, densidadGml, pesoUnidadG);
+          return enUso !== null ? enUso / contenidoPorCompra : null;
+        }
+      }
+
+      var origen = tipoYFactorDeUnidadJs(idOrigen, pesoUnidadG);
+      var destino = tipoYFactorDeUnidadJs(idDestino, pesoUnidadG);
+      if (!origen.tipo || !destino.tipo || !origen.factor || !destino.factor) return null;
+      if (origen.tipo === destino.tipo) {
+        return cantidadOrigen * (origen.factor / destino.factor);
       }
       if (!densidadGml) return null;
-      var base = cantidadOrigen * uo.factor_base; // gramos (masa) o ml (volumen)
+      var base = cantidadOrigen * origen.factor; // gramos (masa) o ml (volumen)
       var baseDestino;
-      if (uo.tipo_medida === 'masa' && ud.tipo_medida === 'volumen') {
+      if (origen.tipo === 'masa' && destino.tipo === 'volumen') {
         baseDestino = base / densidadGml;
-      } else if (uo.tipo_medida === 'volumen' && ud.tipo_medida === 'masa') {
+      } else if (origen.tipo === 'volumen' && destino.tipo === 'masa') {
         baseDestino = base * densidadGml;
       } else {
         return null;
       }
-      return baseDestino / ud.factor_base;
+      return baseDestino / destino.factor;
     }
 
     // Igual que convertirCostoPorUnidad() en includes/helpers.php: convierte
@@ -598,10 +666,10 @@ require __DIR__ . '/../includes/layout_top.php';
     // (ej. RD$/Gramo), apoyándose en convertirCantidadEntreUnidadesJs().
     // Devuelve null si no son convertibles automáticamente — ahí el costo
     // se ajusta a mano.
-    function convertirCostoPorUnidad(costoPorUnidadOrigen, idOrigen, idDestino, densidadGml) {
+    function convertirCostoPorUnidad(costoPorUnidadOrigen, idOrigen, idDestino, densidadGml, pesoUnidadG, idUnidadUsoCat, idUnidadCompraCat, contenidoPorCompra) {
       if (!idOrigen || !idDestino) return null;
       if (idOrigen === idDestino) return costoPorUnidadOrigen;
-      var equivalencia = convertirCantidadEntreUnidadesJs(1, idOrigen, idDestino, densidadGml);
+      var equivalencia = convertirCantidadEntreUnidadesJs(1, idOrigen, idDestino, densidadGml, pesoUnidadG, idUnidadUsoCat, idUnidadCompraCat, contenidoPorCompra);
       if (!equivalencia) return null;
       return costoPorUnidadOrigen / equivalencia;
     }
@@ -622,7 +690,9 @@ require __DIR__ . '/../includes/layout_top.php';
         var nombreInput = fila ? fila.querySelector('input[name="ing_nombre[]"]') : null;
         var datosFila = nombreInput ? CATALOGO[nombreInput.value.trim()] : null;
         var densidadFila = datosFila ? datosFila.densidad_g_ml : null;
-        var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo, densidadFila);
+        var pesoUnidadFila = datosFila ? datosFila.peso_unidad_g : null;
+        var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo, densidadFila, pesoUnidadFila,
+          datosFila ? datosFila.unidad_id : null, datosFila ? datosFila.unidad_compra_id : null, datosFila ? datosFila.contenido_por_compra : null);
         if (costoConvertido !== null) {
           inputCosto.value = costoConvertido.toFixed(2);
         }
@@ -697,7 +767,8 @@ require __DIR__ . '/../includes/layout_top.php';
       var inputCosto = fila.querySelector('input[name="ing_costo[]"]');
       var idUnidadFila = selectUnidad ? (parseInt(selectUnidad.value, 10) || null) : null;
       if (hiddenId) hiddenId.value = datos.id;
-      var costoConvertido = convertirCostoPorUnidad(datos.costo_unitario, datos.unidad_id, idUnidadFila, datos.densidad_g_ml);
+      var costoConvertido = convertirCostoPorUnidad(datos.costo_unitario, datos.unidad_id, idUnidadFila, datos.densidad_g_ml, datos.peso_unidad_g,
+        datos.unidad_id, datos.unidad_compra_id, datos.contenido_por_compra);
       if (costoConvertido !== null) {
         if (inputCosto) inputCosto.value = costoConvertido.toFixed(2);
         if (selectUnidad) selectUnidad.setAttribute('data-prev', idUnidadFila || '');

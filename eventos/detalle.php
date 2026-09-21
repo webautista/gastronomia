@@ -150,14 +150,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($accion === 'guardar_decision_compra') {
         requirePermission($usuarioActual, 'eventos_lista_compra', 'editar', $base);
         $catalogoId = intOrNull($_POST['catalogo_id'] ?? null);
-        $comprarPaquete = !empty($_POST['comprar_paquete']) ? 1 : 0;
+        $modo = in_array($_POST['modo'] ?? '', ['paquete', 'exacto', 'ya_tiene'], true) ? $_POST['modo'] : 'paquete';
+        $comprarPaquete = $modo === 'paquete' ? 1 : 0;
         $precioPaquete = isset($_POST['precio_paquete']) && $_POST['precio_paquete'] !== '' ? (float) $_POST['precio_paquete'] : null;
         if ($catalogoId && $precioPaquete !== null && $precioPaquete >= 0) {
             $pdo->prepare(
-                'INSERT INTO compra_decisiones (entidad_tipo, entidad_id, ingrediente_catalogo_id, comprar_paquete, precio_paquete)
-                 VALUES (\'evento\', ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE comprar_paquete = VALUES(comprar_paquete), precio_paquete = VALUES(precio_paquete)'
-            )->execute([$id, $catalogoId, $comprarPaquete, $precioPaquete]);
+                'INSERT INTO compra_decisiones (entidad_tipo, entidad_id, ingrediente_catalogo_id, comprar_paquete, modo, precio_paquete)
+                 VALUES (\'evento\', ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE comprar_paquete = VALUES(comprar_paquete), modo = VALUES(modo), precio_paquete = VALUES(precio_paquete)'
+            )->execute([$id, $catalogoId, $comprarPaquete, $modo, $precioPaquete]);
         }
     }
 
@@ -605,10 +606,12 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-name"><?= e($l['nombre']) ?></td>
             <td class="mono">
               <?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?>
-              <?php if (!empty($l['compra'])): $dc = $l['compra_decision']; ?>
+              <?php if (!empty($l['compra'])): $dc = $l['compra_decision']; $modo = $dc['modo'] ?? 'paquete'; ?>
                 <div class="cell-muted" style="font-size:.78rem;font-weight:400;margin-top:4px;">
-                  <?php if ($dc['comprar_paquete']): ?>
+                  <?php if ($modo === 'paquete'): ?>
                     comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?>
+                  <?php elseif ($modo === 'exacto'): ?>
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · comprar solo lo necesario
                   <?php else: ?>
                     <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
                   <?php endif; ?>
@@ -618,9 +621,11 @@ require __DIR__ . '/../includes/layout_top.php';
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                   <input type="hidden" name="accion" value="guardar_decision_compra">
                   <input type="hidden" name="catalogo_id" value="<?= (int) $l['catalogo_id'] ?>">
-                  <label style="font-size:.72rem;display:flex;align-items:center;gap:4px;" class="cell-muted">
-                    <input type="checkbox" name="comprar_paquete" value="1" <?= $dc['comprar_paquete'] ? 'checked' : '' ?>> Comprar
-                  </label>
+                  <select name="modo" style="font-size:.72rem;">
+                    <option value="paquete" <?= $modo === 'paquete' ? 'selected' : '' ?>>Comprar paquete completo</option>
+                    <option value="exacto" <?= $modo === 'exacto' ? 'selected' : '' ?>>Comprar solo lo necesario</option>
+                    <option value="ya_tiene" <?= $modo === 'ya_tiene' ? 'selected' : '' ?>>Ya lo tienes</option>
+                  </select>
                   <span class="cell-muted" style="font-size:.72rem;">RD$</span>
                   <input type="number" name="precio_paquete" min="0" step="0.01" value="<?= e((string) $dc['precio_paquete']) ?>" style="width:74px;font-size:.78rem;" title="Precio del paquete (editable)">
                   <button class="btn btn-secondary btn-sm" type="submit" style="font-size:.72rem;padding:2px 8px;">Guardar</button>
@@ -631,8 +636,12 @@ require __DIR__ . '/../includes/layout_top.php';
             <?php if ($puedeVerRecetasEnCompras): ?><td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td><?php endif; ?>
             <td class="mono">
               <?= money($l['monto']) ?>
-              <?php if (!empty($l['compra_decision']) && !$l['compra_decision']['comprar_paquete']): ?>
-                <div class="cell-muted" style="font-size:.72rem;font-weight:400;">ya lo tienes</div>
+              <?php if (!empty($l['compra_decision'])): $modoMonto = $l['compra_decision']['modo'] ?? 'paquete'; ?>
+                <?php if ($modoMonto === 'ya_tiene'): ?>
+                  <div class="cell-muted" style="font-size:.72rem;font-weight:400;">ya lo tienes</div>
+                <?php elseif ($modoMonto === 'exacto'): ?>
+                  <div class="cell-muted" style="font-size:.72rem;font-weight:400;">costo exacto, sin paquete</div>
+                <?php endif; ?>
               <?php endif; ?>
             </td>
           </tr>

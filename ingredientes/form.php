@@ -14,7 +14,7 @@ $unidades = db()->query('SELECT * FROM unidades_medida WHERE activo = 1 ORDER BY
 $ing = [
     'nombre' => '', 'categoria_id' => '', 'icono' => '', 'unidad_id' => '',
     'unidad_compra_id' => '', 'contenido_por_compra' => '1', 'precio_compra' => '',
-    'nota_compra' => '', 'densidad_g_ml' => '',
+    'nota_compra' => '', 'densidad_g_ml' => '', 'peso_unidad_g' => '', 'modo_compra_defecto' => '',
 ];
 $errores = [];
 
@@ -40,6 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ing['precio_compra'] = trim($_POST['precio_compra'] ?? '0');
     $ing['nota_compra'] = trim($_POST['nota_compra'] ?? '');
     $ing['densidad_g_ml'] = trim($_POST['densidad_g_ml'] ?? '');
+    $ing['peso_unidad_g'] = trim($_POST['peso_unidad_g'] ?? '');
+    $ing['modo_compra_defecto'] = trim($_POST['modo_compra_defecto'] ?? '');
 
     if ($ing['nombre'] === '') {
         $errores[] = 'El nombre es obligatorio.';
@@ -75,6 +77,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errores[] = 'La densidad, si se indica, debe ser mayor a 0.';
         }
     }
+    // Opcional también: solo hace falta cuando este ingrediente además se
+    // va a usar por Unidad (contado) en alguna receta (ej. "6 fresas
+    // grandes"), aparte de por peso o volumen. Vacío se guarda como NULL.
+    $pesoUnidadTexto = str_replace(',', '.', trim($ing['peso_unidad_g']));
+    $pesoUnidadG = null;
+    if ($pesoUnidadTexto !== '') {
+        $pesoUnidadG = (float) $pesoUnidadTexto;
+        if ($pesoUnidadG <= 0) {
+            $errores[] = 'El peso por unidad, si se indica, debe ser mayor a 0.';
+        }
+    }
+    // Opcional: vacío = 'paquete_completo' (comportamiento histórico, sin
+    // cambios) — solo se guarda 'cantidad_exacta' cuando este ingrediente NO
+    // se debe forzar a comprar por paquete/caja completa en la Lista de
+    // Compra (ej. Huevo).
+    $modoCompraDefecto = $ing['modo_compra_defecto'] === 'cantidad_exacta' ? 'cantidad_exacta' : null;
     if (!$errores) {
         $stmtDup = db()->prepare('SELECT id FROM ingredientes_catalogo WHERE nombre = ? AND id <> ?');
         $stmtDup->execute([$ing['nombre'], $id ?? 0]);
@@ -87,22 +105,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id) {
             $stmt = db()->prepare(
                 'UPDATE ingredientes_catalogo
-                 SET nombre=?, categoria_id=?, icono=?, unidad_id=?, unidad_compra_id=?, contenido_por_compra=?, precio_compra=?, nota_compra=?, densidad_g_ml=?
+                 SET nombre=?, categoria_id=?, icono=?, unidad_id=?, unidad_compra_id=?, contenido_por_compra=?, precio_compra=?, nota_compra=?, densidad_g_ml=?, peso_unidad_g=?, modo_compra_defecto=?
                  WHERE id=?'
             );
             $stmt->execute([
                 $ing['nombre'], $ing['categoria_id'], $ing['icono'] ?: null, $ing['unidad_id'],
-                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml, $id,
+                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml, $pesoUnidadG, $modoCompraDefecto, $id,
             ]);
             flash('Ingrediente actualizado.');
         } else {
             $stmt = db()->prepare(
-                'INSERT INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra, densidad_g_ml)
-                 VALUES (?,?,?,?,?,?,?,?,?)'
+                'INSERT INTO ingredientes_catalogo (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra, densidad_g_ml, peso_unidad_g, modo_compra_defecto)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)'
             );
             $stmt->execute([
                 $ing['nombre'], $ing['categoria_id'], $ing['icono'] ?: null, $ing['unidad_id'],
-                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml,
+                $unidadCompraFinal, $contenido, $precioCompra, $ing['nota_compra'] ?: null, $densidadGml, $pesoUnidadG, $modoCompraDefecto,
             ]);
             flash('Ingrediente agregado.');
         }
@@ -199,6 +217,29 @@ require __DIR__ . '/../includes/layout_top.php';
       <label for="densidad_g_ml">Densidad (gramos por mililitro)</label>
       <input type="number" step="any" min="0" id="densidad_g_ml" name="densidad_g_ml" placeholder="Ej. 0.9553" value="<?= e((string) ($ing['densidad_g_ml'] ?? '')) ?>">
       <div class="hint">Ej. 1 taza (236.6 ml) de mantequilla pesa ≈ 226 g → 226 ÷ 236.6 ≈ 0.9553.</div>
+    </div>
+
+    <h2 class="section-title" style="margin-top:22px;">Convertir también hacia "Unidad" contada (opcional)</h2>
+    <p class="cell-muted" style="font-size:.85rem;margin-top:-6px;">
+      Deja esto vacío casi siempre. Solo hace falta cuando este ingrediente además se va a escribir en alguna receta contado por "Unidad" (ej. "6 fresas grandes"), aparte de por peso o volumen — porque para convertir hacia/desde "Unidad" hace falta saber cuánto pesa UNA unidad de este ingrediente en particular (una fresa no pesa lo mismo que un guineo).
+    </p>
+    <div class="field" style="max-width:260px;">
+      <label for="peso_unidad_g">Peso de 1 Unidad (gramos)</label>
+      <input type="number" step="any" min="0" id="peso_unidad_g" name="peso_unidad_g" placeholder="Ej. 28" value="<?= e((string) ($ing['peso_unidad_g'] ?? '')) ?>">
+      <div class="hint">Ej. una fresa grande pesa ≈ 28 g.</div>
+    </div>
+
+    <h2 class="section-title" style="margin-top:22px;">Modo de compra en la Lista de Compra (opcional)</h2>
+    <p class="cell-muted" style="font-size:.85rem;margin-top:-6px;">
+      Solo importa cuando la unidad de compra es distinta de la de uso (arriba). Por defecto, si una receta necesita menos de una unidad de compra completa (ej. 3 huevos de un cartón de 30), la Lista de Compra asume que hay que comprar el paquete/caja completa a su precio. Elige "Comprar solo lo necesario" para ingredientes donde eso no tiene sentido — ej. el Huevo: el costo se queda en el costo exacto de las unidades que hacen falta, sin saltar al precio del cartón.
+    </p>
+    <div class="field" style="max-width:320px;">
+      <label for="modo_compra_defecto">Al sugerir compra, por defecto</label>
+      <select id="modo_compra_defecto" name="modo_compra_defecto">
+        <option value="" <?= ($ing['modo_compra_defecto'] ?? '') !== 'cantidad_exacta' ? 'selected' : '' ?>>Comprar el paquete/caja completa (por defecto)</option>
+        <option value="cantidad_exacta" <?= ($ing['modo_compra_defecto'] ?? '') === 'cantidad_exacta' ? 'selected' : '' ?>>Comprar solo lo necesario (costo exacto por unidad)</option>
+      </select>
+      <div class="hint">Esta es solo la sugerencia por defecto — en cada evento o práctica se puede seguir ajustando desde la pestaña de Lista de Compra.</div>
     </div>
 
     <div class="card" style="background:var(--surface-2);padding:12px 16px;margin-top:6px;">

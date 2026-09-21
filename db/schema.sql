@@ -164,15 +164,34 @@ INSERT IGNORE INTO acciones_ingrediente (nombre, orden) VALUES
 -- de los casos: una libra de carne se usa en libras), unidad_compra_id
 -- queda igual a unidad_id y contenido_por_compra en 1.
 --
--- Una columna más, densidad_g_ml, se agrega siempre desde setup.php (igual
--- razón que es_entera/tipo_medida/factor_base en unidades_medida: si
--- viviera aquí en el CREATE TABLE, una instalación nueva nacería ya
--- "migrada" y el UPDATE que siembra sus valores nunca correría). Es
--- opcional (NULL para la enorme mayoría de ingredientes) y solo hace falta
--- cuando un ingrediente necesita escribirse tanto en una unidad de masa
--- (Gramo, Libra...) como de volumen (Cucharada, Taza...) — ej. mantequilla,
--- harina: sin la densidad de ESE ingrediente en particular no hay forma de
--- saber cuántos gramos "es" una cucharada suya.
+-- Dos columnas más, densidad_g_ml y peso_unidad_g, se agregan siempre desde
+-- setup.php (igual razón que es_entera/tipo_medida/factor_base en
+-- unidades_medida: si vivieran aquí en el CREATE TABLE, una instalación
+-- nueva nacería ya "migrada" y el UPDATE que siembra sus valores nunca
+-- correría). Las dos son opcionales (NULL para la enorme mayoría de
+-- ingredientes) y sirven de puente cuando la conversión automática de
+-- tipo_medida/factor_base no alcanza porque no hay una equivalencia
+-- universal: densidad_g_ml hace falta cuando un ingrediente necesita
+-- escribirse tanto en una unidad de masa (Gramo, Libra...) como de volumen
+-- (Cucharada, Taza...) — ej. mantequilla, harina: sin la densidad de ESE
+-- ingrediente en particular no hay forma de saber cuántos gramos "es" una
+-- cucharada suya. peso_unidad_g hace falta cuando además necesita
+-- escribirse contado por la unidad de conteo "Unidad" — ej. fresas: sin el
+-- peso de UNA unidad de ese ingrediente en particular no hay forma de saber
+-- cuántos gramos "es" una unidad suya.
+--
+-- Una tercera columna, modo_compra_defecto, se agrega igual desde
+-- setup.php: ENUM('paquete_completo','cantidad_exacta') NULL. Cuando la
+-- unidad de compra de un ingrediente es distinta de la de uso (ej. Huevo:
+-- se usa por Unidad pero se compra por cartón/Paquete), la Lista de Compra
+-- por defecto asume que hay que comprar el paquete completo a su precio
+-- (NULL, o 'paquete_completo' explícito — comportamiento histórico, sin
+-- cambios). 'cantidad_exacta' es para ingredientes que ella NO quiere
+-- forzar a comprar por paquete/caja completa aunque haga falta menos —
+-- ahí el monto de la Lista de Compra se queda en el costo exacto ya
+-- prorrateado por unidad de uso, sin redondear a un paquete. Ver
+-- establecerModoCompraDefecto() en setup.php (siembra Huevo) y el docblock
+-- de listaCompraConsolidada() en includes/helpers.php.
 CREATE TABLE IF NOT EXISTS ingredientes_catalogo (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(120) NOT NULL,
@@ -745,6 +764,20 @@ CREATE TABLE IF NOT EXISTS gastos (
 -- (apuntan a eventos o practicas según el caso) en vez de dos columnas de
 -- llave foránea nulas, para que una sola UNIQUE KEY pueda garantizar que no
 -- haya dos decisiones para el mismo ingrediente en el mismo evento/práctica.
+--
+-- modo (agregada solo vía setup.php, NUNCA en este CREATE TABLE — mismo
+-- criterio que densidad_g_ml/peso_unidad_g en ingredientes_catalogo, para
+-- que una instalación nueva no la vea "ya migrada" y se salte el default):
+-- ENUM('paquete','exacto','ya_tiene') NULL. Reemplaza al viejo
+-- comprar_paquete booleano con un tercer estado — 'exacto' — para cuando NO
+-- se debe forzar la compra del paquete/caja completa aunque la unidad de
+-- compra sea distinta de la de uso (ej. Huevo: si solo hacen falta 3, el
+-- costo en la Lista de Compra debe quedarse a nivel de la unidad, no saltar
+-- al precio del cartón completo). NULL = no hay decisión guardada para este
+-- evento/práctica; ahí listaCompraConsolidada() usa comprar_paquete (para
+-- no alterar decisiones guardadas antes de que "modo" existiera) o, si
+-- tampoco hay nada guardado, el modo por defecto del ingrediente en el
+-- catálogo (ingredientes_catalogo.modo_compra_defecto).
 CREATE TABLE IF NOT EXISTS compra_decisiones (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     entidad_tipo ENUM('evento','practica') NOT NULL,
