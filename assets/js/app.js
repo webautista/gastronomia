@@ -128,4 +128,44 @@
       toggleTodas.textContent = hayAlgunaExpandida ? 'Expandir todo' : 'Colapsar todo';
     }
   });
+
+  /* Filtro por texto y categoría en el selector de "Agregar receta" (Eventos
+     y Prácticas): la lista de recetas disponibles ya viene completa en la
+     página, así que filtra en el navegador sin recargar — así una receta ya
+     marcada no se pierde mientras se sigue buscando otras. */
+  function normalizarTextoFiltro(s) {
+    return (s || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  function aplicarFiltroRecetas(origen) {
+    var wrap = origen.closest('[data-role="filtro-recetas-wrap"]');
+    if (!wrap) return;
+    var buscarInput = wrap.querySelector('[data-role="filtro-recetas-buscar"]');
+    var catSelect = wrap.querySelector('[data-role="filtro-recetas-categoria"]');
+    var texto = normalizarTextoFiltro(buscarInput ? buscarInput.value : '');
+    var catId = catSelect ? catSelect.value : '';
+    var filas = wrap.querySelectorAll('.check-row');
+    var visibles = 0;
+    filas.forEach(function (fila) {
+      var etiqueta = normalizarTextoFiltro((fila.getAttribute('data-nombre') || '') + ' ' + (fila.getAttribute('data-categoria') || ''));
+      var coincideTexto = !texto || etiqueta.indexOf(texto) !== -1;
+      var coincideCat = !catId || fila.getAttribute('data-cat') === catId;
+      var visible = coincideTexto && coincideCat;
+      fila.style.display = visible ? '' : 'none';
+      if (visible) visibles++;
+    });
+    var vacio = wrap.querySelector('[data-role="filtro-recetas-vacio"]');
+    if (vacio) vacio.style.display = visibles === 0 ? '' : 'none';
+  }
+
+  document.addEventListener('input', function (e) {
+    if (e.target.matches('[data-role="filtro-recetas-buscar"]')) {
+      aplicarFiltroRecetas(e.target);
+    }
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.matches('[data-role="filtro-recetas-categoria"]')) {
+      aplicarFiltroRecetas(e.target);
+    }
+  });
 })();

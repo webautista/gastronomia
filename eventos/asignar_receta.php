@@ -30,6 +30,15 @@ $stmt = db()->prepare(
 $stmt->execute([$id]);
 $disponibles = $stmt->fetchAll();
 
+// Categorías presentes entre las recetas todavía sin asignar, para el
+// filtro de arriba — solo las que de verdad hay algo que filtrar (sección
+// 29, pedido de Eyaelkys de poder filtrar y buscar en este selector).
+$categoriasDisponibles = [];
+foreach ($disponibles as $rc) {
+    $categoriasDisponibles[(int) $rc['categoria_id']] = $rc['categoria'];
+}
+asort($categoriasDisponibles);
+
 $pageTitle = 'Agregar recetas';
 $activeNav = 'eventos';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $id . '">' . e($evento['nombre']) . '</a> &nbsp;/&nbsp; <b>Agregar recetas</b>';
@@ -49,13 +58,30 @@ require __DIR__ . '/../includes/layout_top.php';
     <form method="post" action="detalle.php?id=<?= $id ?>&tab=recetas">
       <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
       <input type="hidden" name="accion" value="asignar_recetas">
-      <div class="check-list">
-        <?php foreach ($disponibles as $rc): ?>
-          <label class="check-row">
-            <input type="checkbox" name="receta_ids[]" value="<?= (int) $rc['id'] ?>">
-            <span><span class="cname"><?= e($rc['nombre']) ?></span><br><span class="csub"><?= e($rc['categoria']) ?> · base <?= (int) $rc['porciones_base'] ?> porciones</span></span>
-          </label>
-        <?php endforeach; ?>
+      <div data-role="filtro-recetas-wrap">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+          <div class="search" style="flex:1;min-width:180px;">
+            <?= icon('search') ?>
+            <input type="text" data-role="filtro-recetas-buscar" placeholder="Buscar receta...">
+          </div>
+          <?php if (count($categoriasDisponibles) > 1): ?>
+            <select data-role="filtro-recetas-categoria" style="max-width:220px;">
+              <option value="">Todas las categorías</option>
+              <?php foreach ($categoriasDisponibles as $catId => $catNombre): ?>
+                <option value="<?= (int) $catId ?>"><?= e($catNombre) ?></option>
+              <?php endforeach; ?>
+            </select>
+          <?php endif; ?>
+        </div>
+        <div class="check-list">
+          <?php foreach ($disponibles as $rc): ?>
+            <label class="check-row" data-nombre="<?= e($rc['nombre']) ?>" data-categoria="<?= e($rc['categoria']) ?>" data-cat="<?= (int) $rc['categoria_id'] ?>">
+              <input type="checkbox" name="receta_ids[]" value="<?= (int) $rc['id'] ?>">
+              <span><span class="cname"><?= e($rc['nombre']) ?></span><br><span class="csub"><?= e($rc['categoria']) ?> · base <?= (int) $rc['porciones_base'] ?> porciones</span></span>
+            </label>
+          <?php endforeach; ?>
+        </div>
+        <p class="cell-muted" data-role="filtro-recetas-vacio" style="display:none;margin-top:10px;">Ninguna receta coincide con el filtro.</p>
       </div>
       <div class="form-actions">
         <a class="btn btn-secondary" href="detalle.php?id=<?= $id ?>&tab=recetas">Cancelar</a>
