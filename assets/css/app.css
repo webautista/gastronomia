@@ -255,6 +255,7 @@ table.table{width:100%;border-collapse:collapse;}
 .ing-row{display:grid;grid-template-columns:0.55fr auto 2fr 1fr 0.7fr 0.8fr auto auto auto;gap:8px;margin-bottom:6px;align-items:center;}
 @media (max-width:600px){.ing-row{grid-template-columns:1fr 1fr;}}
 .ing-row input,.ing-row select{padding:7px 9px;font-size:.82rem;}
+.ing-row input[data-role="ing-cantidad"][readonly]{background:var(--bg);color:var(--text-tertiary);cursor:not-allowed;}
 .ing-row-labels{font-size:.7rem;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.02em;margin-bottom:2px;}
 @media (max-width:600px){.ing-row-labels{display:none;}}
 .ing-monto{font-size:.82rem;font-weight:600;text-align:right;color:var(--text);white-space:nowrap;}

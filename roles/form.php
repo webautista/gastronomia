@@ -13,7 +13,13 @@ requirePermission($usuarioActual, 'usuarios', $id ? 'editar' : 'crear', $base);
 // permisos por pestaña) — ver migrarPermisosGastosPorContexto() en
 // setup.php. La fila sigue en la base de datos, pero ya no se muestra ni
 // se guarda desde esta pantalla.
-$modulos = db()->query("SELECT * FROM modulos WHERE clave <> 'gastos' ORDER BY orden ASC")->fetchAll();
+// "ORDER BY orden ASC, id ASC": varios módulos comparten el mismo "orden" a
+// propósito (ej. "eventos_lista_compra" y "eventos_lista_compra_recetas")
+// para que el sub-permiso de una pantalla salga siempre justo debajo de
+// ella; el desempate por "id" hace que ese orden salga igual sin importar
+// si la base de datos es nueva o si el módulo se agregó después con una
+// actualización de setup.php.
+$modulos = db()->query("SELECT * FROM modulos WHERE clave <> 'gastos' ORDER BY orden ASC, id ASC")->fetchAll();
 $acciones = ['ver' => 'Ver', 'crear' => 'Crear', 'editar' => 'Editar', 'eliminar' => 'Eliminar'];
 
 $rol = ['nombre' => '', 'descripcion' => '', 'es_sistema' => 0];
@@ -171,7 +177,7 @@ require __DIR__ . '/../includes/layout_top.php';
     </table>
     </div>
     <?php if (!$rol['es_sistema']): ?>
-      <p class="cell-muted" style="font-size:.82rem;margin-top:8px;">Marcar Crear, Editar o Eliminar activa "Ver" automáticamente en esa pantalla. Las filas con "↳" son pestañas específicas dentro del detalle de un Evento o Práctica (independientes entre sí y entre Eventos/Prácticas) — en "Lista de Compra" solo Ver y Editar tienen efecto (Editar controla aceptar/rechazar la sugerencia de compra); Crear/Eliminar no aplican ahí.</p>
+      <p class="cell-muted" style="font-size:.82rem;margin-top:8px;">Marcar Crear, Editar o Eliminar activa "Ver" automáticamente en esa pantalla. Las filas con "↳" son pestañas específicas dentro del detalle de un Evento o Práctica (independientes entre sí y entre Eventos/Prácticas) — en "Lista de Compra" solo Ver y Editar tienen efecto (Editar controla aceptar/rechazar la sugerencia de compra); Crear/Eliminar no aplican ahí. "Recetas en Lista de Compra" es aparte: solo Ver tiene efecto, y controla si se muestra la columna con el nombre de las recetas dentro de esa lista — apágalo para un rol que no deba conocer el menú (ej. Padres), aunque sí pueda ver el resto de la Lista de Compra.</p>
     <?php endif; ?>
 
     <div class="form-actions">

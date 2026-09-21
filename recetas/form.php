@@ -357,7 +357,17 @@ require __DIR__ . '/../includes/layout_top.php';
         ?>
           <div class="ing-row-block" data-ing-row>
             <div class="ing-row">
-              <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= $esAlGusto ? '' : e((string) $ing['cantidad']) ?>" <?= $esAlGusto ? 'disabled' : '' ?>>
+              <!-- "Al gusto" deja este campo inerte con "readonly", nunca con
+                   "disabled": un campo disabled NO se manda en el POST, y como
+                   "ing_cantidad[]" es un array plano (sin índice explícito por
+                   fila), eso corre uno a la izquierda TODOS los valores de
+                   cantidad de las filas siguientes — el bug real reportado
+                   ("el ingrediente de abajo no guarda su costo"), porque su
+                   cantidad terminaba leyendo el valor de la fila equivocada
+                   (o ninguno, quedando en 0). "readonly" sí se envía (vacío),
+                   y el servidor igual fuerza cantidad=0 para una fila "al
+                   gusto" sin importar qué llegue. -->
+              <input type="number" step="any" name="ing_cantidad[]" placeholder="Cantidad" data-role="ing-cantidad" value="<?= $esAlGusto ? '' : e((string) $ing['cantidad']) ?>" <?= $esAlGusto ? 'readonly' : '' ?>>
               <label class="al-gusto-check"><input type="checkbox" data-role="ing-al-gusto-check" <?= $esAlGusto ? 'checked' : '' ?>> Al gusto</label>
               <input type="text" name="ing_nombre[]" placeholder="Ingrediente" list="catalogoIngredientesList" autocomplete="off" value="<?= e($ing['nombre']) ?>">
               <input type="hidden" name="ing_ingrediente_id[]" data-role="ing-id" value="<?= e((string) ($ing['ingrediente_id'] ?? '')) ?>">
@@ -763,7 +773,10 @@ require __DIR__ . '/../includes/layout_top.php';
         var inputCantidadAg = filaAg ? filaAg.querySelector('[data-role="ing-cantidad"]') : null;
         if (hiddenAg) hiddenAg.value = chkAlGusto.checked ? '1' : '0';
         if (inputCantidadAg) {
-          inputCantidadAg.disabled = chkAlGusto.checked;
+          // "readonly", no "disabled" — un campo disabled no se manda en el
+          // POST y rompe la alineación de "ing_cantidad[]" con las demás
+          // filas (ver el comentario junto a este campo en el HTML de arriba).
+          inputCantidadAg.readOnly = chkAlGusto.checked;
           if (chkAlGusto.checked) inputCantidadAg.value = '';
         }
         recalcularTotal();

@@ -597,6 +597,78 @@ function corregirUnidadUsoPasta(PDO $pdo): array
 }
 
 /**
+ * Cuarta ronda del mismo problema de "unidad de uso" mal modelada (ver
+ * corregirUnidadUsoEspecias, corregirUnidadUsoLimonMielVainilla,
+ * corregirUnidadUsoMantequillaGuineoAvena y corregirUnidadUsoPasta) —
+ * encontrada al preparar las 4 recetas nuevas de esta ronda (Mousse de
+ * chinola, Muffins de avena y guineo, Yogurt con frutas y granola,
+ * Brochetas de frutas):
+ * - "Fresa" quedó con unidad de uso = Paquete (450 g) desde la primera
+ *   tanda del catálogo — el mismo error ya corregido para Mantequilla,
+ *   Guineo y Avena en su momento (sección 6), pero que a Fresa no le había
+ *   tocado todavía porque hasta ahora ninguna receta real la necesitaba.
+ *   Las recetas nuevas la piden en dos formas distintas: "½ taza de
+ *   fresas" (Yogurt con frutas y granola) y "6 fresas grandes" (Brochetas
+ *   de frutas). Igual que con Limón verde/corteza de limón, se corrige la
+ *   unidad de uso a la más general de las dos (Taza — se mide en volumen
+ *   más seguido que se cuenta por unidad) y la necesidad puntual por
+ *   Unidad se resuelve con un costo calculado a mano en esa línea de la
+ *   receta (ver comentario junto a esa línea en sembrarRecetasReposteria3).
+ * - "Gelatina sin sabor" quedó con unidad de uso = Paquete (el sobre
+ *   completo) desde que se agregó al catálogo — otra receta real
+ *   (Mousse de chinola) la pide por cucharadita ("1½ cucharaditas"), no
+ *   por sobre entero.
+ * Guardado igual que las rondas anteriores: cada UPDATE solo corre si esa
+ * fila SIGUE en su unidad vieja, así que no pisa un ajuste manual hecho
+ * después desde Ingredientes, y una segunda corrida de setup.php ya no
+ * encuentra nada que cambiar.
+ */
+function corregirUnidadUsoFresaYGelatina(PDO $pdo): array
+{
+    $mensajes = [];
+    $idPaquete = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Paquete'")->fetchColumn();
+    $idTaza = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Taza'")->fetchColumn();
+    $idLibra = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Libra'")->fetchColumn();
+    $idCucharadita = $pdo->query("SELECT id FROM unidades_medida WHERE nombre='Cucharadita'")->fetchColumn();
+    if (!$idPaquete || !$idTaza || !$idLibra || !$idCucharadita) {
+        return $mensajes;
+    }
+
+    // "Fresa" también cambia su unidad de COMPRA (de Paquete de 450 g a
+    // Libra), porque el mejor precio de referencia encontrado (Fresas
+    // Selectas Criollas, Grupo CCN) se vende por libra, no por paquete.
+    $stmt = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, unidad_compra_id = ?, contenido_por_compra = 2.667, precio_compra = 149.25, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    $stmt->execute([
+        $idTaza, $idLibra,
+        'Fresas Selectas Criollas, mejor precio, RD$149.25/lb (supermercadosrd.com) ≈2.667 tazas/lb (170 g/taza, medidasrecetascocina.com)',
+        'Fresa', $idPaquete,
+    ]);
+    if ($stmt->rowCount() > 0) {
+        $mensajes[] = 'Ingrediente "Fresa": unidad de uso corregida de Paquete a Taza (antes el costo no se podía convertir al escribir una receta en tazas de fresa).';
+    }
+
+    $stmt2 = $pdo->prepare(
+        'UPDATE ingredientes_catalogo
+         SET unidad_id = ?, contenido_por_compra = 3, nota_compra = ?
+         WHERE nombre = ? AND unidad_id = ?'
+    );
+    $stmt2->execute([
+        $idCucharadita,
+        '1 sobre de gelatina sin sabor ≈ 1 cucharada ≈ 3 cucharaditas (equivalencia estándar de repostería)',
+        'Gelatina sin sabor', $idPaquete,
+    ]);
+    if ($stmt2->rowCount() > 0) {
+        $mensajes[] = 'Ingrediente "Gelatina sin sabor": unidad de uso corregida de Paquete a Cucharadita (antes el costo no se podía convertir al escribir una receta en cucharaditas de gelatina).';
+    }
+
+    return $mensajes;
+}
+
+/**
  * Siembra la densidad (gramos por mililitro) de los primeros ingredientes
  * que la necesitan: mantequilla y harina de trigo, que en una receta real
  * a veces se escriben por peso (gramos, libras) y otras por volumen
@@ -617,10 +689,13 @@ function establecerDensidadIngredientes(PDO $pdo): array
     }
     // nombre => [densidad g/ml, nota para el mensaje]
     $valores = [
-        'Mantequilla'     => [0.9553, '226 g por taza'],
-        'Harina de trigo' => [0.5072, '120 g por taza'],
-        'Azúcar blanca'   => [0.8369, '198 g por taza, azúcar granulada (King Arthur Baking)'],
-        'Nueces'          => [0.4776, '113 g por taza, nueces picadas (King Arthur Baking)'],
+        'Mantequilla'      => [0.9553, '226 g por taza'],
+        'Harina de trigo'  => [0.5072, '120 g por taza'],
+        'Azúcar blanca'    => [0.8369, '198 g por taza, azúcar granulada (King Arthur Baking)'],
+        'Nueces'           => [0.4776, '113 g por taza, nueces picadas (King Arthur Baking)'],
+        // Agregada al preparar "Mousse de chinola" (½ taza de crema para
+        // batir), que en el catálogo está por Libra.
+        'Crema para batir' => [1.0102, '239 g por taza, heavy cream/crema para batir (ref. cuporgram.com)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
@@ -628,6 +703,33 @@ function establecerDensidadIngredientes(PDO $pdo): array
         if ($stmt->rowCount() > 0) {
             $mensajes[] = "Ingrediente \"$nombre\": densidad agregada ($densidad g/ml, ref. $nota) para poder usarse tanto en gramo/libra/kilogramo como en cucharada/cucharadita/taza dentro de una receta.";
         }
+    }
+    return $mensajes;
+}
+
+/**
+ * Pedido de Eyaelkys: el catálogo de "acciones/cortes de preparación"
+ * (Cortado en cuadritos, Rallado, Cocido, etc. — sección 1) solo cubría
+ * formas de cortar o procesar un ingrediente, no en qué ESTADO de
+ * temperatura debe estar o quedar ("agua Hirviendo", "mantequilla a
+ * temperatura ambiente", "servir Frío"). Se agregan 5 estados de
+ * temperatura nuevos a ese mismo catálogo (misma tabla, mismo mecanismo de
+ * selección múltiple por línea de ingrediente) — "Congelado" no se repite
+ * porque ya existía desde la sección 1. INSERT IGNORE: seguro de correr
+ * de nuevo, no pisa ningún ajuste manual hecho desde Configuración.
+ */
+function agregarAccionesTemperatura(PDO $pdo): array
+{
+    $mensajes = [];
+    $antes = (int) $pdo->query('SELECT COUNT(*) FROM acciones_ingrediente')->fetchColumn();
+    $pdo->exec(
+        "INSERT IGNORE INTO acciones_ingrediente (nombre, orden) VALUES
+        ('Frío',200),('Caliente',210),('Hirviendo',220),('Templado',230),
+        ('A temperatura ambiente',240)"
+    );
+    $despues = (int) $pdo->query('SELECT COUNT(*) FROM acciones_ingrediente')->fetchColumn();
+    if ($despues > $antes) {
+        $mensajes[] = 'Catálogo de acciones de preparación: agregados ' . ($despues - $antes) . ' estados de temperatura (Frío, Caliente, Hirviendo, Templado, A temperatura ambiente).';
     }
     return $mensajes;
 }
@@ -1140,6 +1242,293 @@ function sembrarRecetasReposteria2(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Tercera tanda de recetas de repostería/postres, a pedido textual de
+ * Eyaelkys: Mousse de chinola, Muffins de avena y guineo, Yogurt con
+ * frutas y granola y Brochetas de frutas — igual que en
+ * sembrarRecetasReposteria2(), primero se agregan al catálogo los
+ * ingredientes nuevos que ninguna receta anterior necesitaba, y luego se
+ * crean las 4 recetas (cada una solo si su nombre no existe ya).
+ *
+ * Ingredientes nuevos en el catálogo, con su referencia de precio:
+ * - "Chinola" (fruta de la pasión): Sirena, RD$78.00/lb, mejor precio
+ *   comparado (Carrefour: RD$83.95/lb) (supermercadosrd.com). Se queda en
+ *   Libra (como se compra) porque la receta la pide en dos formas
+ *   distintas dentro de la MISMA receta (taza y unidad) — ver el costo a
+ *   mano de cada línea más abajo, igual que ya se hizo con Limón
+ *   verde/corteza y Zanahoria en sembrarRecetasReposteria2().
+ * - "Uvas": Jumbo Market, RD$138.00/lb, mejor precio comparado (Bravo:
+ *   RD$179.00/lb) (supermercadosrd.com). Unidad de uso: Taza directamente
+ *   (las dos recetas que la usan la piden siempre por taza).
+ * - "Granola": Granola Líder 350 g, RD$129.00, mejor precio comparado
+ *   (Merca Jumbo) (supermercadosrd.com). Unidad de uso: Taza.
+ * - "Yogurt natural (envase grande)": aparte del "Yogurt natural" ya en el
+ *   catálogo (un potecito individual, sección 1) porque esta receta lo
+ *   pide por peso (750 g) — Yogurt Litro Deliciel, natural o vainilla al
+ *   mismo precio, RD$150.00 (deliciel.com.do). Unidad de uso: Gramo.
+ * - "Capacillos para muffins", "Palitos de brocheta" y "Vasos
+ *   transparentes": no son comida — van en la categoría "Otro" (sección
+ *   22 ya la usó para casos así) — Simply Done, Simply Done y Sunny Pack
+ *   respectivamente (supermercadosrd.com).
+ *
+ * Líneas con costo calculado a mano (mismo criterio que en
+ * sembrarRecetasReposteria2, con la referencia citada junto a cada una):
+ * - "Chinola" en Taza (pulpa colada) y en Unidad (pulpa para decorar) —
+ *   peso de una chinola mediana ≈ 35-45 g, se usó 40 g (variedad morada,
+ *   ref. agritech.tnau.ac.in); 8 chinolas ≈ 1 taza de pulpa (ref.
+ *   missvickie.com).
+ * - "Fresa" en Unidad ("6 fresas grandes", Brochetas de frutas) — la
+ *   unidad de uso del catálogo se corrigió a Taza en
+ *   corregirUnidadUsoFresaYGelatina() porque esa es la forma más general
+ *   en que se usa una fresa en una receta, así que la necesidad puntual
+ *   por unidad (igual que Zanahoria) se resuelve a mano: peso de una
+ *   fresa grande ≈ 25-30 g (se usó 28 g, ref.
+ *   pasteleriamarianohernandez.es).
+ * - "Limón verde" en Unidad ("1 limón" entero para rociar sobre la fruta
+ *   cortada, Brochetas de frutas) — mismo costo ya calculado para
+ *   "Corteza de limón" en sembrarRecetasReposteria2 (RD$68/lb ÷ 13
+ *   limones/libra), porque es la misma equivalencia (1 limón = 1
+ *   cucharada de jugo = 1/13 de libra).
+ *
+ * Ninguna de las 4 recetas dio pie a duda sobre las porciones: las 3
+ * primeras dicen "6 porciones"/"6 unidades" tal cual, y "Brochetas de
+ * frutas" aclara "6 porciones" pero "12 brochetas" (2 por persona) — se
+ * usó 6 como porciones base, igual que las otras, con la nota de las 12
+ * brochetas en la preparación.
+ */
+function sembrarRecetasReposteria3(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $pdo->exec("INSERT IGNORE INTO ingredientes_catalogo
+        (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+        VALUES
+        ('Mango',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Fruta'),
+         '🥭',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         1, 34.00,
+         'RD\$34.00/unidad (supermercadosrd.com)'),
+        ('Chinola',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Fruta'),
+         '🟣',
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         1, 78.00,
+         'Mejor precio Sirena RD\$78/lb (Carrefour RD\$83.95), supermercadosrd.com. ≈43 g/chinola (agritech.tnau.ac.in); 8 chinolas≈1 taza pulpa (missvickie.com)'),
+        ('Uvas',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Fruta'),
+         '🍇',
+         (SELECT id FROM unidades_medida WHERE nombre='Taza'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         2.75, 138.00,
+         'Uvas Globe California, mejor precio Jumbo Market RD\$138.00/lb (Bravo RD\$179/lb), supermercadosrd.com ≈2.75 tazas/lb (165 g/taza, cookingconverter.com)'),
+        ('Granola',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'),
+         '🥣',
+         (SELECT id FROM unidades_medida WHERE nombre='Taza'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         2.92, 129.00,
+         'Granola Líder 350 g, mejor precio Merca Jumbo, RD\$129.00 (supermercadosrd.com) ≈2.92 tazas/paquete (120 g/taza, gramcups.com)'),
+        ('Yogurt natural (envase grande)',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'),
+         '🥛',
+         (SELECT id FROM unidades_medida WHERE nombre='Gramo'),
+         (SELECT id FROM unidades_medida WHERE nombre='Litro'),
+         1030, 150.00,
+         'Aparte del potecito individual: se usa por peso. Yogurt Litro Deliciel, natural o vainilla, mismo precio, RD\$150.00/L (deliciel.com.do) ≈1030 g/L'),
+        ('Capacillos para muffins',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Otro'),
+         '🧁',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         90, 84.95,
+         'Simply Done Paper Baking Liners 6.35 cm, paquete de 90 unidades, RD\$84.95 (comparador supermercadosrd.com)'),
+        ('Palitos de brocheta',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Otro'),
+         '🍢',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         250, 149.00,
+         'Palillos Grandes Para Picadera Simply Done, paquete de 250 unidades, mejor precio en Merca Jumbo, RD\$149.00 (supermercadosrd.com)'),
+        ('Vasos transparentes',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Otro'),
+         '🥤',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         25, 230.00,
+         'Envase Transparente Sunny Pack 8 Oz, paquete de 25 unidades, RD\$230.00 (comparador supermercadosrd.com)')");
+
+    $idPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    $idPanaderia = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Panadería');
+    if (!$idPostre || !$idPanaderia) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $crearReceta = function (int $categoriaId, string $nombre, int $porcionesBase, string $preparacion, array $lineas) use (
+        $pdo, $insLinea, $insAccion, $u, $ing, $accion, &$mensajes
+    ) {
+        $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+        $yaExiste->execute([$nombre]);
+        if ((int) $yaExiste->fetchColumn() > 0) {
+            return;
+        }
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?)');
+        $stmtR->execute([$nombre, $categoriaId, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+            $insLinea->execute([
+                $recetaId,
+                $catNombre ? $ing($catNombre) : null,
+                $nombreLinea,
+                $cantidad,
+                $u($unidadNombre),
+                $costo,
+                $reemplazo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = $accion($accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $mensajes[] = "Receta \"$nombre\" creada ($porcionesBase porciones base, " . count($lineas) . ' ingredientes).';
+    };
+
+    $crearReceta(
+        $idPostre,
+        'Mousse de chinola',
+        6,
+        "Sacar la pulpa de las chinolas y colarla para retirar las semillas.\n\n" .
+        "Colocar la gelatina sin sabor en las 3 cucharadas de agua. Dejar hidratar durante unos 5 minutos.\n\n" .
+        "Calentar suavemente la gelatina hidratada hasta que se disuelva. No dejar hervir.\n\n" .
+        "Licuar la leche condensada, la leche evaporada y ½ taza de pulpa de chinola.\n\n" .
+        "Incorporar la gelatina disuelta.\n\n" .
+        "Batir ligeramente la crema de leche y agregarla a la mezcla con movimientos envolventes.\n\n" .
+        "Distribuir en 6 vasitos.\n\n" .
+        "Refrigerar durante 3 horas como mínimo.\n\n" .
+        'Decorar con un poco de pulpa de chinola antes de servir. Si está muy ácida, pueden cocinarla brevemente con una cucharada de azúcar y dejarla enfriar.',
+        [
+            // Costo a mano: precio por libra de Chinola ÷ 453.6 g/libra × 40 g/chinola (promedio) × 8 chinolas/taza (ver nota_compra del catálogo).
+            ['Chinola', 'Pulpa de chinola colada', 0.5, 'Taza', 55.04, [], false, false, null],
+            ['Leche condensada', 'Leche condensada', 0.5, 'Lata', 110.00, [], false, false, null],
+            ['Leche evaporada', 'Leche evaporada', 0.5, 'Lata', 70.00, [], false, false, null],
+            ['Crema para batir', 'Crema de leche', 0.5, 'Taza', 62.80, ['Batido'], false, false, 'Crema de leche'],
+            ['Gelatina sin sabor', 'Gelatina sin sabor', 1.5, 'Cucharadita', 16.67, [], false, false, null],
+            ['Agua', 'Agua', 3, 'Cucharada', 0, [], false, false, null],
+            // Costo a mano: precio por libra de Chinola ÷ 453.6 g/libra × 40 g/chinola (promedio) (ver nota_compra del catálogo).
+            ['Chinola', 'Pulpa de 1 chinola para decorar', 1, 'Unidad', 6.88, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 1, 'Cucharada', 0.97, [], false, true, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPanaderia,
+        'Muffins de avena y guineo',
+        6,
+        "Precalentar el horno a 180 °C / 350 °F.\n\n" .
+        "Pelar los guineos y majarlos hasta formar un puré.\n\n" .
+        "Agregar el huevo, azúcar, leche, aceite y vainilla. Mezclar.\n\n" .
+        "En otro recipiente combinar la avena, harina, canela, polvo de hornear, bicarbonato y sal.\n\n" .
+        "Incorporar los ingredientes secos a los húmedos.\n\n" .
+        "Mezclar solamente hasta integrar; no batir demasiado.\n\n" .
+        "Colocar los capacillos en el molde para muffins.\n\n" .
+        "Llenar cada uno hasta aproximadamente ¾ de su capacidad.\n\n" .
+        "Hornear durante 18-22 minutos.\n\n" .
+        "Comprobar la cocción introduciendo un palillo en el centro. Si sale limpio, están listos.\n\n" .
+        'Dejar reposar unos 5 minutos antes de desmoldar.',
+        [
+            ['Guineo', 'Guineo maduro', 2, 'Unidad', 3.80, ['Machacado'], false, false, null],
+            ['Avena', 'Avena en hojuelas', 0.75, 'Taza', 8.49, [], false, false, null],
+            ['Harina de trigo', 'Harina de trigo', 0.5, 'Taza', 7.51, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Leche entera', 'Leche', 0.25, 'Taza', 17.76, [], false, false, null],
+            ['Aceite vegetal', 'Aceite vegetal', 3, 'Cucharada', 2.21, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar crema o blanca', 0.25, 'Taza', 15.50, [], false, false, 'Azúcar crema'],
+            ['Vainilla negra', 'Vainilla', 0.5, 'Cucharadita', 0.60, [], false, false, null],
+            ['Canela en polvo', 'Canela en polvo', 0.5, 'Cucharadita', 3.80, [], false, false, null],
+            ['Polvo de hornear', 'Polvo de hornear', 1, 'Cucharadita', 2.50, [], false, false, null],
+            ['Bicarbonato de sodio', 'Bicarbonato de sodio', 0.25, 'Cucharadita', 1.04, [], false, false, null],
+            // Costo a mano: costo por cucharadita de Sal ÷ 16 (1 pizca = 1/16 cucharadita).
+            ['Sal', 'Sal', 1, 'Pizca', 0.01, [], false, false, null],
+            ['Capacillos para muffins', 'Capacillos para muffins', 6, 'Unidad', 0.94, [], false, false, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPostre,
+        'Yogurt con frutas y granola',
+        6,
+        "Lavar y desinfectar correctamente las frutas.\n\n" .
+        "Pelar el mango y el guineo.\n\n" .
+        "Cortar todas las frutas en trozos pequeños.\n\n" .
+        "Colocar aproximadamente 2 cucharadas de yogurt en el fondo de cada vaso.\n\n" .
+        "Agregar una capa de frutas.\n\n" .
+        "Añadir otra capa de yogurt.\n\n" .
+        "Colocar más frutas encima.\n\n" .
+        "Agregar la granola justo antes de servir para evitar que se ablande.\n\n" .
+        "Terminar con un pequeño hilo de miel, si desean.\n\n" .
+        'Presentación sugerida: Yogurt → frutas → yogurt → frutas → granola → miel.',
+        [
+            ['Yogurt natural (envase grande)', 'Yogurt natural o de vainilla', 750, 'Gramo', 0.15, [], false, false, 'Yogurt de vainilla'],
+            ['Granola', 'Granola', 1, 'Taza', 44.18, [], false, false, null],
+            ['Guineo', 'Guineo', 1, 'Unidad', 3.80, ['Cortado en trozos'], false, false, null],
+            ['Mango', 'Mango', 0.5, 'Unidad', 34.00, ['Cortado en trozos'], false, false, null],
+            ['Fresa', 'Fresas', 0.5, 'Taza', 55.97, ['Cortado en trozos'], false, false, null],
+            ['Uvas', 'Uvas', 0.5, 'Taza', 50.18, ['Cortado en mitades'], false, false, null],
+            ['Miel de abeja', 'Miel', 2, 'Cucharada', 11.82, [], false, true, null],
+            ['Vasos transparentes', 'Vasos transparentes', 6, 'Unidad', 9.20, [], false, false, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPostre,
+        'Brochetas de frutas',
+        6,
+        "Consideración: 2 brochetas pequeñas por persona, para un total de 12 brochetas.\n\n" .
+        "Lavar y desinfectar las frutas.\n\n" .
+        "Pelar el mango, la piña y el guineo.\n\n" .
+        "Cortar mango, piña, manzana y guineo en trozos aproximadamente del mismo tamaño.\n\n" .
+        "Cortar las fresas por la mitad si son grandes.\n\n" .
+        "Rociar ligeramente la manzana y el guineo con jugo de limón para retrasar la oxidación.\n\n" .
+        "Armar las brochetas alternando colores y frutas. Por ejemplo: fresa → mango → uva → piña → guineo → manzana.\n\n" .
+        'Colocarlas en una bandeja, cubrirlas y mantenerlas refrigeradas hasta el momento de servir.',
+        [
+            ['Mango', 'Mango', 0.5, 'Unidad', 34.00, ['Cortado en trozos'], false, false, null],
+            ['Piña', 'Piña', 0.25, 'Unidad', 90.00, ['Cortado en trozos'], false, false, null],
+            ['Guineo', 'Guineo', 1, 'Unidad', 3.80, ['Cortado en trozos'], false, false, null],
+            ['Uvas', 'Uvas', 1, 'Taza', 50.18, [], false, false, null],
+            // Costo a mano: precio por libra de Fresa ÷ 453.6 g/libra × 28 g/fresa grande (ver nota_compra del catálogo).
+            ['Fresa', 'Fresas grandes', 6, 'Unidad', 9.21, ['Cortado en mitades'], false, false, null],
+            ['Manzana', 'Manzana', 1, 'Unidad', 40.00, ['Cortado en trozos'], false, false, null],
+            // Costo a mano: mismo cálculo que "Corteza de limón" en sembrarRecetasReposteria2 (RD$68/lb ÷ 13 limones/libra).
+            ['Limón verde', 'Limón (para rociar sobre la fruta cortada)', 1, 'Unidad', 5.23, [], false, false, null],
+            ['Palitos de brocheta', 'Palitos de brocheta', 12, 'Unidad', 0.60, [], false, false, null],
+        ]
+    );
+
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -1178,7 +1567,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, corregirUnidadUsoLimonMielVainilla($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoMantequillaGuineoAvena($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoPasta($pdo));
+        $mensajes = array_merge($mensajes, corregirUnidadUsoFresaYGelatina($pdo));
         $mensajes = array_merge($mensajes, establecerDensidadIngredientes($pdo));
+        $mensajes = array_merge($mensajes, agregarAccionesTemperatura($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAPracticas($pdo));
         $mensajes = array_merge($mensajes, renombrarModuloGastos($pdo));
         // Orden importante: primero se siembran los valores nuevos que
@@ -1193,6 +1584,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, migrarPermisosGastosPorContexto($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria1($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria2($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasReposteria3($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

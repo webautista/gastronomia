@@ -22,6 +22,10 @@ $puedeEditarRecetaTab = can($usuarioActual, 'eventos_recetas', 'editar');
 $puedeEliminarRecetaTab = can($usuarioActual, 'eventos_recetas', 'eliminar');
 $puedeVerCompras = can($usuarioActual, 'eventos_lista_compra', 'ver');
 $puedeEditarCompras = can($usuarioActual, 'eventos_lista_compra', 'editar');
+// Columna "Recetas" dentro de Lista de Compra (qué receta usa cada
+// ingrediente): permiso aparte porque revela el menú aunque el rol no vea
+// la pestaña Recetas — ver nota en db/schema.sql junto a este módulo.
+$puedeVerRecetasEnCompras = can($usuarioActual, 'eventos_lista_compra_recetas', 'ver');
 $puedeVerGastos = can($usuarioActual, 'eventos_gastos', 'ver');
 $puedeCrearGasto = can($usuarioActual, 'eventos_gastos', 'crear');
 $puedeEditarGasto = can($usuarioActual, 'eventos_gastos', 'editar');
@@ -591,10 +595,10 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="card">
     <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Ingrediente</th><th>Cantidad</th><th>Recetas</th><th>Costo est.</th></tr></thead>
+      <thead><tr><th>Ingrediente</th><th>Cantidad</th><?php if ($puedeVerRecetasEnCompras): ?><th>Recetas</th><?php endif; ?><th>Costo est.</th></tr></thead>
       <tbody>
         <?php if (!$consolidado['lineas'] && !$consolidado['al_gusto']): ?>
-          <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay recetas asignadas a este evento.</td></tr>
+          <tr><td colspan="<?= $puedeVerRecetasEnCompras ? 4 : 3 ?>" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay recetas asignadas a este evento.</td></tr>
         <?php endif; ?>
         <?php foreach ($consolidado['lineas'] as $l): ?>
           <tr>
@@ -624,7 +628,7 @@ require __DIR__ . '/../includes/layout_top.php';
                 <?php endif; ?>
               <?php endif; ?>
             </td>
-            <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td>
+            <?php if ($puedeVerRecetasEnCompras): ?><td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td><?php endif; ?>
             <td class="mono">
               <?= money($l['monto']) ?>
               <?php if (!empty($l['compra_decision']) && !$l['compra_decision']['comprar_paquete']): ?>
@@ -637,14 +641,14 @@ require __DIR__ . '/../includes/layout_top.php';
           <tr>
             <td class="cell-name"><?= e($ag['nombre']) ?> <span class="chip chip-muted" style="font-size:.68rem;">Al gusto</span></td>
             <td class="cell-muted mono">—</td>
-            <td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $ag['recetas'])) ?></td>
+            <?php if ($puedeVerRecetasEnCompras): ?><td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $ag['recetas'])) ?></td><?php endif; ?>
             <td class="cell-muted mono">—</td>
           </tr>
         <?php endforeach; ?>
       </tbody>
       <?php if ($consolidado['lineas']): ?>
       <tfoot>
-        <tr><td colspan="3" style="text-align:right;font-weight:600;">Costo estimado total</td><td class="mono" style="font-weight:600;"><?= money($consolidado['total']) ?></td></tr>
+        <tr><td colspan="<?= $puedeVerRecetasEnCompras ? 3 : 2 ?>" style="text-align:right;font-weight:600;">Costo estimado total</td><td class="mono" style="font-weight:600;"><?= money($consolidado['total']) ?></td></tr>
       </tfoot>
       <?php endif; ?>
     </table>

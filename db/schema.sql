@@ -454,12 +454,23 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 -- se muestra a cualquiera que pueda ver el evento, sin permiso aparte.
 ('eventos_recetas', 'Recetas', 21),
 ('eventos_lista_compra', 'Lista de Compra', 22),
+-- Dentro de la Lista de Compra hay una columna aparte ("Recetas") que dice
+-- en qué receta(s) se usa cada ingrediente — eso por sí solo revela el menú
+-- aunque el rol no tenga acceso a la pestaña Recetas (el caso de Padres:
+-- podía ver Lista de Compra para el estado de pagos/gastos, pero esa
+-- columna le mostraba el nombre de las recetas igual, rompiendo el
+-- "secreto" del evento). Se controla con un módulo aparte (mismo orden que
+-- "eventos_lista_compra" para que salga justo debajo en Usuarios y roles →
+-- Roles) donde solo "Ver" tiene efecto: si el rol no lo tiene, la columna
+-- "Recetas" no se muestra en absoluto, el resto de la pestaña sigue igual.
+('eventos_lista_compra_recetas', 'Recetas en Lista de Compra', 22),
 ('eventos_gastos', 'Gastos', 23),
 ('eventos_estudiantes', 'Estudiantes y pagos', 24),
 ('practicas', 'Prácticas', 25),
 -- Lo mismo, pero para el detalle de una Práctica.
 ('practicas_recetas', 'Recetas', 26),
 ('practicas_lista_compra', 'Lista de Compra', 27),
+('practicas_lista_compra_recetas', 'Recetas en Lista de Compra', 27),
 ('practicas_gastos', 'Gastos', 28),
 ('practicas_estudiantes', 'Estudiantes y pagos', 29),
 -- "gastos" queda en desuso a partir de esta versión (ver "eventos_gastos" y
