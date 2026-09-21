@@ -24,7 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 $busqueda = trim($_GET['q'] ?? '');
 
 $sql = 'SELECT p.*,
-          (SELECT COUNT(*) FROM practica_receta pr WHERE pr.practica_id = p.id) AS num_recetas
+          (SELECT COUNT(*) FROM practica_receta pr WHERE pr.practica_id = p.id) AS num_recetas,
+          (SELECT COALESCE(SUM(pe.monto_pagado),0) FROM practica_estudiante pe WHERE pe.practica_id = p.id) AS recaudado
         FROM practicas p';
 $params = [];
 if ($busqueda !== '') {
@@ -41,9 +42,12 @@ $puedeVerGastos = can($usuarioActual, 'practicas_gastos', 'ver');
 
 // El costo estimado de materiales se calcula aquí igual que en el detalle
 // (misma lista de compra consolidada), para que el listado muestre el
-// mismo número que verían al entrar a la práctica. La cuota se calcula
-// igual que en eventos/index.php: costo de materiales (o el gasto real si
-// ya lo superó) más otros gastos, dividido entre los estudiantes asignados.
+// mismo número que verían al entrar a la práctica. La cuota y el progreso
+// de recaudo se calculan igual que en eventos/index.php: costo de
+// materiales (o el gasto real si ya lo superó) más otros gastos, dividido
+// entre los estudiantes asignados — con la misma barra de progreso
+// (.meter/meterClase()) que ya se usa ahí, para poder ver de un vistazo
+// cuánto se ha pagado sin tener que entrar a cada práctica.
 foreach ($practicas as &$p) {
     $p['costo_materiales'] = costoRecetasConsolidado(db(), 'practica', (int) $p['id']);
 
@@ -53,7 +57,13 @@ foreach ($practicas as &$p) {
 
     $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
     $cuotas = calcularCuotas($p['costo_materiales'], $resumenGastos, $p['num_estudiantes']);
+    $p['cuota_proyectada'] = $cuotas['proyectada'];
     $p['cuota_confirmada'] = $cuotas['confirmada'];
+    $p['total_confirmado'] = $cuotas['total_confirmado'];
+
+    $stmtPag = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ? AND monto_pagado >= ?');
+    $stmtPag->execute([(int) $p['id'], $cuotas['confirmada'] - 0.005]);
+    $p['num_pagados'] = (int) $stmtPag->fetchColumn();
 }
 unset($p);
 
@@ -103,7 +113,13 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="mini-row"><span>Costo estimado de materiales</span><span class="mono"><?= money($p['costo_materiales']) ?></span></div>
           <?php if ($p['num_estudiantes'] > 0): ?>
             <div class="mini-row"><span>Estudiantes asignados</span><span class="mono"><?= (int) $p['num_estudiantes'] ?></span></div>
+            <div class="mini-row"><span>Cuota proyectada</span><span class="mono"><?= money($p['cuota_proyectada']) ?></span></div>
             <div class="mini-row"><span>Cuota confirmada</span><span class="mono"><?= money($p['cuota_confirmada']) ?></span></div>
+            <div>
+              <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($p['recaudado']) ?> / <?= money($p['total_confirmado']) ?></span></div>
+              <div class="meter <?= meterClase($p['total_confirmado'] > 0 ? round($p['recaudado'] / $p['total_confirmado'] * 100) : 0) ?>"><span style="width:<?= $p['total_confirmado'] > 0 ? min(round($p['recaudado'] / $p['total_confirmado'] * 100), 100) : 0 ?>%"></span></div>
+            </div>
+            <div class="mini-row"><span>Estudiantes al día</span><span><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?></span></div>
           <?php elseif ($puedeVerGastos): ?>
             <div class="mini-row"><span>Cuota</span><span class="cell-muted">Asigna estudiantes para calcularla</span></div>
           <?php endif; ?>

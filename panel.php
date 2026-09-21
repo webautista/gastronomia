@@ -56,6 +56,32 @@ foreach ($eventos as $ev) {
     $pendMonto += $pendientes * $ev['cuota_confirmada'];
 }
 
+// Mismo resumen que arriba para Eventos, pero para Prácticas — no tienen
+// estado_id (no aplica "Finalizado"/"Planificado" a una práctica), así que
+// la tabla muestra Materia en su lugar. El resto (presupuesto usado, cuota
+// y pagos) se calcula exactamente igual que en practicas/index.php.
+$stmt = db()->query(
+    'SELECT p.*,
+       (SELECT COUNT(*) FROM practica_estudiante pe WHERE pe.practica_id = p.id) AS num_estudiantes
+     FROM practicas p
+     ORDER BY p.fecha ASC'
+);
+$practicas = $stmt->fetchAll();
+
+foreach ($practicas as &$p) {
+    $costoMateriales = costoRecetasConsolidado(db(), 'practica', (int) $p['id']);
+    $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
+    $cuotas = calcularCuotas($costoMateriales, $resumenGastos, (int) $p['num_estudiantes']);
+    $p['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
+    $p['presupuesto_total'] = $cuotas['total_proyeccion'];
+    $p['cuota_confirmada'] = $cuotas['confirmada'];
+
+    $stmtPag = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ? AND monto_pagado >= ?');
+    $stmtPag->execute([(int) $p['id'], $cuotas['confirmada'] - 0.005]);
+    $p['num_pagados'] = (int) $stmtPag->fetchColumn();
+}
+unset($p);
+
 $pageTitle = 'Panel general';
 $activeNav = 'panel';
 require __DIR__ . '/includes/layout_top.php';
@@ -118,6 +144,38 @@ require __DIR__ . '/includes/layout_top.php';
             <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
           </td>
           <td class="cell-muted"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?> pagado<?= $ev['num_pagados'] == 1 ? '' : 's' ?></td>
+        </tr>
+      <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+  <?php endif; ?>
+</div>
+
+<div class="card card-pad" style="margin-top:18px;">
+  <h2 class="section-title">Prácticas</h2>
+  <?php if (!$practicas): ?>
+    <div class="empty"><?= icon('boxEmpty') ?>
+      <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Aún no hay prácticas</div>
+      <div>Crea tu primera práctica para empezar a planificarla.</div>
+    </div>
+  <?php else: ?>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Práctica</th><th>Fecha</th><th>Materia</th><th>Presupuesto usado</th><th>Pagos</th></tr></thead>
+    <tbody>
+      <?php foreach ($practicas as $p):
+        $pct = $p['presupuesto_total'] > 0 ? round($p['gastado'] / $p['presupuesto_total'] * 100) : 0;
+      ?>
+        <tr style="cursor:pointer;" onclick="window.location='practicas/detalle.php?id=<?= (int) $p['id'] ?>'">
+          <td class="cell-name"><?= e($p['nombre']) ?></td>
+          <td class="cell-muted"><?= fmtDate($p['fecha']) ?></td>
+          <td class="cell-muted"><?= $p['materia'] ? e($p['materia']) : '—' ?></td>
+          <td style="min-width:150px;">
+            <div class="meter-row"><span><?= money($p['gastado']) ?></span><span><?= (int) $pct ?>%</span></div>
+            <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
+          </td>
+          <td class="cell-muted"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?> pagado<?= $p['num_pagados'] == 1 ? '' : 's' ?></td>
         </tr>
       <?php endforeach; ?>
     </tbody>
