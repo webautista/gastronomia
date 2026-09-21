@@ -561,6 +561,35 @@ require __DIR__ . '/../includes/layout_top.php';
   (function () {
     var CATALOGO = <?= json_encode($catalogoPorNombre, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
     var UNIDADES_INFO = <?= json_encode($unidadesInfo, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    // Índice de CATALOGO por nombre normalizado (sin acentos, mayúsculas ni
+    // espacios de más) — mismo criterio que normalizarNombreIngrediente()
+    // en includes/helpers.php. Permite reconocer un nombre escrito a mano
+    // que no coincide EXACTO con el catálogo (un acento distinto, "uva" en
+    // vez de "Uvas", un espacio de más) para no dejar la línea sin
+    // enlazar al ingrediente — motivo real del bug reportado con Uvas
+    // (sección 28): si de verdad hay más de un ingrediente del catálogo
+    // con el mismo nombre normalizado, no se adivina (se deja sin enlazar,
+    // igual que antes).
+    function normalizarNombreJs(nombre) {
+      return (nombre || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+    var CATALOGO_NORM = {};
+    Object.keys(CATALOGO).forEach(function (nombreCat) {
+      var norm = normalizarNombreJs(nombreCat);
+      if (!norm) return;
+      if (!CATALOGO_NORM[norm]) CATALOGO_NORM[norm] = [];
+      CATALOGO_NORM[norm].push(nombreCat);
+    });
+    function buscarEnCatalogo(nombre) {
+      if (Object.prototype.hasOwnProperty.call(CATALOGO, nombre)) return CATALOGO[nombre];
+      var candidatos = CATALOGO_NORM[normalizarNombreJs(nombre)] || [];
+      return candidatos.length === 1 ? CATALOGO[candidatos[0]] : null;
+    }
     // Id de la unidad de conteo "Unidad" (o null si por algún motivo no
     // existe en este catálogo de unidades) — ver tipoYFactorDeUnidadJs().
     var ID_UNIDAD_CONTEO = <?= $idUnidadConteo !== null ? (int) $idUnidadConteo : 'null' ?>;
@@ -688,7 +717,7 @@ require __DIR__ . '/../includes/layout_top.php';
       if (inputCosto && idAnterior && idNuevo && idAnterior !== idNuevo) {
         var costoActual = parseFloat(inputCosto.value) || 0;
         var nombreInput = fila ? fila.querySelector('input[name="ing_nombre[]"]') : null;
-        var datosFila = nombreInput ? CATALOGO[nombreInput.value.trim()] : null;
+        var datosFila = nombreInput ? buscarEnCatalogo(nombreInput.value.trim()) : null;
         var densidadFila = datosFila ? datosFila.densidad_g_ml : null;
         var pesoUnidadFila = datosFila ? datosFila.peso_unidad_g : null;
         var costoConvertido = convertirCostoPorUnidad(costoActual, idAnterior, idNuevo, densidadFila, pesoUnidadFila,
@@ -729,7 +758,7 @@ require __DIR__ . '/../includes/layout_top.php';
     }
 
     function autocompletarFila(fila, nombreExacto) {
-      var datos = CATALOGO[nombreExacto];
+      var datos = buscarEnCatalogo(nombreExacto);
       var hiddenId = fila.querySelector('[data-role="ing-id"]');
       var selectUnidad = fila.querySelector('select[name="ing_unidad_id[]"]');
       var inputCosto = fila.querySelector('input[name="ing_costo[]"]');
@@ -757,7 +786,7 @@ require __DIR__ . '/../includes/layout_top.php';
     function actualizarDesdeCatalogo(fila) {
       var nombreInput = fila.querySelector('input[name="ing_nombre[]"]');
       var nombre = nombreInput ? nombreInput.value.trim() : '';
-      var datos = nombre ? CATALOGO[nombre] : null;
+      var datos = nombre ? buscarEnCatalogo(nombre) : null;
       if (!datos) {
         window.alert('Este nombre no coincide con ningún ingrediente activo del catálogo, así que no se puede actualizar automáticamente. Revisa que esté escrito igual que en Ingredientes.');
         return;

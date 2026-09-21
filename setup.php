@@ -741,6 +741,12 @@ function establecerDensidadIngredientes(PDO $pdo): array
         // Gramo/Libra/Kilogramo además de en Taza (ver
         // establecerPesoUnidadIngredientes() para el puente hacia Unidad).
         'Fresa' => [0.7083, '170 g por taza, fresas enteras (medidasrecetascocina.com)'],
+        // Agregada a pedido de Eyaelkys (sección 28): sus dos recetas de
+        // Piña quedaban en unidades sin ningún puente conocido (Unidad y
+        // Taza) — el catálogo de Piña compra y usa por Unidad, así que este
+        // valor es el que permite llegar hasta Taza (ver
+        // establecerPesoUnidadIngredientes() para el puente Unidad↔gramo).
+        'Piña' => [0.6875, '165 g por taza de piña picada (USDA FoodData Central)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
@@ -753,8 +759,9 @@ function establecerDensidadIngredientes(PDO $pdo): array
 }
 
 /**
- * Siembra, para el primer ingrediente que lo necesita (Fresa), cuántos
- * gramos pesa 1 "Unidad" de ese ingrediente en particular — el mismo tipo
+ * Siembra, para cada ingrediente que lo necesita (Fresa, y desde la
+ * sección 28 también Piña), cuántos gramos pesa 1 "Unidad" de ese
+ * ingrediente en particular — el mismo tipo
  * de puente que establecerDensidadIngredientes() ya usa para masa↔volumen
  * (ver esa función más arriba), pero para convertir el costo entre la
  * unidad de conteo "Unidad" y las unidades de masa/volumen del catálogo.
@@ -779,6 +786,13 @@ function establecerPesoUnidadIngredientes(PDO $pdo): array
         // con este valor, esa misma línea ya se podría cargar hoy con el
         // costo calculado solo por la aplicación, en vez de a mano.
         'Fresa' => [28.0, '28 g por fresa grande (ref. pasteleriamarianohernandez.es)'],
+        // Piña — 1 Unidad (1 piña) se estima en 4 tazas de pulpa picada una
+        // vez pelada y descorazonada (≈660 g a 165 g/taza, ver densidad
+        // arriba) — cifra de referencia (howmuchisin.com cita 3 a 4.5 tazas
+        // según el tamaño de la fruta); si el rendimiento real de las piñas
+        // que compra Eyaelkys es distinto, este valor se puede ajustar
+        // desde Ingredientes sin tocar código.
+        'Piña' => [660.0, '4 tazas de pulpa por piña a 165 g/taza (USDA FoodData Central; rendimiento por fruta: howmuchisin.com)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET peso_unidad_g = ? WHERE nombre = ? AND peso_unidad_g IS NULL');
     foreach ($valores as $nombre => [$peso, $nota]) {

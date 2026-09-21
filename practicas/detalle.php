@@ -468,12 +468,13 @@ require __DIR__ . '/../includes/layout_top.php';
               <?= numFmt($l['cantidad']) ?> <?= e($l['unidad']) ?>
               <?php if (!empty($l['compra'])): $dc = $l['compra_decision']; $modo = $dc['modo'] ?? 'paquete'; ?>
                 <div class="cell-muted" style="font-size:.78rem;font-weight:400;margin-top:4px;">
+                  <?php $cantCompleta = $l['compra']['cantidad_completa'] ?? $l['compra']['cantidad']; ?>
                   <?php if ($modo === 'paquete'): ?>
-                    comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?>
+                    comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?>
                   <?php elseif ($modo === 'exacto'): ?>
-                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · comprar solo lo necesario
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · comprar solo lo necesario
                   <?php else: ?>
-                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($l['compra']['cantidad']) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
                   <?php endif; ?>
                 </div>
                 <?php if ($puedeEditarCompras): ?>

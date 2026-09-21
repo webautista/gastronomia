@@ -227,6 +227,27 @@ function montoLineaReceta(float $cantidad, float $costoUnitario, bool $esEntera)
 }
 
 /**
+ * Normaliza un nombre de ingrediente para poder compararlo sin importar
+ * mayúsculas/minúsculas, acentos, ni espacios de más — usado por
+ * listaCompraConsolidada() para reconocer que una línea de receta escrita
+ * a mano (sin quedar enlazada al catálogo por ingrediente_id — un typo, un
+ * acento distinto, "uva" en vez de "Uvas"...) en realidad se refiere a un
+ * ingrediente que sí existe en el catálogo, y así no perder ni la
+ * consolidación ni la sugerencia de compra solo porque el enlace no se
+ * hizo (sección 28 de la especificación).
+ */
+function normalizarNombreIngrediente(string $nombre): string
+{
+    $nombre = trim(mb_strtolower($nombre));
+    $transliterado = @iconv('UTF-8', 'ASCII//TRANSLIT', $nombre);
+    if ($transliterado !== false) {
+        $nombre = $transliterado;
+    }
+    $nombre = (string) preg_replace('/[^a-z0-9]+/', ' ', $nombre);
+    return trim((string) preg_replace('/\s+/', ' ', $nombre));
+}
+
+/**
  * Costo total en vivo de UNA receta, escalado a $porcionesDeseadas (o a sus
  * propias porciones base si no se indica) — la misma suma que ya se
  * calculaba a mano dentro de la vista de receta y del detalle de un evento,
@@ -639,8 +660,19 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
     }
 
     $catalogoPorId = [];
-    foreach ($pdo->query('SELECT id, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, densidad_g_ml, peso_unidad_g, modo_compra_defecto FROM ingredientes_catalogo')->fetchAll() as $c) {
+    // nombre normalizado => [id, id, ...] — para reconocer una línea de
+    // receta escrita a mano (sin enlazar al catálogo por ingrediente_id,
+    // ej. un typo, un acento distinto, o mayúsculas/minúsculas) que en
+    // realidad se refiere a un ingrediente del catálogo. Solo se usa
+    // cuando el nombre es inequívoco (un solo ingrediente del catálogo
+    // coincide) — ver más abajo.
+    $catalogoPorNombreNormalizado = [];
+    foreach ($pdo->query('SELECT id, nombre, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, densidad_g_ml, peso_unidad_g, modo_compra_defecto FROM ingredientes_catalogo')->fetchAll() as $c) {
         $catalogoPorId[(int) $c['id']] = $c;
+        $normalizado = normalizarNombreIngrediente((string) $c['nombre']);
+        if ($normalizado !== '') {
+            $catalogoPorNombreNormalizado[$normalizado][] = (int) $c['id'];
+        }
     }
 
     $grupos = [];
@@ -673,8 +705,28 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
 
         foreach ($stmtIng->fetchAll() as $ing) {
             $nombre = $ing['nombre'];
-            $claveBase = !empty($ing['ingrediente_id'])
-                ? 'cat:' . $ing['ingrediente_id']
+
+            // La línea puede no estar enlazada al catálogo (ingrediente_id
+            // NULL) por haberse escrito a mano en el formulario de receta
+            // sin que coincidiera exactamente con un nombre del catálogo
+            // (acento, mayúsculas, un espacio de más...). Sin este enlace,
+            // la línea nunca se beneficia de la unidad de compra ni
+            // consolida con las demás líneas del mismo ingrediente — antes
+            // de rendirse, se intenta reconocerla por nombre normalizado,
+            // y solo se usa si un único ingrediente del catálogo coincide
+            // (nunca se adivina si hay más de uno, para no mezclar
+            // ingredientes distintos por error).
+            $catalogoIdEfectivo = !empty($ing['ingrediente_id']) ? (int) $ing['ingrediente_id'] : null;
+            if ($catalogoIdEfectivo === null) {
+                $normalizado = normalizarNombreIngrediente((string) $nombre);
+                $candidatos = $catalogoPorNombreNormalizado[$normalizado] ?? [];
+                if (count($candidatos) === 1) {
+                    $catalogoIdEfectivo = $candidatos[0];
+                }
+            }
+
+            $claveBase = $catalogoIdEfectivo !== null
+                ? 'cat:' . $catalogoIdEfectivo
                 : 'txt:' . mb_strtolower(trim($nombre));
 
             if (!empty($ing['al_gusto'])) {
@@ -685,7 +737,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
                 continue;
             }
 
-            $catalogoDeEstaLinea = !empty($ing['ingrediente_id']) ? ($catalogoPorId[(int) $ing['ingrediente_id']] ?? null) : null;
+            $catalogoDeEstaLinea = $catalogoIdEfectivo !== null ? ($catalogoPorId[$catalogoIdEfectivo] ?? null) : null;
             $densidadIngrediente = $catalogoDeEstaLinea && $catalogoDeEstaLinea['densidad_g_ml'] !== null
                 ? (float) $catalogoDeEstaLinea['densidad_g_ml']
                 : null;
@@ -731,7 +783,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
                 $gruposPorIngrediente[$claveBase][] = $claveGrupo;
                 $grupos[$claveGrupo] = [
                     'nombre' => $nombre,
-                    'catalogo_id' => !empty($ing['ingrediente_id']) ? (int) $ing['ingrediente_id'] : null,
+                    'catalogo_id' => $catalogoIdEfectivo,
                     'unidad_ancla' => $unidadIng,
                     'cantidad' => 0.0,
                     // Suma del costo de cada línea EN SU PROPIA UNIDAD
@@ -807,8 +859,19 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
                     if (!empty($unidadCompra['es_entera'])) {
                         $unidadesNecesarias = cantidadDeCompra($unidadesNecesarias, true);
                     }
+                    // 'cantidad_completa' SIEMPRE redondea hacia arriba al
+                    // siguiente entero de la unidad de compra, sin importar
+                    // si esa unidad es "entera" (Paquete, Lata) o continua
+                    // (Litro, Libra) — porque en el súper no se puede
+                    // comprar, por ejemplo, 0.36 litros sueltos: si se elige
+                    // "comprar el paquete/envase completo" hay que llevar
+                    // como mínimo 1 litro entero. 'cantidad' (sin redondear
+                    // para unidades continuas) se conserva tal cual para el
+                    // modo 'exacto' y para el texto informativo cuando aún
+                    // no se ha decidido nada (ver más abajo y sección 12).
                     $compra = [
                         'cantidad' => $unidadesNecesarias,
+                        'cantidad_completa' => cantidadDeCompra($unidadesNecesarias, true),
                         'unidad' => $unidadCompra['abreviatura'] ?: $unidadCompra['nombre'],
                     ];
                 }
@@ -863,7 +926,13 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
                 'monto_porcion' => $montoPorcion,
             ];
             $monto = match ($modo) {
-                'paquete' => $precioPaquete * $compra['cantidad'],
+                // 'cantidad_completa' (siempre redondeada hacia arriba, ver
+                // arriba) — no 'cantidad' — porque "comprar el paquete
+                // completo" de un ingrediente cuya unidad de compra es
+                // continua (Litro, Libra) tiene que costar el precio de al
+                // menos una unidad de compra entera, no el precio
+                // proporcional a la cantidad exacta que pide la receta.
+                'paquete' => $precioPaquete * $compra['cantidad_completa'],
                 'exacto' => $montoPorcion,
                 default => 0.0, // 'ya_tiene'
             };
@@ -944,7 +1013,12 @@ function renderListaCompraTexto(string $titulo, array $consolidado): string
             $compraTxt = match ($modo) {
                 'ya_tiene' => ' [ya lo tienes, no se compra]',
                 'exacto' => ' [comprar solo lo necesario, costo exacto]',
-                default => sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad']), $l['compra']['unidad']),
+                // 'paquete' (o sin decidir, que por defecto es 'paquete'):
+                // se muestra 'cantidad_completa' — la cantidad YA redondeada
+                // hacia arriba a la unidad de compra — porque es lo que de
+                // verdad hay que llevar al súper y lo que se está cobrando
+                // (ver el cálculo de $monto más arriba).
+                default => sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad_completa'] ?? $l['compra']['cantidad']), $l['compra']['unidad']),
             };
         }
         $lineas[] = sprintf('[ ] %s — %s %s (%s)%s', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']), $compraTxt);
