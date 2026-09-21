@@ -10,7 +10,8 @@ $puedeCrearEvento = can($usuarioActual, 'eventos', 'crear');
 
 $stmt = db()->query(
     'SELECT ev.*, es.nombre AS estado,
-       (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes
+       (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
+       (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      ORDER BY ev.fecha ASC'
@@ -24,12 +25,18 @@ $eventos = $stmt->fetchAll();
 // confirmado/pagado — un gasto todavía proyectado nunca cuenta como
 // presupuesto usado (el bug reportado: una partida proyectada de
 // RD$3,000 aparecía como "usada" sin haberse confirmado).
+// La barra de la tabla ya no mide el gasto (eso puede seguir en cero
+// mientras no se compre nada, aunque los estudiantes ya hayan pagado, y
+// entonces parecía que no había entrado dinero) — mide lo recaudado
+// contra la cuota confirmada, igual que en eventos/index.php, y al lado
+// se muestra el proyectado y lo usado como referencia.
 foreach ($eventos as &$ev) {
     $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
     $ev['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
     $ev['presupuesto_total'] = $cuotas['total_proyeccion'];
+    $ev['total_confirmado'] = $cuotas['total_confirmado'];
     $ev['cuota_confirmada'] = $cuotas['confirmada'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ? AND monto_pagado >= ?');
@@ -62,7 +69,8 @@ foreach ($eventos as $ev) {
 // y pagos) se calcula exactamente igual que en practicas/index.php.
 $stmt = db()->query(
     'SELECT p.*,
-       (SELECT COUNT(*) FROM practica_estudiante pe WHERE pe.practica_id = p.id) AS num_estudiantes
+       (SELECT COUNT(*) FROM practica_estudiante pe WHERE pe.practica_id = p.id) AS num_estudiantes,
+       (SELECT COALESCE(SUM(pe.monto_pagado),0) FROM practica_estudiante pe WHERE pe.practica_id = p.id) AS recaudado
      FROM practicas p
      ORDER BY p.fecha ASC'
 );
@@ -74,6 +82,7 @@ foreach ($practicas as &$p) {
     $cuotas = calcularCuotas($costoMateriales, $resumenGastos, (int) $p['num_estudiantes']);
     $p['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
     $p['presupuesto_total'] = $cuotas['total_proyeccion'];
+    $p['total_confirmado'] = $cuotas['total_confirmado'];
     $p['cuota_confirmada'] = $cuotas['confirmada'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ? AND monto_pagado >= ?');
@@ -130,18 +139,19 @@ require __DIR__ . '/includes/layout_top.php';
   <?php else: ?>
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Evento</th><th>Fecha</th><th>Estado</th><th>Presupuesto usado</th><th>Pagos</th></tr></thead>
+    <thead><tr><th>Evento</th><th>Fecha</th><th>Estado</th><th>Presupuesto</th><th>Pagos</th></tr></thead>
     <tbody>
       <?php foreach ($eventos as $ev):
-        $pct = $ev['presupuesto_total'] > 0 ? round($ev['gastado'] / $ev['presupuesto_total'] * 100) : 0;
+        $pctRecaudado = $ev['total_confirmado'] > 0 ? round($ev['recaudado'] / $ev['total_confirmado'] * 100) : 0;
       ?>
         <tr style="cursor:pointer;" onclick="window.location='eventos/detalle.php?id=<?= (int) $ev['id'] ?>'">
           <td class="cell-name"><?= e($ev['nombre']) ?></td>
           <td class="cell-muted"><?= fmtDate($ev['fecha']) ?></td>
           <td><span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span></td>
-          <td style="min-width:150px;">
-            <div class="meter-row"><span><?= money($ev['gastado']) ?></span><span><?= (int) $pct ?>%</span></div>
-            <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
+          <td style="min-width:180px;">
+            <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($ev['recaudado']) ?> / <?= money($ev['total_confirmado']) ?></span></div>
+            <div class="meter <?= meterClase($pctRecaudado) ?>"><span style="width:<?= min($pctRecaudado, 100) ?>%"></span></div>
+            <div class="cell-muted" style="font-size:.78rem;margin-top:4px;">Proyectado <?= money($ev['presupuesto_total']) ?> · Usado <?= money($ev['gastado']) ?></div>
           </td>
           <td class="cell-muted"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?> pagado<?= $ev['num_pagados'] == 1 ? '' : 's' ?></td>
         </tr>
@@ -162,18 +172,19 @@ require __DIR__ . '/includes/layout_top.php';
   <?php else: ?>
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Práctica</th><th>Fecha</th><th>Materia</th><th>Presupuesto usado</th><th>Pagos</th></tr></thead>
+    <thead><tr><th>Práctica</th><th>Fecha</th><th>Materia</th><th>Presupuesto</th><th>Pagos</th></tr></thead>
     <tbody>
       <?php foreach ($practicas as $p):
-        $pct = $p['presupuesto_total'] > 0 ? round($p['gastado'] / $p['presupuesto_total'] * 100) : 0;
+        $pctRecaudado = $p['total_confirmado'] > 0 ? round($p['recaudado'] / $p['total_confirmado'] * 100) : 0;
       ?>
         <tr style="cursor:pointer;" onclick="window.location='practicas/detalle.php?id=<?= (int) $p['id'] ?>'">
           <td class="cell-name"><?= e($p['nombre']) ?></td>
           <td class="cell-muted"><?= fmtDate($p['fecha']) ?></td>
           <td class="cell-muted"><?= $p['materia'] ? e($p['materia']) : '—' ?></td>
-          <td style="min-width:150px;">
-            <div class="meter-row"><span><?= money($p['gastado']) ?></span><span><?= (int) $pct ?>%</span></div>
-            <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
+          <td style="min-width:180px;">
+            <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($p['recaudado']) ?> / <?= money($p['total_confirmado']) ?></span></div>
+            <div class="meter <?= meterClase($pctRecaudado) ?>"><span style="width:<?= min($pctRecaudado, 100) ?>%"></span></div>
+            <div class="cell-muted" style="font-size:.78rem;margin-top:4px;">Proyectado <?= money($p['presupuesto_total']) ?> · Usado <?= money($p['gastado']) ?></div>
           </td>
           <td class="cell-muted"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?> pagado<?= $p['num_pagados'] == 1 ? '' : 's' ?></td>
         </tr>
