@@ -25,7 +25,8 @@ $busqueda = trim($_GET['q'] ?? '');
 
 $sql = 'SELECT ev.*, es.nombre AS estado,
           (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS num_estudiantes,
-          (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado
+          (SELECT COALESCE(SUM(ee.monto_pagado),0) FROM evento_estudiante ee WHERE ee.evento_id = ev.id) AS recaudado,
+          (SELECT COALESCE(SUM(er.porciones_necesarias),0) FROM evento_receta er WHERE er.evento_id = ev.id) AS porciones_totales
         FROM eventos ev
         JOIN estados_evento es ON es.id = ev.estado_id';
 $params = [];
@@ -103,7 +104,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <div class="event-meta">
           <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
           <span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span>
-          <span><?= icon('portion') ?> <?= (int) $ev['porciones'] ?> porciones</span>
+          <span><?= icon('portion') ?> <?= (int) $ev['porciones_totales'] ?> porciones</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px;">
           <div class="mini-row"><span>Inversión total</span><span class="mono"><?= money($ev['total_proyeccion']) ?></span></div>

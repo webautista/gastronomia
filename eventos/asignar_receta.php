@@ -45,7 +45,7 @@ $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.ph
 require __DIR__ . '/../includes/layout_top.php';
 ?>
 
-<div class="page-head"><div><h1>Agregar receta al evento</h1><p><?= e($evento['nombre']) ?> · al agregarla se usarán <?= (int) $evento['porciones'] ?> porciones por defecto (puedes ajustarlo después).</p></div></div>
+<div class="page-head"><div><h1>Agregar receta al evento</h1><p><?= e($evento['nombre']) ?> · al agregarla se usarán sus propias porciones base (puedes ajustarlo después).</p></div></div>
 
 <div class="card card-pad form-card" style="max-width:560px;">
   <?php if (!$disponibles): ?>

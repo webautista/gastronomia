@@ -98,10 +98,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($accion === 'asignar_recetas') {
         requirePermission($usuarioActual, 'eventos_recetas', 'crear', $base);
         $ids = array_map('intval', $_POST['receta_ids'] ?? []);
+        // Cada receta arranca con SUS PROPIAS porciones base (igual que en
+        // Prácticas), no con un número del evento — "Porciones a preparar"
+        // en la pestaña Resumen es la suma de lo que cada receta tenga aquí,
+        // así que un valor de partida ajeno a la receta solo confundiría esa
+        // suma. Se ajusta por separado, por receta, desde "Actualizar".
+        $stmtPorciones = $pdo->prepare('SELECT porciones_base FROM recetas WHERE id = ?');
         $stmt = $pdo->prepare('INSERT IGNORE INTO evento_receta (evento_id, receta_id, porciones_necesarias) VALUES (?,?,?)');
         foreach ($ids as $rid) {
             if ($rid > 0) {
-                $stmt->execute([$id, $rid, $evento['porciones']]);
+                $stmtPorciones->execute([$rid]);
+                $porcionesBase = max(1, (int) $stmtPorciones->fetchColumn());
+                $stmt->execute([$id, $rid, $porcionesBase]);
             }
         }
     } elseif ($accion === 'actualizar_porciones') {
@@ -174,6 +182,16 @@ $stmt = db()->prepare(
 );
 $stmt->execute([$id]);
 $recetasEvento = $stmt->fetchAll();
+
+// "Porciones a preparar" (tarjeta de la pestaña Resumen) es la suma de las
+// porciones que cada receta asignada tiene guardadas en este momento — no
+// un número aparte que haya que mantener sincronizado a mano: si ajustas o
+// quitas una receta en la pestaña "Recetas", esta tarjeta cambia sola en la
+// próxima carga, porque siempre se recalcula desde evento_receta (a pedido
+// de Eyaelkys, que antes tenía un campo "Porciones a preparar" manual e
+// independiente en el propio evento que nunca se movía al tocar las
+// recetas — confuso porque parecía el mismo número).
+$porcionesTotalesEvento = array_sum(array_column($recetasEvento, 'porciones_necesarias'));
 
 // El costo de ingredientes de cada receta se calcula una sola vez aquí
 // (no dentro de la pestaña "Recetas"), para mostrar el chip de costo de
@@ -339,8 +357,8 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
   <div class="card card-pad">
     <div class="stat-label">Porciones a preparar</div>
-    <div class="stat-value"><?= (int) $evento['porciones'] ?></div>
-    <div class="stat-hint"><?= count($recetasEvento) ?> receta<?= count($recetasEvento) === 1 ? '' : 's' ?> asignada<?= count($recetasEvento) === 1 ? '' : 's' ?></div>
+    <div class="stat-value"><?= (int) $porcionesTotalesEvento ?></div>
+    <div class="stat-hint"><?= count($recetasEvento) ?> receta<?= count($recetasEvento) === 1 ? '' : 's' ?> asignada<?= count($recetasEvento) === 1 ? '' : 's' ?> · suma de las porciones de cada una</div>
   </div>
 </div>
 

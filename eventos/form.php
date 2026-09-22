@@ -20,7 +20,7 @@ $estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
 
 $evento = [
     'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '', 'banner' => null,
-    'porciones' => '', 'estado_id' => $estadoPorDefecto, 'cuota_publica' => 0,
+    'estado_id' => $estadoPorDefecto, 'cuota_publica' => 0,
 ];
 $errores = [];
 
@@ -40,7 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $evento['nombre']      = trim($_POST['nombre'] ?? '');
     $evento['fecha']       = $_POST['fecha'] ?? '';
     $evento['lugar']       = trim($_POST['lugar'] ?? '');
-    $evento['porciones']   = intOrNull($_POST['porciones'] ?? null) ?? 0;
     $evento['estado_id']   = intOrNull($_POST['estado_id'] ?? null);
     $evento['cuota_publica'] = !empty($_POST['cuota_publica']) ? 1 : 0;
 
@@ -52,9 +51,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if (!in_array($evento['estado_id'], array_column($estados, 'id'), true)) {
         $errores[] = 'Estado no válido.';
-    }
-    if ($evento['porciones'] < 1) {
-        $errores[] = 'Las porciones a preparar deben ser mayores a 0.';
     }
 
     // Banner: solo se valida el tipo/tamaño aquí. El archivo no se mueve ni
@@ -112,13 +108,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, porciones=?, estado_id=?, cuota_publica=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $evento['cuota_publica'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, estado_id=?, cuota_publica=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, porciones, estado_id, cuota_publica) VALUES (?,?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['porciones'], $evento['estado_id'], $evento['cuota_publica']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, estado_id, cuota_publica) VALUES (?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -200,19 +196,13 @@ require __DIR__ . '/../includes/layout_top.php';
       </div>
     </div>
 
-    <div class="field-row">
-      <div class="field">
-        <label for="porciones">Porciones a preparar</label>
-        <input type="number" id="porciones" name="porciones" min="1" required value="<?= e((string) $evento['porciones']) ?>">
-      </div>
-      <div class="field">
-        <label for="estado_id">Estado</label>
-        <select id="estado_id" name="estado_id">
-          <?php foreach ($estados as $es): ?>
-            <option value="<?= (int) $es['id'] ?>" <?= (int) $es['id'] === (int) $evento['estado_id'] ? 'selected' : '' ?>><?= e($es['nombre']) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </div>
+    <div class="field">
+      <label for="estado_id">Estado</label>
+      <select id="estado_id" name="estado_id">
+        <?php foreach ($estados as $es): ?>
+          <option value="<?= (int) $es['id'] ?>" <?= (int) $es['id'] === (int) $evento['estado_id'] ? 'selected' : '' ?>><?= e($es['nombre']) ?></option>
+        <?php endforeach; ?>
+      </select>
     </div>
 
     <div class="form-actions">
