@@ -96,15 +96,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare('UPDATE practica_receta SET porciones_necesarias=? WHERE practica_id=? AND receta_id=?')
                 ->execute([$porciones, $id, $recetaId]);
         }
-    } elseif ($accion === 'registrar_pago') {
-        requirePermission($usuarioActual, 'practicas_estudiantes', 'editar', $base);
-        $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
-        $monto = isset($_POST['monto_pagado']) ? (float) $_POST['monto_pagado'] : null;
-        if ($estudianteId && $monto !== null && $monto >= 0) {
-            $fechaPago = $monto > 0 ? date('Y-m-d') : null;
-            $pdo->prepare('UPDATE practica_estudiante SET monto_pagado=?, fecha_pago=? WHERE practica_id=? AND estudiante_id=?')
-                ->execute([$monto, $fechaPago, $id, $estudianteId]);
-        }
     } elseif ($accion === 'quitar_estudiante') {
         requirePermission($usuarioActual, 'practicas_estudiantes', 'eliminar', $base);
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
@@ -555,17 +546,7 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="cell-muted"><?= e($a['grupo']) ?></td>
             <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
             <td>
-              <?php if ($puedeEditarEstudianteTab): ?>
-                <form method="post" style="display:flex;align-items:center;gap:6px;">
-                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                  <input type="hidden" name="accion" value="registrar_pago">
-                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                  <input type="number" name="monto_pagado" min="0" step="0.01" value="<?= e((string) $montoPagado) ?>" style="width:110px;">
-                  <button class="btn btn-secondary btn-sm" type="submit">Guardar</button>
-                </form>
-              <?php else: ?>
-                <span class="mono"><?= money($montoPagado) ?></span>
-              <?php endif; ?>
+              <span class="mono"><?= money($montoPagado) ?></span>
               <?php if ($montoPagado > 0 && $a['fecha_pago']): ?>
                 <div class="stat-hint" style="margin-top:4px;">Último pago: <?= fmtDate($a['fecha_pago']) ?></div>
               <?php endif; ?>
@@ -578,14 +559,8 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php endif; ?>
             </td>
             <td class="row-actions">
-              <?php if ($puedeEditarEstudianteTab && !$alDia): ?>
-                <form method="post" data-confirm="¿Registrar el pago completo de la cuota confirmada (<?= e(money($cuotaConfirmada)) ?>) para &quot;<?= e($a['nombre']) ?>&quot;?">
-                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                  <input type="hidden" name="accion" value="registrar_pago">
-                  <input type="hidden" name="estudiante_id" value="<?= (int) $a['id'] ?>">
-                  <input type="hidden" name="monto_pagado" value="<?= e((string) $cuotaConfirmada) ?>">
-                  <button class="btn btn-primary btn-sm" type="submit">Pagar cuota completa</button>
-                </form>
+              <?php if ($puedeVerEstudiantesTab): ?>
+                <a class="btn btn-secondary btn-sm" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('receipt') ?> <?= $puedeEditarEstudianteTab ? 'Pagos' : 'Ver pagos' ?></a>
               <?php endif; ?>
               <?php if ($puedeEliminarEstudianteTab): ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de esta práctica?">

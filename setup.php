@@ -325,6 +325,59 @@ function migrarColumnasNuevas(PDO $pdo): array
 }
 
 /**
+ * Historial de pagos por estudiante (pagos_estudiante, ver db/schema.sql):
+ * a las bases de datos que ya tenían estudiantes con algo pagado (un solo
+ * monto acumulado en evento_estudiante.monto_pagado / practica_estudiante.
+ * monto_pagado, de antes de que existiera este historial) se les crea, una
+ * sola vez, un pago de respaldo con ese monto para que no "desaparezca" al
+ * pasar a la nueva pantalla — queda marcado como "Sin especificar" porque
+ * no hay forma de saber si esos pagos viejos fueron en efectivo o por
+ * transferencia. Guardado: solo crea el pago de respaldo si ese estudiante
+ * todavía no tiene NINGÚN pago en el historial para ese evento/práctica, así
+ * una corrida posterior nunca duplica nada ni pisa pagos ya registrados
+ * desde eventos/pago_estudiante.php o practicas/pago_estudiante.php.
+ */
+function migrarPagosEstudianteExistentes(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'pagos_estudiante', 'id')) {
+        return $mensajes;
+    }
+
+    $existeStmt = $pdo->prepare(
+        'SELECT 1 FROM pagos_estudiante WHERE entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ? LIMIT 1'
+    );
+    $insStmt = $pdo->prepare(
+        "INSERT INTO pagos_estudiante (entidad_tipo, entidad_id, estudiante_id, monto, metodo, fecha_pago)
+         VALUES (?, ?, ?, ?, 'sin_especificar', ?)"
+    );
+    $migrados = 0;
+
+    $stmt = $pdo->query('SELECT evento_id, estudiante_id, monto_pagado, fecha_pago FROM evento_estudiante WHERE monto_pagado > 0');
+    foreach ($stmt->fetchAll() as $fila) {
+        $existeStmt->execute(['evento', $fila['evento_id'], $fila['estudiante_id']]);
+        if (!$existeStmt->fetchColumn()) {
+            $insStmt->execute(['evento', $fila['evento_id'], $fila['estudiante_id'], $fila['monto_pagado'], $fila['fecha_pago'] ?: date('Y-m-d')]);
+            $migrados++;
+        }
+    }
+
+    $stmt = $pdo->query('SELECT practica_id, estudiante_id, monto_pagado, fecha_pago FROM practica_estudiante WHERE monto_pagado > 0');
+    foreach ($stmt->fetchAll() as $fila) {
+        $existeStmt->execute(['practica', $fila['practica_id'], $fila['estudiante_id']]);
+        if (!$existeStmt->fetchColumn()) {
+            $insStmt->execute(['practica', $fila['practica_id'], $fila['estudiante_id'], $fila['monto_pagado'], $fila['fecha_pago'] ?: date('Y-m-d')]);
+            $migrados++;
+        }
+    }
+
+    if ($migrados > 0) {
+        $mensajes[] = "$migrados pago(s) existentes migrados al nuevo historial de pagos por estudiante, marcados como \"Sin especificar\" (no se sabe si fueron en efectivo o por transferencia) — corrígelos desde \"Estudiantes y pagos\" → \"Pagos\" si recuerdas cómo fue cada uno.";
+    }
+    return $mensajes;
+}
+
+/**
  * Convierte una columna de texto libre (o ENUM) en una llave foránea hacia
  * su catálogo, sin perder datos: agrega la columna nueva, puebla el
  * catálogo con los valores que ya existían (si $poblarDesdeExistente),
@@ -1693,6 +1746,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes[] = "Esquema creado/verificado correctamente ($n1 sentencias ejecutadas).";
 
         $mensajes = array_merge($mensajes, migrarColumnasNuevas($pdo));
+        $mensajes = array_merge($mensajes, migrarPagosEstudianteExistentes($pdo));
         $mensajes = array_merge($mensajes, migrarCatalogosYRoles($pdo));
         $mensajes = array_merge($mensajes, corregirUnidadUsoEspecias($pdo));
         $mensajes = array_merge($mensajes, renombrarVainillaLiquidaAExtracto($pdo));

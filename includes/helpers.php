@@ -427,6 +427,82 @@ function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidad
 }
 
 /**
+ * Historial de pagos (tabla pagos_estudiante) de un estudiante en un evento
+ * o práctica, del más reciente al más antiguo — para la pantalla
+ * eventos/pago_estudiante.php y practicas/pago_estudiante.php.
+ */
+function historialPagosEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT * FROM pagos_estudiante
+         WHERE entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?
+         ORDER BY fecha_pago DESC, id DESC'
+    );
+    $stmt->execute([$entidadTipo, $entidadId, $estudianteId]);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Recalcula evento_estudiante.monto_pagado/pagado/fecha_pago (o el
+ * equivalente en practica_estudiante) sumando pagos_estudiante — estas
+ * columnas quedan como un valor DERIVADO, nunca editado directo desde
+ * ninguna pantalla, para que panel.php, index.php y el resto de pantallas
+ * que ya leen "cuánto ha pagado este estudiante" sigan funcionando igual
+ * que antes de existir el historial de pagos. Se llama siempre después de
+ * registrarPagoEstudiante() o eliminarPagoEstudiante(), nunca por separado.
+ */
+function recomputarMontoPagadoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId): void
+{
+    $stmt = $pdo->prepare(
+        'SELECT COALESCE(SUM(monto), 0) AS total, MAX(fecha_pago) AS ultima
+         FROM pagos_estudiante WHERE entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?'
+    );
+    $stmt->execute([$entidadTipo, $entidadId, $estudianteId]);
+    $fila = $stmt->fetch();
+    $total = (float) $fila['total'];
+    $ultima = $total > 0.005 ? $fila['ultima'] : null;
+
+    if ($entidadTipo === 'evento') {
+        $pdo->prepare('UPDATE evento_estudiante SET monto_pagado = ?, pagado = ?, fecha_pago = ? WHERE evento_id = ? AND estudiante_id = ?')
+            ->execute([$total, $total > 0.005 ? 1 : 0, $ultima, $entidadId, $estudianteId]);
+    } else {
+        $pdo->prepare('UPDATE practica_estudiante SET monto_pagado = ?, fecha_pago = ? WHERE practica_id = ? AND estudiante_id = ?')
+            ->execute([$total, $ultima, $entidadId, $estudianteId]);
+    }
+}
+
+/** Agrega un pago al historial y recalcula el total cacheado (ver arriba). */
+function registrarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, float $monto, string $metodo, string $fechaPago, ?string $nota): void
+{
+    $pdo->prepare(
+        'INSERT INTO pagos_estudiante (entidad_tipo, entidad_id, estudiante_id, monto, metodo, fecha_pago, nota)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )->execute([$entidadTipo, $entidadId, $estudianteId, $monto, $metodo, $fechaPago, ($nota !== null && $nota !== '') ? $nota : null]);
+    recomputarMontoPagadoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId);
+}
+
+/** Quita un pago del historial (para corregir uno registrado por error) y recalcula el total cacheado. */
+function eliminarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, int $pagoId): void
+{
+    $pdo->prepare('DELETE FROM pagos_estudiante WHERE id = ? AND entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?')
+        ->execute([$pagoId, $entidadTipo, $entidadId, $estudianteId]);
+    recomputarMontoPagadoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId);
+}
+
+/** Etiqueta legible del método de pago (pagos_estudiante.metodo) para mostrar en pantalla. */
+function etiquetaMetodoPago(string $metodo): string
+{
+    switch ($metodo) {
+        case 'efectivo':
+            return 'Efectivo';
+        case 'transferencia':
+            return 'Transferencia bancaria';
+        default:
+            return 'Sin especificar';
+    }
+}
+
+/**
  * Tipo de medida y factor_base EFECTIVOS de una unidad, para
  * convertirCantidadEntreUnidades()/convertirCostoPorUnidad(). Para casi
  * cualquier unidad es simplemente lo que ya trae su fila de

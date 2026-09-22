@@ -733,6 +733,40 @@ CREATE TABLE IF NOT EXISTS practica_estudiante (
         REFERENCES estudiantes(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Historial de pagos de un estudiante en un evento o práctica: cada pago
+-- (parcial o completo) queda como su propia fila, con su fecha, su monto y
+-- el método con el que se hizo — a pedido explícito de Eyaelkys, que
+-- necesitaba ver los pagos parciales por separado e identificar si cada uno
+-- fue en efectivo o por transferencia bancaria, cosa que un solo monto
+-- acumulado (evento_estudiante.monto_pagado / practica_estudiante.monto_pagado)
+-- no permitía. Mismo patrón entidad_tipo/entidad_id que compra_decisiones
+-- arriba, porque un pago es de un evento O de una práctica, nunca de ambos.
+-- evento_estudiante.monto_pagado/fecha_pago y practica_estudiante.monto_pagado/
+-- fecha_pago NO se tocan directo desde ninguna pantalla nueva: quedan como
+-- un valor derivado que recomputarMontoPagadoEstudiante() (includes/helpers.php)
+-- recalcula sumando esta tabla cada vez que se agrega o se borra un pago —
+-- así panel.php, index.php y el resto de pantallas que ya leen ese total
+-- siguen funcionando sin cambios. "sin_especificar" solo existe para los
+-- pagos que ya estaban registrados como un monto acumulado antes de que
+-- existiera este historial (ver migrarPagosEstudianteExistentes() en
+-- setup.php): un pago nuevo, agregado desde eventos/pago_estudiante.php o
+-- practicas/pago_estudiante.php, siempre elige Efectivo o Transferencia
+-- bancaria.
+CREATE TABLE IF NOT EXISTS pagos_estudiante (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('evento','practica') NOT NULL,
+    entidad_id INT UNSIGNED NOT NULL,
+    estudiante_id INT UNSIGNED NOT NULL,
+    monto DECIMAL(10,2) NOT NULL,
+    metodo ENUM('efectivo','transferencia','sin_especificar') NOT NULL DEFAULT 'sin_especificar',
+    fecha_pago DATE NOT NULL,
+    nota VARCHAR(150) NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_pagoest_estudiante FOREIGN KEY (estudiante_id)
+        REFERENCES estudiantes(id) ON DELETE CASCADE,
+    INDEX idx_pagoest_entidad (entidad_tipo, entidad_id, estudiante_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Gastos asociados a un evento o a una práctica (uno de los dos, nunca
 -- ambos — lo decide qué columna viene NULL). Las columnas del ciclo de
 -- vida en tres etapas (monto_confirmado, monto_pagado, fecha_pago,
