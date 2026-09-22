@@ -368,9 +368,12 @@ require __DIR__ . '/../includes/layout_top.php';
     </div>
 
     <div class="field">
-      <label>Ingredientes (por las porciones base indicadas)</label>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <label style="margin:0;">Ingredientes (por las porciones base indicadas)</label>
+        <button type="button" class="btn btn-success btn-sm" id="btnNuevoIngrediente" data-abrir-modal-ingrediente><?= icon('plus') ?> Nuevo ingrediente</button>
+      </div>
       <div class="ing-row ing-row-labels">
-        <span>Cantidad</span><span></span><span>Ingrediente</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span><span></span>
+        <span>Cantidad</span><span></span><span>Ingrediente</span><span>Unidad</span><span>Costo/unid</span><span>Monto</span><span></span><span></span>
       </div>
       <div id="ingRows">
         <?php foreach ($ingredientes as $ing): $esAlGusto = !empty($ing['al_gusto']);
@@ -402,7 +405,6 @@ require __DIR__ . '/../includes/layout_top.php';
               <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo" value="<?= e((string) $ing['costo_unitario']) ?>">
               <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
               <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
-              <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
               <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
             </div>
             <div class="ing-row-extra">
@@ -425,7 +427,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php endforeach; ?>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="addIngRow" style="margin-top:4px;"><?= icon('plus') ?> Agregar ingrediente</button>
-      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón <?= icon('plus') ?> para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El botón <?= icon('refresh') ?> vuelve a traer el costo actual del catálogo para esa fila. Marca <b>Al gusto</b> cuando la cantidad no se mide (esa línea no entra en el costo total). <b>Opcional</b> es solo informativo (por defecto, toda línea es requerida). <b>Reemplazo</b> es para anotar una alternativa cuando la receta es "esto o lo otro" (ej. "o mantequilla de maní"). <b>Preparación</b> deja marcar uno o más cortes/acciones para esa línea (ej. Espinaca — Cocida y Picada) — se administran desde Configuración. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba.</div>
+      <div class="hint">Escribe para buscar en el catálogo (autocompleta unidad y costo) o usa el botón "Nuevo ingrediente" de arriba para dar de alta uno que no exista todavía. Cantidad y costo se pueden ajustar a mano. Si cambias la unidad de una fila a otra compatible (ej. de Onza a Gramo, o de Litro a Cucharada), el <b>costo/unid</b> se recalcula solo para que el monto siga siendo correcto; si la unidad nueva no es convertible (ej. a Unidad o Lata), el costo hay que ajustarlo a mano. El botón <?= icon('refresh') ?> vuelve a traer el costo actual del catálogo para esa fila. Marca <b>Al gusto</b> cuando la cantidad no se mide (esa línea no entra en el costo total). <b>Opcional</b> es solo informativo (por defecto, toda línea es requerida). <b>Reemplazo</b> es para anotar una alternativa cuando la receta es "esto o lo otro" (ej. "o mantequilla de maní"). <b>Preparación</b> deja marcar uno o más cortes/acciones para esa línea (ej. Espinaca — Cocida y Picada) — se administran desde Configuración. El <b>monto</b> es lo que costaría comprar esa cantidad; si la unidad se compra completa (ej. huevo, manzana, lata), se redondea hacia arriba.</div>
       <div class="ing-total">Costo total estimado de la receta: <span class="mono" id="ingCostoTotal">RD$ 0</span></div>
     </div>
 
@@ -463,7 +465,6 @@ require __DIR__ . '/../includes/layout_top.php';
       <input type="number" step="any" name="ing_costo[]" placeholder="Costo/unid RD$" data-role="ing-costo">
       <span class="mono ing-monto" data-role="ing-monto">RD$ 0</span>
       <button type="button" class="icon-btn" data-actualizar-catalogo title="Actualizar unidad y costo desde el catálogo"><?= icon('refresh') ?></button>
-      <button type="button" class="icon-btn icon-btn-add" data-abrir-modal-ingrediente title="Crear ingrediente nuevo"><?= icon('plus') ?></button>
       <button type="button" class="icon-btn" data-quitar-fila title="Quitar fila"><?= icon('x') ?></button>
     </div>
     <div class="ing-row-extra">

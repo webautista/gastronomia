@@ -481,6 +481,16 @@ function registrarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, 
     recomputarMontoPagadoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId);
 }
 
+/** Corrige un pago ya registrado (monto/método/fecha/nota) y recalcula el total cacheado. */
+function editarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, int $pagoId, float $monto, string $metodo, string $fechaPago, ?string $nota): void
+{
+    $pdo->prepare(
+        'UPDATE pagos_estudiante SET monto = ?, metodo = ?, fecha_pago = ?, nota = ?
+         WHERE id = ? AND entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?'
+    )->execute([$monto, $metodo, $fechaPago, ($nota !== null && $nota !== '') ? $nota : null, $pagoId, $entidadTipo, $entidadId, $estudianteId]);
+    recomputarMontoPagadoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId);
+}
+
 /** Quita un pago del historial (para corregir uno registrado por error) y recalcula el total cacheado. */
 function eliminarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, int $pagoId): void
 {
