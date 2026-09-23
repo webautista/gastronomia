@@ -916,9 +916,21 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
         // (monto_sin_redondear / cantidad), en vez de arrastrar el costo de
         // una sola línea, así que sigue siendo correcto aunque dos recetas
         // hayan guardado el costo con centavos ligeramente distintos.
+        // Cuántas unidades COMPLETAS hay que comprar en la propia unidad de
+        // uso (ej. 2 piñas enteras para cubrir 1.06 necesarias) — ya se usa
+        // arriba para calcular el monto de una unidad "entera" sin unidad de
+        // compra propia (Piña, Gelatina sin sabor: se compran igual que se
+        // usan), así que se guarda aquí para poder mostrarla también como
+        // nota informativa más abajo (bug reportado por Eyaelkys: el monto
+        // ya reflejaba comprar 2 piñas completas, pero la cantidad mostrada
+        // se quedaba en "1.06 unid" sin avisar que hay que llevar 2 al
+        // súper — la misma info que ya se usa para el precio, ahora también
+        // visible).
+        $cantidadEnteraRedondeada = null;
         if ($g['es_entera'] && $g['cantidad'] > 0) {
+            $cantidadEnteraRedondeada = cantidadDeCompra($g['cantidad'], true);
             $costoPromedioPorUnidad = $g['monto_sin_redondear'] / $g['cantidad'];
-            $monto = cantidadDeCompra($g['cantidad'], true) * $costoPromedioPorUnidad;
+            $monto = $cantidadEnteraRedondeada * $costoPromedioPorUnidad;
         } else {
             $monto = $g['monto_sin_redondear'];
         }
@@ -1025,6 +1037,18 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
         }
         $total += $monto;
 
+        // Nota "hay que comprar N [unidad]" para una unidad entera que NO
+        // tiene una unidad de compra distinta (Piña, Gelatina sin sabor: se
+        // compran igual que se usan) — cuando SÍ hay una unidad de compra
+        // distinta, 'compra' de arriba ya cubre este aviso, así que aquí
+        // solo aplica cuando 'compra' quedó vacío. Solo se muestra si de
+        // verdad hay algo que redondear (si ya se necesitan piñas enteras
+        // exactas, no hace falta aclarar nada).
+        $cantidadEnteraAComprar = null;
+        if ($compra === null && $cantidadEnteraRedondeada !== null && $cantidadEnteraRedondeada > $g['cantidad'] + 0.0000001) {
+            $cantidadEnteraAComprar = $cantidadEnteraRedondeada;
+        }
+
         $lineas[] = [
             'nombre' => $g['nombre'],
             'catalogo_id' => $g['catalogo_id'],
@@ -1033,6 +1057,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             'monto' => $monto,
             'compra' => $compra,
             'compra_decision' => $decisionCompra,
+            'cantidad_entera_a_comprar' => $cantidadEnteraAComprar,
             'recetas' => array_keys($g['recetas']),
         ];
     }
@@ -1106,6 +1131,8 @@ function renderListaCompraTexto(string $titulo, array $consolidado): string
                 // (ver el cálculo de $monto más arriba).
                 default => sprintf(' [comprar ≈ %s %s]', numFmt($l['compra']['cantidad_completa'] ?? $l['compra']['cantidad']), $l['compra']['unidad']),
             };
+        } elseif (!empty($l['cantidad_entera_a_comprar'])) {
+            $compraTxt = sprintf(' [comprar %s %s]', numFmt($l['cantidad_entera_a_comprar']), $l['unidad']);
         }
         $lineas[] = sprintf('[ ] %s — %s %s (%s)%s', $l['nombre'], numFmt($l['cantidad']), $l['unidad'], money($l['monto']), $compraTxt);
     }

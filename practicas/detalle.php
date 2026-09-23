@@ -483,6 +483,10 @@ require __DIR__ . '/../includes/layout_top.php';
                   <button class="btn btn-secondary btn-sm" type="submit" style="font-size:.72rem;padding:2px 8px;">Guardar</button>
                 </form>
                 <?php endif; ?>
+              <?php elseif (!empty($l['cantidad_entera_a_comprar'])): ?>
+                <div class="cell-muted" style="font-size:.78rem;font-weight:400;margin-top:4px;">
+                  comprar <?= numFmt($l['cantidad_entera_a_comprar']) ?> <?= e($l['unidad']) ?>
+                </div>
               <?php endif; ?>
             </td>
             <?php if ($puedeVerRecetasEnCompras): ?><td class="cell-muted" style="font-size:.82rem;"><?= e(implode(', ', $l['recetas'])) ?></td><?php endif; ?>
