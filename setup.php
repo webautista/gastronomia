@@ -800,6 +800,21 @@ function establecerDensidadIngredientes(PDO $pdo): array
         // valor es el que permite llegar hasta Taza (ver
         // establecerPesoUnidadIngredientes() para el puente Unidad↔gramo).
         'Piña' => [0.6875, '165 g por taza de piña picada (USDA FoodData Central)'],
+        // Agregadas al preparar "Pastel de zanahoria con harina de
+        // almendras" y "Yogur con granola y frutas" (sección 30): estos
+        // cuatro ya existían en el catálogo pero solo en peso/gramaje
+        // (Zanahoria y Azúcar morena en Libra, Mango en Unidad, Yogurt
+        // natural (envase grande) en Gramo) y las recetas los piden en
+        // Taza.
+        'Zanahoria' => [0.4583, '110 g por taza, zanahoria rallada (ref. USDA/Nutritionix)'],
+        'Azúcar morena' => [0.8333, '200 g por taza, compactada (medidasrecetascocina.com)'],
+        'Mango' => [0.6875, '165 g por taza de mango en cubos (USDA FoodData Central)'],
+        'Yogurt natural (envase grande)' => [1.0300, 'densidad estándar de yogur entero natural (chefsolver.com)'],
+        // Único ingrediente nuevo que hizo falta para esta tanda: Harina de
+        // almendras no existía en el catálogo (ver INSERT en
+        // sembrarRecetasReposteria4()); sin esta densidad quedaría sin
+        // convertir de Libra a Taza, que es como la pide la receta.
+        'Harina de almendras' => [0.4000, '96 g por taza (gramspercup.com)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
@@ -846,6 +861,11 @@ function establecerPesoUnidadIngredientes(PDO $pdo): array
         // que compra Eyaelkys es distinto, este valor se puede ajustar
         // desde Ingredientes sin tocar código.
         'Piña' => [660.0, '4 tazas de pulpa por piña a 165 g/taza (USDA FoodData Central; rendimiento por fruta: howmuchisin.com)'],
+        // Agregado al preparar "Yogur con granola y frutas" (sección 30):
+        // el Mango del catálogo se compra y usa por Unidad, pero la receta
+        // lo pide en Taza (ya en cubos) — con esto más la densidad de
+        // arriba, queda convertible igual que Fresa y Piña.
+        'Mango' => [250.0, 'peso aproximado de 1 mango entero, variedad común (rango de referencia 150-300 g)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET peso_unidad_g = ? WHERE nombre = ? AND peso_unidad_g IS NULL');
     foreach ($valores as $nombre => [$peso, $nota]) {
@@ -1714,6 +1734,159 @@ function sembrarRecetasReposteria3(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Cuarta tanda de recetas nuevas pedidas por Eyaelkys por chat (sección 30):
+ * Pastel de zanahoria con harina de almendras y Yogur con granola y frutas.
+ * Pidió expresamente que cualquier ingrediente que faltara se agregara "con
+ * todas sus equivalencias correspondientes".
+ *
+ * Único ingrediente nuevo que hizo falta: "Harina de almendras" (no
+ * existía). Precio de referencia: Harina de Almendra Carrefour 125 g,
+ * RD$144.95 (supermercadosrd.com, septiembre 2026) — equivale a ~RD$525.99
+ * por libra, que es como se guarda aquí (igual que las demás harinas del
+ * catálogo, todas en Libra). Su densidad (96 g/taza) se agrega en
+ * establecerDensidadIngredientes() junto con las de Zanahoria, Azúcar
+ * morena, Mango y Yogurt natural (envase grande) — estos cuatro ya existían
+ * pero solo en peso/gramaje, y ambas recetas los piden en Taza; ver esa
+ * función (y establecerPesoUnidadIngredientes() para el peso por Unidad de
+ * Mango) para el detalle y las fuentes de cada valor.
+ *
+ * Con esas equivalencias puestas, el costo de cada línea se calculó con la
+ * misma fórmula que usa el formulario de recetas (costoPorUnidadUso() +
+ * convertirCostoPorUnidad()), no a mano — igual que en las tandas
+ * anteriores.
+ *
+ * Precios estimados de fuentes públicas, no del proveedor real de
+ * Eyaelkys: revisar y ajustar desde Ingredientes si hace falta, igual que
+ * ya ajustó el de la Piña.
+ */
+function sembrarRecetasReposteria4(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $pdo->exec("INSERT IGNORE INTO ingredientes_catalogo
+        (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+        VALUES
+        ('Harina de almendras',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Grano y cereal'),
+         '🌰',
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         1, 525.99,
+         'Harina de Almendra Carrefour 125 g, RD\$144.95 (supermercadosrd.com) equivale a ~RD\$525.99/lb')");
+
+    $idPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    if (!$idPostre) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $crearReceta = function (int $categoriaId, string $nombre, int $porcionesBase, string $descripcion, string $preparacion, array $lineas) use (
+        $pdo, $insLinea, $insAccion, $u, $ing, $accion, &$mensajes
+    ) {
+        $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+        $yaExiste->execute([$nombre]);
+        if ((int) $yaExiste->fetchColumn() > 0) {
+            return;
+        }
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?,?)');
+        $stmtR->execute([$nombre, $descripcion, $categoriaId, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+            $insLinea->execute([
+                $recetaId,
+                $catNombre ? $ing($catNombre) : null,
+                $nombreLinea,
+                $cantidad,
+                $u($unidadNombre),
+                $costo,
+                $reemplazo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = $accion($accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $mensajes[] = "Receta \"$nombre\" creada ($porcionesBase porciones base, " . count($lineas) . ' ingredientes).';
+    };
+
+    $crearReceta(
+        $idPostre,
+        'Pastel de zanahoria con harina de almendras',
+        10,
+        'Molde redondo de 22 cm. Horneado: 40–50 minutos.',
+        "1. Precalienta el horno a 175 °C (350 °F). Engrasa el molde y cubre el fondo con papel para hornear.\n" .
+        "2. En un recipiente, mezcla la harina de almendras, el polvo de hornear, el bicarbonato, la canela, la nuez moscada y la sal.\n" .
+        "3. En otro recipiente, bate los huevos con el azúcar durante 2–3 minutos. Agrega el aceite y la vainilla.\n" .
+        "4. Incorpora los ingredientes secos a la mezcla líquida y remueve suavemente hasta integrarlos.\n" .
+        "5. Agrega la zanahoria rallada, las nueces y las pasas. Mezcla con una espátula. La masa quedará más húmeda y densa que una preparada con harina de trigo.\n" .
+        "6. Vierte la mezcla en el molde y nivela la superficie.\n" .
+        "7. Hornea durante 40–50 minutos. Comprueba la cocción introduciendo un palillo en el centro; debe salir sin masa cruda, aunque puede presentar algunas migas húmedas.\n" .
+        "8. Déjalo enfriar en el molde durante 15 minutos. Luego desmolda cuidadosamente y espera a que se enfríe por completo antes de decorar.",
+        [
+            ['Harina de almendras', 'Harina de almendras', 3, 'Taza', 111.32, [], false, false, null],
+            ['Zanahoria', 'Zanahoria rallada finamente', 2, 'Taza', 7.52, ['Rallado'], false, false, null],
+            ['Huevo', 'Huevo', 4, 'Unidad', 6.50, [], false, false, null],
+            ['Azúcar morena', 'Azúcar morena', 0.75, 'Taza', 14.55, [], false, false, null],
+            ['Aceite vegetal', 'Aceite vegetal o aceite de coco derretido', 0.5, 'Taza', 35.28, [], false, false, null],
+            ['Extracto de vainilla', 'Vainilla', 1, 'Cucharadita', 44.99, [], false, false, null],
+            ['Polvo de hornear', 'Polvo de hornear', 2, 'Cucharadita', 2.50, [], false, false, null],
+            ['Bicarbonato de sodio', 'Bicarbonato de sodio', 0.5, 'Cucharadita', 1.04, [], false, false, null],
+            ['Canela en polvo', 'Canela en polvo', 2, 'Cucharadita', 3.80, [], false, false, null],
+            ['Nuez moscada molida', 'Nuez moscada', 0.25, 'Cucharadita', 6.56, [], false, false, null],
+            ['Sal', 'Sal', 0.5, 'Cucharadita', 0.20, [], false, false, null],
+            ['Nueces', 'Nueces picadas', 0.5, 'Taza', 96.03, ['Picado'], false, true, null],
+            ['Pasas', 'Pasas', 0.33, 'Taza', 71.90, [], false, true, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPostre,
+        'Yogur con granola y frutas',
+        6,
+        'Tiempo de preparación: 10 minutos.',
+        "1. Lava y corta todas las frutas.\n" .
+        "2. Coloca una porción de yogur en cada vaso o recipiente.\n" .
+        "3. Agrega una capa de granola.\n" .
+        "4. Incorpora las rodajas de banana, las fresas y el mango.\n" .
+        "5. Añade otra pequeña capa de yogur y granola.\n" .
+        "6. Decora con miel, nueces o almendras y una pizca de canela.\n" .
+        "7. Sirve inmediatamente para mantener la granola crujiente.\n" .
+        "\n" .
+        'Recomendación: Si vas a prepararlo con anticipación, conserva la granola separada y agrégala justo antes de servir.',
+        [
+            ['Yogurt natural (envase grande)', 'Yogur natural o griego', 6, 'Taza', 36.00, [], false, false, null],
+            ['Granola', 'Granola', 2, 'Taza', 44.18, [], false, false, null],
+            ['Guineo', 'Bananas cortadas en rodajas', 2, 'Unidad', 3.80, ['Cortado en rodajas'], false, false, null],
+            ['Fresa', 'Fresas cortadas', 1, 'Taza', 55.96, ['Cortado en trozos'], false, false, null],
+            ['Mango', 'Mango en cubos', 1, 'Taza', 22.44, ['Cortado en cubos'], false, false, null],
+            ['Miel de abeja', 'Miel', 6, 'Cucharada', 11.82, [], false, false, null],
+            ['Nueces', 'Nueces o almendras picadas', 0.5, 'Taza', 96.03, ['Picado'], false, true, null],
+            ['Canela en polvo', 'Canela en polvo', 0, 'Cucharadita', 3.80, [], true, true, null],
+        ]
+    );
+
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -1773,6 +1946,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria1($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria2($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria3($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasReposteria4($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
