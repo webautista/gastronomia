@@ -815,6 +815,10 @@ function establecerDensidadIngredientes(PDO $pdo): array
         // sembrarRecetasReposteria4()); sin esta densidad quedaría sin
         // convertir de Libra a Taza, que es como la pide la receta.
         'Harina de almendras' => [0.4000, '96 g por taza (gramspercup.com)'],
+        // Agregada al preparar "Yogur helado con granola" (sección 31): el
+        // Yogur griego natural del catálogo se compra y usa por Gramo, pero
+        // la receta lo pide en Taza.
+        'Yogur griego natural' => [1.0042, '241 g por taza, colado (chefsolver.com)'],
     ];
     $stmt = $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL');
     foreach ($valores as $nombre => [$densidad, $nota]) {
@@ -1887,6 +1891,110 @@ function sembrarRecetasReposteria4(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Quinta tanda de recetas nuevas pedidas por Eyaelkys por chat (sección 31):
+ * Yogur helado con granola (yogur griego licuado con fruta congelada,
+ * servido o congelado 3-4 horas).
+ *
+ * No hizo falta ningún ingrediente nuevo en el catálogo — todos ya existían
+ * de tandas anteriores. Al "Yogur griego natural" solo le faltaba la
+ * densidad para poder pedirse en Taza (se agrega en
+ * establecerDensidadIngredientes() junto con las demás, con su fuente).
+ *
+ * La receta ofrece varias opciones para dos líneas: "frutas congeladas:
+ * fresas, mango o frutos rojos" y "miel o azúcar" — se enlazan al catálogo
+ * de Fresa y Miel de abeja respectivamente (los primeros que menciona),
+ * pero el nombre de la línea conserva las alternativas tal como las escribió
+ * ella, igual que ya se hizo con "Aceite vegetal o aceite de coco derretido"
+ * en sembrarRecetasReposteria4(). "Frutas frescas para decorar" no tiene
+ * cantidad ni fruta específica en la receta, así que queda sin enlazar al
+ * catálogo (ingrediente_id null) y marcada "al gusto" igual que "Miel o
+ * sirope al gusto", ambas opcionales — ninguna de las dos entra en el costo
+ * (ver costoTotalReceta() en includes/helpers.php).
+ *
+ * Costo de cada línea calculado con costoPorUnidadUso() +
+ * convertirCostoPorUnidad(), no a mano, igual que las tandas anteriores.
+ */
+function sembrarRecetasReposteria5(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $idPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    if (!$idPostre) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+    $yaExiste->execute(['Yogur helado con granola']);
+    if ((int) $yaExiste->fetchColumn() > 0) {
+        return $mensajes;
+    }
+
+    $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?,?)');
+    $stmtR->execute([
+        'Yogur helado con granola',
+        'Yogur helado cremoso, servido con granola. Tiempo de preparación: 15 minutos. Congelación (opcional, para más firmeza): 3–4 horas.',
+        $idPostre,
+        6,
+        "1. Coloca en la licuadora el yogur griego, la leche, la miel o azúcar, la vainilla y las frutas congeladas.\n" .
+        "2. Licúa hasta obtener una mezcla espesa, cremosa y uniforme. Si está demasiado densa, agrega un poco más de leche.\n" .
+        "3. Para servirlo inmediatamente, distribuye la mezcla en vasos o copas y agrega la granola por encima.\n" .
+        "4. Si deseas una consistencia más firme, coloca la preparación en un recipiente con tapa y congélala durante 3–4 horas.\n" .
+        "5. Antes de servir, déjala reposar a temperatura ambiente durante 5–10 minutos.\n" .
+        "6. Sirve en vasos y añade la granola, frutas frescas y un poco de miel o sirope.\n" .
+        "\n" .
+        'Importante: agrega la granola justo antes de servir para que permanezca crujiente.',
+    ]);
+    $recetaId = (int) $pdo->lastInsertId();
+
+    $lineas = [
+        ['Yogur griego natural', 'Yogur griego natural', 4, 'Taza', 185.95, [], false, false, null],
+        ['Leche entera', 'Leche', 0.5, 'Taza', 17.76, [], false, false, null],
+        ['Miel de abeja', 'Miel o azúcar', 0.5, 'Taza', 189.05, [], false, false, null],
+        ['Extracto de vainilla', 'Vainilla', 1, 'Cucharadita', 44.99, [], false, false, null],
+        ['Fresa', 'Frutas congeladas (fresa, mango o frutos rojos)', 2, 'Taza', 55.96, ['Congelado'], false, false, null],
+        ['Granola', 'Granola', 1.5, 'Taza', 44.18, [], false, false, null],
+        [null, 'Frutas frescas para decorar', 0, 'Unidad', 0, [], true, true, null],
+        ['Miel de abeja', 'Miel o sirope al gusto', 0, 'Cucharada', 11.82, [], true, true, null],
+    ];
+    $orden = 1;
+    foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+        $insLinea->execute([
+            $recetaId,
+            $catNombre ? $ing($catNombre) : null,
+            $nombreLinea,
+            $cantidad,
+            $u($unidadNombre),
+            $costo,
+            $reemplazo,
+            $alGusto ? 1 : 0,
+            $opcional ? 1 : 0,
+            $orden,
+        ]);
+        $lineaId = (int) $pdo->lastInsertId();
+        foreach ($acciones as $accNombre) {
+            $accId = $accion($accNombre);
+            if ($accId) {
+                $insAccion->execute([$lineaId, $accId]);
+            }
+        }
+        $orden++;
+    }
+    $mensajes[] = 'Receta "Yogur helado con granola" creada (6 porciones base, ' . count($lineas) . ' ingredientes).';
+
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -1947,6 +2055,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria2($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria3($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria4($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasReposteria5($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
