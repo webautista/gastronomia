@@ -497,6 +497,7 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 -- pero ningún código ni la matriz de permisos la usan ya.
 ('gastos', 'Gastos de eventos', 30),
 ('estudiantes', 'Estudiantes', 40),
+('padres', 'Padres/tutores (gestión)', 41),
 ('recetas', 'Recetas', 50),
 ('ingredientes', 'Ingredientes (catálogo)', 55),
 ('configuracion', 'Configuración / catálogos', 60),
@@ -572,6 +573,51 @@ CREATE TABLE IF NOT EXISTS estudiantes (
     actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_estudiantes_nombre (nombre),
     CONSTRAINT fk_estudiantes_grupo FOREIGN KEY (grupo_id) REFERENCES grupos_estudiante(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Dos columnas más de "estudiantes" (padre_tutor, telefono_padre_tutor) se
+-- agregaron en su momento desde setup.php (sección 23 de la especificación),
+-- nunca aquí en el CREATE TABLE. Con la tabla "padres" de abajo, esos dos
+-- campos de texto libre quedan en desuso (se migran automáticamente a
+-- "padres" + "padre_estudiante" vía migrarPadresDesdeTextoLibre() en
+-- setup.php) — se dejan sin borrar en la base de datos, por si hace falta
+-- revisar el dato original, pero la aplicación ya no los lee ni los escribe.
+
+-- ---------------------------------------------------------------------
+-- Padres/tutores: entidad propia (antes era un campo de texto suelto en
+-- "estudiantes"), con su propio CRUD y la posibilidad de vincular N
+-- estudiantes a un mismo padre. usuario_id es opcional (NULL mientras el
+-- padre no tenga cuenta de acceso todavía) y único (un usuario de login le
+-- pertenece, como mucho, a un padre) — se deja en usuarios, no al revés,
+-- para que "usuarios" siga siendo una tabla genérica que no necesita saber
+-- nada de padres ni estudiantes.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS padres (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(150) NOT NULL,
+    telefono VARCHAR(30) NULL,
+    email VARCHAR(150) NULL,
+    activo TINYINT(1) NOT NULL DEFAULT 1,
+    usuario_id INT UNSIGNED NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_padres_nombre (nombre),
+    UNIQUE KEY uq_padres_usuario (usuario_id),
+    CONSTRAINT fk_padres_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Vínculo padre↔estudiante (N a N: un padre puede tener varios hijos
+-- vinculados; se deja abierto también a que un estudiante tenga más de un
+-- padre/tutor con acceso, sin forzarlo).
+CREATE TABLE IF NOT EXISTS padre_estudiante (
+    padre_id INT UNSIGNED NOT NULL,
+    estudiante_id INT UNSIGNED NOT NULL,
+    asignado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (padre_id, estudiante_id),
+    CONSTRAINT fk_padest_padre FOREIGN KEY (padre_id)
+        REFERENCES padres(id) ON DELETE CASCADE,
+    CONSTRAINT fk_padest_estudiante FOREIGN KEY (estudiante_id)
+        REFERENCES estudiantes(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------

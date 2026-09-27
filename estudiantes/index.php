@@ -24,13 +24,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 
 $busqueda = trim($_GET['q'] ?? '');
 
-$sql = 'SELECT e.*, ge.nombre AS grupo,
-               (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.estudiante_id = e.id) AS num_eventos
+// El padre/tutor de un estudiante ahora vive en la tabla "padres" (con su
+// propio CRUD, ver módulo Padres), vinculado vía padre_estudiante — ya no en
+// los campos de texto libre padre_tutor/telefono_padre_tutor (que se dejan
+// en la base de datos sin usar, ver db/schema.sql). GROUP_CONCAT junta los
+// nombres si un estudiante llegara a tener más de un padre/tutor vinculado.
+$sql = "SELECT e.*, ge.nombre AS grupo,
+               (SELECT COUNT(*) FROM evento_estudiante ee WHERE ee.estudiante_id = e.id) AS num_eventos,
+               (SELECT GROUP_CONCAT(p.nombre SEPARATOR ', ')
+                  FROM padre_estudiante pe JOIN padres p ON p.id = pe.padre_id
+                  WHERE pe.estudiante_id = e.id) AS padres_nombres
         FROM estudiantes e
-        LEFT JOIN grupos_estudiante ge ON ge.id = e.grupo_id';
+        LEFT JOIN grupos_estudiante ge ON ge.id = e.grupo_id";
 $params = [];
 if ($busqueda !== '') {
-    $sql .= ' WHERE e.nombre LIKE ? OR ge.nombre LIKE ? OR e.padre_tutor LIKE ?';
+    $sql .= ' WHERE e.nombre LIKE ? OR ge.nombre LIKE ?
+              OR EXISTS (SELECT 1 FROM padre_estudiante pe JOIN padres p ON p.id = pe.padre_id
+                         WHERE pe.estudiante_id = e.id AND p.nombre LIKE ?)';
     $like = '%' . $busqueda . '%';
     $params = [$like, $like, $like];
 }
@@ -58,7 +68,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="toolbar">
   <form class="search" method="get" action="index.php">
     <?= icon('search') ?>
-    <input type="text" name="q" placeholder="Buscar por nombre, grupo o padre/tutor..." value="<?= e($busqueda) ?>">
+    <input type="text" name="q" placeholder="Buscar por nombre, grupo o padre/tutor vinculado..." value="<?= e($busqueda) ?>">
   </form>
 </div>
 
@@ -79,11 +89,8 @@ require __DIR__ . '/../includes/layout_top.php';
           <td class="cell-muted mono"><?= e($st['telefono']) ?></td>
           <td class="cell-muted"><?= e($st['email']) ?></td>
           <td class="cell-muted">
-            <?php if (trim((string) ($st['padre_tutor'] ?? '')) !== ''): ?>
-              <?= e($st['padre_tutor']) ?>
-              <?php if (trim((string) ($st['telefono_padre_tutor'] ?? '')) !== ''): ?>
-                <div class="cell-muted mono" style="font-size:.78rem;"><?= e($st['telefono_padre_tutor']) ?></div>
-              <?php endif; ?>
+            <?php if (trim((string) ($st['padres_nombres'] ?? '')) !== ''): ?>
+              <?= e($st['padres_nombres']) ?>
             <?php else: ?>
               —
             <?php endif; ?>

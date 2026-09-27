@@ -1995,6 +1995,70 @@ function sembrarRecetasReposteria5(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Migra los padres/tutores que hoy viven como texto libre en
+ * estudiantes.padre_tutor/telefono_padre_tutor a la tabla "padres" +
+ * "padre_estudiante" (pedido de Eyaelkys: "Debemos llevar el nombre y el
+ * telefono a la tabla de padres y ahi mismo hacer la relacion con ese
+ * estudiante porque esa ya la conoces a nivel de la DB").
+ *
+ * Guardada como el resto de migraciones de datos del proyecto: solo toca un
+ * estudiante que TODAVÍA no tenga ningún vínculo en padre_estudiante (si ya
+ * lo tiene —porque se migró antes, o porque Eyaelkys ya lo cargó a mano
+ * desde el CRUD nuevo— no hace nada), así que correr setup.php de nuevo
+ * nunca duplica nada. Para no crear un padre repetido cuando dos hermanos
+ * comparten el mismo padre/tutor, busca primero si ya existe un padre con el
+ * mismo nombre y teléfono (la comparación de nombre usa la collation
+ * utf8mb4_unicode_ci de la tabla, que ya no distingue mayúsculas/minúsculas)
+ * antes de crear uno nuevo.
+ */
+function migrarPadresDesdeTextoLibre(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'padres', 'id') || !columnaExiste($pdo, 'estudiantes', 'padre_tutor')) {
+        return $mensajes;
+    }
+
+    $yaVinculadoStmt = $pdo->prepare('SELECT 1 FROM padre_estudiante WHERE estudiante_id = ? LIMIT 1');
+    // "telefono <=> ?" en vez de "telefono = ?" para que también empareje
+    // dos padres sin teléfono cargado (NULL <=> NULL es verdadero, a
+    // diferencia de NULL = NULL).
+    $buscarPadreStmt = $pdo->prepare('SELECT id FROM padres WHERE nombre = ? AND (telefono <=> ?) LIMIT 1');
+    $crearPadreStmt = $pdo->prepare('INSERT INTO padres (nombre, telefono) VALUES (?, ?)');
+    $vincularStmt = $pdo->prepare('INSERT IGNORE INTO padre_estudiante (padre_id, estudiante_id) VALUES (?, ?)');
+
+    $padresCreados = 0;
+    $estudiantesVinculados = 0;
+
+    $stmt = $pdo->query("SELECT id, padre_tutor, telefono_padre_tutor FROM estudiantes WHERE padre_tutor IS NOT NULL AND TRIM(padre_tutor) <> ''");
+    foreach ($stmt->fetchAll() as $fila) {
+        $yaVinculadoStmt->execute([$fila['id']]);
+        if ($yaVinculadoStmt->fetchColumn()) {
+            continue;
+        }
+
+        $nombre = trim($fila['padre_tutor']);
+        $telefono = trim((string) ($fila['telefono_padre_tutor'] ?? ''));
+        $telefono = $telefono !== '' ? $telefono : null;
+
+        $buscarPadreStmt->execute([$nombre, $telefono]);
+        $padreId = $buscarPadreStmt->fetchColumn();
+        if (!$padreId) {
+            $crearPadreStmt->execute([$nombre, $telefono]);
+            $padreId = (int) $pdo->lastInsertId();
+            $padresCreados++;
+        }
+
+        $vincularStmt->execute([(int) $padreId, (int) $fila['id']]);
+        $estudiantesVinculados++;
+    }
+
+    if ($estudiantesVinculados > 0) {
+        $mensajes[] = "$estudiantesVinculados estudiante(s) vinculados a $padresCreados padre(s)/tutor(es) nuevos, migrados automáticamente desde el campo de texto \"Padre/madre o tutor\" que ya tenían cargado.";
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2056,6 +2120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria3($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria4($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria5($pdo));
+        $mensajes = array_merge($mensajes, migrarPadresDesdeTextoLibre($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
