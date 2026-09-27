@@ -43,6 +43,8 @@ function icon(string $nombre): string
         'heart' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-9.8-9.1C.6 8 2 4.7 5.2 4a4.6 4.6 0 0 1 6.8 2 4.6 4.6 0 0 1 6.8-2c3.2.7 4.6 4 3 7.4-2.3 4.5-9.8 9.1-9.8 9.1Z"/></svg>',
         'wallet' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h11A2.5 2.5 0 0 1 19 7.5V8H5.5A2.5 2.5 0 0 1 3 5.5v2Z"/><path d="M3 7v10a2.5 2.5 0 0 0 2.5 2.5h13A1.5 1.5 0 0 0 20 18v-8a1.5 1.5 0 0 0-1.5-1.5H5.5A2.5 2.5 0 0 1 3 7Z"/><circle cx="16" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>',
         'link' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15 15 9"/><path d="M10.5 6.5 11.5 5.5a4 4 0 0 1 5.7 5.7l-1.2 1.2"/><path d="M13.5 17.5 12.5 18.5a4 4 0 0 1-5.7-5.7l1.2-1.2"/></svg>',
+        'phone' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L14 13l5 2v4a2 2 0 0 1-2 2A15 15 0 0 1 4 6a2 2 0 0 1 0-2Z"/></svg>',
+        'mail' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 6.5 8 6 8-6"/></svg>',
     ];
 
     return $iconos[$nombre] ?? '';

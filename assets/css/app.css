@@ -398,6 +398,23 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .dash-stat-empty{grid-column:1/-1;font-size:.82rem;color:var(--text-tertiary);}
 
 .dash-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+.dash-footer .row-actions{margin-left:auto;}
+
+/* Dos variantes más del degradado de .dash-card-head, para diferenciar de
+   un vistazo más tipos de tarjeta: Estudiantes usa is-sage (salvia→dorado),
+   Padres usa is-wine-sage (vino→salvia), y Recetas alterna las 4 variantes
+   (por defecto, is-practica, is-sage, is-wine-sage) según su categoría, solo
+   para que categorías distintas se distingan sin tener que leer el texto. */
+.dash-card-head.is-sage{background:linear-gradient(135deg,var(--success) 0%,var(--copper) 100%);}
+.dash-card-head.is-wine-sage{background:linear-gradient(135deg,var(--accent) 0%,var(--success) 100%);}
+
+/* Tarjetas de persona (Estudiantes, Padres): mismo lenguaje visual que
+   .dash-card, con un avatar de iniciales (.child-avatar, ya usado en los
+   paneles) en vez de un ícono de tipo, y una fila de contacto en vez de
+   mini-stats de dinero. */
+.person-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--text-secondary);}
+.person-meta span{display:inline-flex;align-items:center;gap:5px;}
+.person-meta svg{width:13px;height:13px;color:var(--text-tertiary);flex-shrink:0;}
 
 /* Impresión de la pestaña "Lista de Compra" (eventos y prácticas): al
    imprimir (Ctrl+P) desde esa pestaña, se oculta todo el menú/navegación y

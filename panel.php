@@ -156,27 +156,45 @@ require __DIR__ . '/includes/layout_top.php';
       <div>Crea tu primer evento para empezar a planificarlo.</div>
     </div>
   <?php else: ?>
-  <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Evento</th><th>Fecha</th><th>Estado</th><th>Presupuesto</th><th>Pagos</th></tr></thead>
-    <tbody>
-      <?php foreach ($eventos as $ev):
-        $pctRecaudado = $ev['total_confirmado'] > 0 ? round($ev['recaudado'] / $ev['total_confirmado'] * 100) : 0;
-      ?>
-        <tr style="cursor:pointer;" onclick="window.location='eventos/detalle.php?id=<?= (int) $ev['id'] ?>'">
-          <td class="cell-name"><?= e($ev['nombre']) ?></td>
-          <td class="cell-muted"><?= fmtDate($ev['fecha']) ?></td>
-          <td><span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span></td>
-          <td style="min-width:180px;">
+  <div class="event-grid">
+    <?php foreach ($eventos as $ev):
+      $pctRecaudado = $ev['total_confirmado'] > 0 ? round($ev['recaudado'] / $ev['total_confirmado'] * 100) : 0;
+    ?>
+      <div class="dash-card" style="cursor:pointer;" onclick="window.location='eventos/detalle.php?id=<?= (int) $ev['id'] ?>'">
+        <div class="dash-card-head">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('calendar') ?></div>
+              <div>
+                <div class="dash-title"><?= e($ev['nombre']) ?></div>
+                <div class="dash-meta">
+                  <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
+                  <?php if ($ev['lugar']): ?><span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span><?php endif; ?>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
+              <span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat"><div class="dash-stat-label">Proyectado</div><div class="dash-stat-value"><?= money($ev['presupuesto_total']) ?></div></div>
+            <div class="dash-stat"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($ev['gastado']) ?></div></div>
+            <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($ev['cuota_confirmada']) ?></div></div>
+            <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></div></div>
+          </div>
+          <div>
             <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($ev['recaudado']) ?> / <?= money($ev['total_confirmado']) ?></span></div>
             <div class="meter <?= meterClase($pctRecaudado) ?>"><span style="width:<?= min($pctRecaudado, 100) ?>%"></span></div>
-            <div class="cell-muted" style="font-size:.78rem;margin-top:4px;">Proyectado <?= money($ev['presupuesto_total']) ?> · Usado <?= money($ev['gastado']) ?></div>
-          </td>
-          <td class="cell-muted"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?> pagado<?= $ev['num_pagados'] == 1 ? '' : 's' ?></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
+          </div>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="eventos/detalle.php?id=<?= (int) $ev['id'] ?>" onclick="event.stopPropagation()">Ver detalle</a>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
   <?php endif; ?>
 </div>
@@ -189,27 +207,42 @@ require __DIR__ . '/includes/layout_top.php';
       <div>Crea tu primera práctica para empezar a planificarla.</div>
     </div>
   <?php else: ?>
-  <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Práctica</th><th>Fecha</th><th>Materia</th><th>Presupuesto</th><th>Pagos</th></tr></thead>
-    <tbody>
-      <?php foreach ($practicas as $p):
-        $pctRecaudado = $p['total_confirmado'] > 0 ? round($p['recaudado'] / $p['total_confirmado'] * 100) : 0;
-      ?>
-        <tr style="cursor:pointer;" onclick="window.location='practicas/detalle.php?id=<?= (int) $p['id'] ?>'">
-          <td class="cell-name"><?= e($p['nombre']) ?></td>
-          <td class="cell-muted"><?= fmtDate($p['fecha']) ?></td>
-          <td class="cell-muted"><?= $p['materia'] ? e($p['materia']) : '—' ?></td>
-          <td style="min-width:180px;">
+  <div class="event-grid">
+    <?php foreach ($practicas as $p):
+      $pctRecaudado = $p['total_confirmado'] > 0 ? round($p['recaudado'] / $p['total_confirmado'] * 100) : 0;
+    ?>
+      <div class="dash-card" style="cursor:pointer;" onclick="window.location='practicas/detalle.php?id=<?= (int) $p['id'] ?>'">
+        <div class="dash-card-head is-practica">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('whisk') ?></div>
+              <div>
+                <div class="dash-title"><?= e($p['nombre']) ?></div>
+                <div class="dash-meta">
+                  <span><?= icon('calendar') ?> <?= fmtDate($p['fecha']) ?></span>
+                  <?php if ($p['materia']): ?><span><?= icon('book') ?> <?= e($p['materia']) ?></span><?php endif; ?>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat"><div class="dash-stat-label">Proyectado</div><div class="dash-stat-value"><?= money($p['presupuesto_total']) ?></div></div>
+            <div class="dash-stat"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($p['gastado']) ?></div></div>
+            <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($p['cuota_confirmada']) ?></div></div>
+            <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?></div></div>
+          </div>
+          <div>
             <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($p['recaudado']) ?> / <?= money($p['total_confirmado']) ?></span></div>
             <div class="meter <?= meterClase($pctRecaudado) ?>"><span style="width:<?= min($pctRecaudado, 100) ?>%"></span></div>
-            <div class="cell-muted" style="font-size:.78rem;margin-top:4px;">Proyectado <?= money($p['presupuesto_total']) ?> · Usado <?= money($p['gastado']) ?></div>
-          </td>
-          <td class="cell-muted"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?> pagado<?= $p['num_pagados'] == 1 ? '' : 's' ?></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
+          </div>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="practicas/detalle.php?id=<?= (int) $p['id'] ?>" onclick="event.stopPropagation()">Ver detalle</a>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
   <?php endif; ?>
 </div>

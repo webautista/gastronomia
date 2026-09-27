@@ -167,21 +167,55 @@ require __DIR__ . '/../includes/layout_top.php';
   </div></div>
 <?php else: ?>
   <div class="event-grid">
+    <?php
+      // Alterna las 4 variantes de degradado ya definidas para .dash-card-head
+      // según la categoría, solo para diferenciar de un vistazo unas
+      // categorías de otras (misma categoría → siempre el mismo color).
+      $variantesCabecera = ['', 'is-practica', 'is-sage', 'is-wine-sage'];
+    ?>
     <?php foreach ($recetas as $rc): ?>
-      <?php $nombresIng = $ingredientesPorReceta[$rc['id']] ?? []; ?>
-      <div class="event-card">
+      <?php
+        $nombresIng = $ingredientesPorReceta[$rc['id']] ?? [];
+        $varianteCabecera = $variantesCabecera[(int) $rc['categoria_id'] % 4];
+      ?>
+      <div class="dash-card">
         <?php if (!empty($rc['foto'])): ?>
           <a href="ver.php?id=<?= (int) $rc['id'] ?>">
-            <img src="<?= e($base . '/' . $rc['foto']) ?>" alt="Foto de <?= e($rc['nombre']) ?>" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius-md);margin-bottom:10px;">
+            <img src="<?= e($base . '/' . $rc['foto']) ?>" alt="Foto de <?= e($rc['nombre']) ?>" style="width:100%;aspect-ratio:16/9;object-fit:cover;">
           </a>
         <?php endif; ?>
-        <div class="event-card-top">
-          <div>
-            <h3><?= e($rc['nombre']) ?></h3>
-            <div class="cell-muted"><?= e($rc['categoria']) ?></div>
+        <div class="dash-card-head <?= $varianteCabecera ?>">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('whisk') ?></div>
+              <div>
+                <div class="dash-title"><a href="ver.php?id=<?= (int) $rc['id'] ?>"><?= e($rc['nombre']) ?></a></div>
+                <div class="dash-meta">
+                  <span><?= icon('book') ?> <?= e($rc['categoria']) ?></span>
+                  <span><?= icon('portion') ?> Base: <?= (int) $rc['porciones_base'] ?> porciones</span>
+                  <span><?= (int) $rc['num_ingredientes'] ?> ingredientes</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="row-actions">
-            <a class="icon-btn" href="ver.php?id=<?= (int) $rc['id'] ?>" title="Ver receta"><?= icon('eye') ?></a>
+        </div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat is-gold"><div class="dash-stat-label">Costo de preparación</div><div class="dash-stat-value"><?= money($rc['costo_preparacion']) ?></div></div>
+            <div class="dash-stat is-sage"><div class="dash-stat-label">Usada en</div><div class="dash-stat-value"><?= (int) $rc['num_eventos'] ?> evento<?= $rc['num_eventos'] == 1 ? '' : 's' ?></div></div>
+          </div>
+          <div style="font-size:.82rem;color:var(--text-secondary);">
+            <?= e(implode(', ', array_slice($nombresIng, 0, 4))) ?><?= count($nombresIng) > 4 ? '…' : '' ?>
+          </div>
+          <?php if (trim((string) ($rc['preparacion'] ?? '')) !== ''): ?>
+            <details class="prep-details">
+              <summary><?= icon('book') ?> Ver preparación</summary>
+              <div class="prep-text"><?= e($rc['preparacion']) ?></div>
+            </details>
+          <?php endif; ?>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="ver.php?id=<?= (int) $rc['id'] ?>">Ver receta</a>
+            <div class="row-actions">
               <?php if ($puedeCrear): ?>
                 <form method="post" action="index.php">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -202,22 +236,8 @@ require __DIR__ . '/../includes/layout_top.php';
                 </form>
               <?php endif; ?>
             </div>
+          </div>
         </div>
-        <div class="event-meta">
-          <span><?= icon('portion') ?> Base: <?= (int) $rc['porciones_base'] ?> porciones</span>
-          <span><?= (int) $rc['num_ingredientes'] ?> ingredientes</span>
-        </div>
-        <div class="mini-row"><span>Costo de preparación</span><span class="mono"><?= money($rc['costo_preparacion']) ?></span></div>
-        <div style="font-size:.82rem;color:var(--text-secondary);margin:6px 0 8px;">
-          <?= e(implode(', ', array_slice($nombresIng, 0, 4))) ?><?= count($nombresIng) > 4 ? '…' : '' ?>
-        </div>
-        <div class="mini-row"><span>Usada en</span><span><?= (int) $rc['num_eventos'] ?> evento<?= $rc['num_eventos'] == 1 ? '' : 's' ?></span></div>
-        <?php if (trim((string) ($rc['preparacion'] ?? '')) !== ''): ?>
-          <details class="prep-details">
-            <summary><?= icon('book') ?> Ver preparación</summary>
-            <div class="prep-text"><?= e($rc['preparacion']) ?></div>
-          </details>
-        <?php endif; ?>
       </div>
     <?php endforeach; ?>
   </div>

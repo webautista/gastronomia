@@ -73,51 +73,67 @@ require __DIR__ . '/../includes/layout_top.php';
   </form>
 </div>
 
-<div class="card">
-  <div class="table-wrap">
-  <table class="table">
-    <thead>
-      <tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Email</th><th>Padre/madre o tutor</th><th>Eventos</th><th></th></tr>
-    </thead>
-    <tbody>
-      <?php if (!$estudiantes): ?>
-        <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Sin resultados.</td></tr>
-      <?php endif; ?>
-      <?php foreach ($estudiantes as $st): ?>
-        <tr>
-          <td class="cell-name"><?= e($st['nombre']) ?></td>
-          <td class="cell-muted"><?= e($st['grupo'] ?? '—') ?></td>
-          <td class="cell-muted mono"><?= e($st['telefono']) ?></td>
-          <td class="cell-muted"><?= e($st['email']) ?></td>
-          <td class="cell-muted">
-            <?php if (trim((string) ($st['padres_nombres'] ?? '')) !== ''): ?>
-              <?= e($st['padres_nombres']) ?>
-            <?php else: ?>
-              —
-            <?php endif; ?>
-          </td>
-          <td class="cell-muted"><?= (int) $st['num_eventos'] ?></td>
-          <td class="row-actions">
+<?php if (!$estudiantes): ?>
+  <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+    <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin resultados</div>
+    <div>No hay estudiantes que coincidan con tu búsqueda.</div>
+  </div></div>
+<?php else: ?>
+  <div class="event-grid">
+    <?php foreach ($estudiantes as $st): ?>
+      <div class="dash-card">
+        <div class="dash-card-head is-sage">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="child-avatar" style="width:40px;height:40px;font-size:.95rem;"><?= e(iniciales($st['nombre'])) ?></div>
+              <div>
+                <div class="dash-title"><?= e($st['nombre']) ?></div>
+                <div class="dash-meta">
+                  <span><?= icon('users') ?> <?= e($st['grupo'] ?? 'Sin grupo asignado') ?></span>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
+              <span class="chip chip-neutral"><?= (int) $st['num_eventos'] ?> evento<?= $st['num_eventos'] == 1 ? '' : 's' ?></span>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="person-meta">
+            <span><?= icon('phone') ?> <?= $st['telefono'] ? e($st['telefono']) : 'Sin teléfono' ?></span>
+            <span><?= icon('mail') ?> <?= $st['email'] ? e($st['email']) : 'Sin email' ?></span>
+          </div>
+          <div class="person-meta">
+            <span><?= icon('heart') ?>
+              <?php if (trim((string) ($st['padres_nombres'] ?? '')) !== ''): ?>
+                <?= e($st['padres_nombres']) ?>
+              <?php else: ?>
+                Sin padre/madre o tutor vinculado
+              <?php endif; ?>
+            </span>
+          </div>
+          <div class="dash-footer">
             <?php if ($puedeVerFondo): ?>
-              <a class="icon-btn" href="detalle.php?id=<?= (int) $st['id'] ?>" title="Fondo del estudiante"><?= icon('wallet') ?></a>
+              <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $st['id'] ?>">Ver ficha</a>
             <?php endif; ?>
-            <?php if ($puedeEditar): ?>
-              <a class="icon-btn" href="form.php?id=<?= (int) $st['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-            <?php endif; ?>
-            <?php if ($puedeEliminar): ?>
-              <form method="post" action="index.php" data-confirm="¿Eliminar a &quot;<?= e($st['nombre']) ?>&quot; de la lista maestra? También se quitará de los eventos donde esté asignado.">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="eliminar">
-                <input type="hidden" name="id" value="<?= (int) $st['id'] ?>">
-                <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-              </form>
-            <?php endif; ?>
-          </td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
+            <div class="row-actions">
+              <?php if ($puedeEditar): ?>
+                <a class="icon-btn" href="form.php?id=<?= (int) $st['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+              <?php endif; ?>
+              <?php if ($puedeEliminar): ?>
+                <form method="post" action="index.php" data-confirm="¿Eliminar a &quot;<?= e($st['nombre']) ?>&quot; de la lista maestra? También se quitará de los eventos donde esté asignado.">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="eliminar">
+                  <input type="hidden" name="id" value="<?= (int) $st['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                </form>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
-</div>
+<?php endif; ?>
 
 <?php require __DIR__ . '/../includes/layout_bottom.php'; ?>

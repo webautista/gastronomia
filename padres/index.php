@@ -79,48 +79,60 @@ require __DIR__ . '/../includes/layout_top.php';
   </form>
 </div>
 
-<div class="card">
-  <div class="table-wrap">
-  <table class="table">
-    <thead>
-      <tr><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Estudiantes</th><th>Acceso</th><th></th></tr>
-    </thead>
-    <tbody>
-      <?php if (!$padres): ?>
-        <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Sin resultados.</td></tr>
-      <?php endif; ?>
-      <?php foreach ($padres as $pa): ?>
-        <tr>
-          <td class="cell-name"><a href="detalle.php?id=<?= (int) $pa['id'] ?>"><?= e($pa['nombre']) ?></a></td>
-          <td class="cell-muted mono"><?= e($pa['telefono'] ?? '—') ?></td>
-          <td class="cell-muted"><?= e($pa['email'] ?? '—') ?></td>
-          <td class="cell-muted"><?= (int) $pa['num_estudiantes'] ?></td>
-          <td>
-            <?php if ($pa['usuario_id']): ?>
-              <span class="chip chip-success"><?= icon('check') ?> Con acceso</span>
-            <?php else: ?>
-              <span class="chip chip-muted">Sin acceso</span>
-            <?php endif; ?>
-          </td>
-          <td class="row-actions">
-            <a class="icon-btn" href="detalle.php?id=<?= (int) $pa['id'] ?>" title="Ver detalle"><?= icon('eye') ?></a>
-            <?php if ($puedeEditar): ?>
-              <a class="icon-btn" href="form.php?id=<?= (int) $pa['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-            <?php endif; ?>
-            <?php if ($puedeEliminar): ?>
-              <form method="post" action="index.php" data-confirm="¿Eliminar a &quot;<?= e($pa['nombre']) ?>&quot;?">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="eliminar">
-                <input type="hidden" name="id" value="<?= (int) $pa['id'] ?>">
-                <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-              </form>
-            <?php endif; ?>
-          </td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
+<?php if (!$padres): ?>
+  <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+    <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin resultados</div>
+    <div>No hay padres/tutores que coincidan con tu búsqueda.</div>
+  </div></div>
+<?php else: ?>
+  <div class="event-grid">
+    <?php foreach ($padres as $pa): ?>
+      <div class="dash-card">
+        <div class="dash-card-head is-wine-sage">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="child-avatar" style="width:40px;height:40px;font-size:.95rem;"><?= e(iniciales($pa['nombre'])) ?></div>
+              <div>
+                <div class="dash-title"><a href="detalle.php?id=<?= (int) $pa['id'] ?>"><?= e($pa['nombre']) ?></a></div>
+                <div class="dash-meta">
+                  <span><?= icon('users') ?> <?= (int) $pa['num_estudiantes'] ?> estudiante<?= $pa['num_estudiantes'] == 1 ? '' : 's' ?> vinculado<?= $pa['num_estudiantes'] == 1 ? '' : 's' ?></span>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
+              <?php if ($pa['usuario_id']): ?>
+                <span class="chip chip-success"><?= icon('check') ?> Con acceso</span>
+              <?php else: ?>
+                <span class="chip chip-muted">Sin acceso</span>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="person-meta">
+            <span><?= icon('phone') ?> <?= $pa['telefono'] ? e($pa['telefono']) : 'Sin teléfono' ?></span>
+            <span><?= icon('mail') ?> <?= $pa['email'] ? e($pa['email']) : 'Sin email' ?></span>
+          </div>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $pa['id'] ?>">Ver detalle</a>
+            <div class="row-actions">
+              <?php if ($puedeEditar): ?>
+                <a class="icon-btn" href="form.php?id=<?= (int) $pa['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+              <?php endif; ?>
+              <?php if ($puedeEliminar): ?>
+                <form method="post" action="index.php" data-confirm="¿Eliminar a &quot;<?= e($pa['nombre']) ?>&quot;?">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="eliminar">
+                  <input type="hidden" name="id" value="<?= (int) $pa['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                </form>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
-</div>
+<?php endif; ?>
 
 <?php require __DIR__ . '/../includes/layout_bottom.php'; ?>
