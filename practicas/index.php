@@ -32,7 +32,7 @@ if ($busqueda !== '') {
     $sql .= ' WHERE p.nombre LIKE ? OR p.materia LIKE ? OR p.maestro_responsable LIKE ?';
     $params = ['%' . $busqueda . '%', '%' . $busqueda . '%', '%' . $busqueda . '%'];
 }
-$sql .= ' ORDER BY p.fecha DESC';
+$sql .= ' ORDER BY p.fecha ASC';
 
 $stmt = db()->prepare($sql);
 $stmt->execute($params);

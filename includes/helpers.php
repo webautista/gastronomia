@@ -1480,7 +1480,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
     $stmt = $pdo->prepare(
         'SELECT ev.id, ev.nombre, ev.fecha, ee.monto_pagado
          FROM evento_estudiante ee JOIN eventos ev ON ev.id = ee.evento_id
-         WHERE ee.estudiante_id = ? ORDER BY ev.fecha DESC'
+         WHERE ee.estudiante_id = ? ORDER BY ev.fecha ASC'
     );
     $stmt->execute([$estudianteId]);
     foreach ($stmt->fetchAll() as $ev) {
@@ -1507,7 +1507,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
     $stmt = $pdo->prepare(
         'SELECT p.id, p.nombre, p.fecha, pe.monto_pagado
          FROM practica_estudiante pe JOIN practicas p ON p.id = pe.practica_id
-         WHERE pe.estudiante_id = ? ORDER BY p.fecha DESC'
+         WHERE pe.estudiante_id = ? ORDER BY p.fecha ASC'
     );
     $stmt->execute([$estudianteId]);
     foreach ($stmt->fetchAll() as $p) {
@@ -1531,7 +1531,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
         ];
     }
 
-    usort($filas, fn($a, $b) => strcmp($b['fecha'], $a['fecha']));
+    usort($filas, fn($a, $b) => strcmp($a['fecha'], $b['fecha']));
     return $filas;
 }
 
