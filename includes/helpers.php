@@ -1293,3 +1293,147 @@ function renderListaCompraTexto(string $titulo, array $consolidado): string
 
     return implode("\n", $lineas) . "\n";
 }
+
+/**
+ * Invitaciones de auto-registro (ver db/schema.sql, tabla "invitaciones"):
+ * un enlace de un solo uso que un padre/tutor usa para crearse su propia
+ * cuenta de acceso, sin que el administrador tenga que inventarle una
+ * contraseña. Por ahora solo se generan de tipo 'padre' — el diseño queda
+ * listo para invitar estudiantes en el futuro (cuando exista
+ * estudiantes.usuario_id y el rol "Estudiante"), pero esa parte no está
+ * conectada todavía.
+ */
+
+/**
+ * Crea una invitación nueva para $entidadTipo/$entidadId. Borra primero
+ * cualquier invitación previa sin usar de esa misma entidad, para que nunca
+ * queden dos enlaces activos a la vez (generar uno nuevo "reemplaza" al
+ * anterior, que deja de servir). Devuelve el token generado.
+ */
+function crearInvitacion(PDO $pdo, string $entidadTipo, int $entidadId, int $creadoPor, int $horasValidez = 72): string
+{
+    $pdo->prepare('DELETE FROM invitaciones WHERE entidad_tipo = ? AND entidad_id = ? AND usado_en IS NULL')
+        ->execute([$entidadTipo, $entidadId]);
+
+    $token = bin2hex(random_bytes(32));
+    $expira = date('Y-m-d H:i:s', time() + $horasValidez * 3600);
+    $stmt = $pdo->prepare(
+        'INSERT INTO invitaciones (entidad_tipo, entidad_id, token, expira_en, creado_por) VALUES (?,?,?,?,?)'
+    );
+    $stmt->execute([$entidadTipo, $entidadId, $token, $expira, $creadoPor]);
+    return $token;
+}
+
+/**
+ * URL absoluta y compartible de una invitación. Las páginas que la generan
+ * viven una carpeta adentro del sitio (ej. /padres/detalle.php), mientras
+ * que invitacion.php está en la raíz — de ahí el dirname() doble.
+ */
+function urlInvitacion(string $token): string
+{
+    $protocolo = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $raiz = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/\\');
+    return $protocolo . '://' . ($_SERVER['HTTP_HOST'] ?? '') . $raiz . '/invitacion.php?token=' . urlencode($token);
+}
+
+/**
+ * Invitación activa (existe, no se usó, no venció) para $token, con el
+ * nombre de la entidad ya resuelto para mostrarlo en la pantalla pública.
+ * Devuelve null si el token no sirve por cualquier motivo, incluyendo que
+ * el padre ya haya obtenido una cuenta por otra vía mientras el enlace
+ * seguía sin usarse.
+ */
+function obtenerInvitacionValida(PDO $pdo, string $token): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT * FROM invitaciones WHERE token = ? AND usado_en IS NULL AND expira_en > NOW()'
+    );
+    $stmt->execute([$token]);
+    $inv = $stmt->fetch();
+    if (!$inv) {
+        return null;
+    }
+
+    if ($inv['entidad_tipo'] === 'padre') {
+        $stmtE = $pdo->prepare('SELECT * FROM padres WHERE id = ?');
+        $stmtE->execute([$inv['entidad_id']]);
+        $entidad = $stmtE->fetch();
+        if (!$entidad || $entidad['usuario_id']) {
+            return null;
+        }
+        $inv['entidad_nombre'] = $entidad['nombre'];
+    } else {
+        // Tipo 'estudiante': todavía no hay pantalla que las genere ni
+        // usuarios/rol para consumirlas (Paso 5), así que por ahora
+        // cualquier invitación de este tipo se trata como no válida.
+        return null;
+    }
+
+    return $inv;
+}
+
+/**
+ * Consume una invitación de padre ya validada con obtenerInvitacionValida():
+ * crea la cuenta de acceso (usuarios, rol "Padres"), la vincula en
+ * padres.usuario_id y marca la invitación como usada, todo en una
+ * transacción para no dejar una cuenta huérfana si algo falla a mitad de
+ * camino. Devuelve ['ok' => true, 'usuario_id' => N] o ['ok' => false,
+ * 'errores' => [...]].
+ */
+function consumirInvitacionPadre(PDO $pdo, array $invitacion, string $usuarioLogin, string $password): array
+{
+    $errores = [];
+    if ($usuarioLogin === '' || !preg_match('/^[a-zA-Z0-9._-]{3,50}$/', $usuarioLogin)) {
+        $errores[] = 'El usuario debe tener 3-50 caracteres (letras, números, punto, guion).';
+    }
+    if (strlen($password) < 6) {
+        $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
+    }
+    if ($errores) {
+        return ['ok' => false, 'errores' => $errores];
+    }
+
+    $stmtDup = $pdo->prepare('SELECT id FROM usuarios WHERE usuario = ?');
+    $stmtDup->execute([$usuarioLogin]);
+    if ($stmtDup->fetch()) {
+        return ['ok' => false, 'errores' => ['Ese nombre de usuario ya está en uso. Elige otro.']];
+    }
+
+    $stmtRol = $pdo->prepare("SELECT id FROM roles WHERE nombre = 'Padres'");
+    $stmtRol->execute();
+    $rolId = $stmtRol->fetchColumn();
+    if (!$rolId) {
+        return ['ok' => false, 'errores' => ['No se encontró el rol de Padres. Contacta al administrador.']];
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $stmtChk = $pdo->prepare('SELECT usuario_id FROM padres WHERE id = ? FOR UPDATE');
+        $stmtChk->execute([$invitacion['entidad_id']]);
+        $yaVinculado = $stmtChk->fetchColumn();
+        if ($yaVinculado) {
+            $pdo->rollBack();
+            return ['ok' => false, 'errores' => ['Este padre/tutor ya tiene una cuenta de acceso. Si es tuya, inicia sesión normalmente.']];
+        }
+
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        $pdo->prepare('INSERT INTO usuarios (nombre, usuario, password_hash, rol_id, activo) VALUES (?,?,?,?,1)')
+            ->execute([$invitacion['entidad_nombre'], $usuarioLogin, $hash, $rolId]);
+        // Se captura aquí mismo, antes de cualquier otra sentencia: con
+        // PDO::ATTR_EMULATE_PREPARES=false, lastInsertId() después de un
+        // UPDATE en la misma conexión devuelve 0 (el mismo comportamiento
+        // documentado en registrarPagoEstudiante(), más arriba en este
+        // archivo).
+        $usuarioId = (int) $pdo->lastInsertId();
+
+        $pdo->prepare('UPDATE padres SET usuario_id = ? WHERE id = ?')->execute([$usuarioId, $invitacion['entidad_id']]);
+        $pdo->prepare('UPDATE invitaciones SET usado_en = NOW() WHERE id = ?')->execute([$invitacion['id']]);
+
+        $pdo->commit();
+    } catch (Throwable $ex) {
+        $pdo->rollBack();
+        throw $ex;
+    }
+
+    return ['ok' => true, 'usuario_id' => $usuarioId];
+}

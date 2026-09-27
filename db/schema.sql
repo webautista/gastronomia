@@ -631,6 +631,29 @@ CREATE TABLE IF NOT EXISTS padre_estudiante (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
+-- Invitaciones de auto-registro: un enlace de un solo uso para que un
+-- padre/tutor cree su propia cuenta de acceso (usuario + contraseña) sin
+-- que el administrador tenga que inventarle una contraseña. entidad_tipo/
+-- entidad_id sigue el mismo patrón polimórfico que compra_decisiones y
+-- fondo_movimientos, pensando en poder invitar también a estudiantes más
+-- adelante (cuando exista estudiantes.usuario_id y el rol "Estudiante");
+-- por ahora la aplicación solo genera invitaciones de tipo 'padre'.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS invitaciones (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('padre','estudiante') NOT NULL,
+    entidad_id INT UNSIGNED NOT NULL,
+    token VARCHAR(64) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expira_en DATETIME NOT NULL,
+    usado_en DATETIME NULL,
+    creado_por INT UNSIGNED NULL,
+    UNIQUE KEY uq_invitaciones_token (token),
+    INDEX idx_invitaciones_entidad (entidad_tipo, entidad_id),
+    CONSTRAINT fk_invitaciones_usuario FOREIGN KEY (creado_por) REFERENCES usuarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
 -- Recetas (catálogo maestro)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS recetas (

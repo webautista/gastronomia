@@ -34,6 +34,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'desvi
     redirect('detalle.php?id=' . $id);
 }
 
+// Generar (o reemplazar) el enlace de invitación para que este padre/tutor
+// se cree su propia cuenta de acceso (ver crearInvitacion() en
+// includes/helpers.php e invitacion.php en la raíz del sitio).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'generar_invitacion') {
+    requirePermission($usuarioActual, 'padres', 'editar', $base);
+    csrfCheck();
+    if ($padre['usuario_id']) {
+        flash('Este padre/tutor ya tiene una cuenta de acceso.', 'error');
+    } else {
+        crearInvitacion(db(), 'padre', $id, $usuarioActual['id']);
+        flash('Enlace de invitación generado. Cópialo y compártelo con el padre/tutor.');
+    }
+    redirect('detalle.php?id=' . $id);
+}
+
 $stmt = db()->prepare(
     'SELECT e.*, ge.nombre AS grupo
      FROM padre_estudiante pe
@@ -50,6 +65,16 @@ if ($padre['usuario_id']) {
     $stmt = db()->prepare('SELECT nombre, usuario, activo FROM usuarios WHERE id = ?');
     $stmt->execute([$padre['usuario_id']]);
     $usuarioVinculado = $stmt->fetch() ?: null;
+}
+
+$invitacionActiva = null;
+if (!$usuarioVinculado) {
+    $stmt = db()->prepare(
+        "SELECT * FROM invitaciones WHERE entidad_tipo = 'padre' AND entidad_id = ? AND usado_en IS NULL AND expira_en > NOW()
+         ORDER BY id DESC LIMIT 1"
+    );
+    $stmt->execute([$id]);
+    $invitacionActiva = $stmt->fetch() ?: null;
 }
 
 $pageTitle = $padre['nombre'];
@@ -80,10 +105,25 @@ require __DIR__ . '/../includes/layout_top.php';
       <?php if (!$usuarioVinculado['activo']): ?> <span class="chip chip-muted">Inactivo</span><?php endif; ?>
     </p>
   <?php else: ?>
-    <p class="cell-muted">
-      Todavía no tiene cuenta de acceso al sistema.
-      <?php // El botón de "Generar enlace de invitación" para auto-registro llega con el fondo (siguiente pieza de este trabajo). ?>
-    </p>
+    <p class="cell-muted">Todavía no tiene cuenta de acceso al sistema.</p>
+
+    <?php if ($invitacionActiva): ?>
+      <div class="field" style="margin-top:10px;max-width:520px;">
+        <label>Enlace de invitación (vence el <?= fmtDate($invitacionActiva['expira_en']) ?>)</label>
+        <input type="text" class="mono" readonly onclick="this.select()" value="<?= e(urlInvitacion($invitacionActiva['token'])) ?>">
+        <small class="cell-muted">Cópialo y envíalo por WhatsApp, correo, etc. Es de un solo uso.</small>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($puedeEditar): ?>
+      <form method="post" style="margin-top:10px;">
+        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+        <input type="hidden" name="accion" value="generar_invitacion">
+        <button class="btn btn-secondary" type="submit">
+          <?= icon('link') ?> <?= $invitacionActiva ? 'Generar un enlace nuevo' : 'Generar enlace de invitación' ?>
+        </button>
+      </form>
+    <?php endif; ?>
   <?php endif; ?>
 </div>
 
