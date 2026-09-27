@@ -2059,6 +2059,34 @@ function migrarPadresDesdeTextoLibre(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Agrega 'fondo' a la lista de métodos de pago válidos en pagos_estudiante
+ * (efectivo/transferencia/sin_especificar ya existían) — necesario para que
+ * aplicarFondoEstudiante() (includes/helpers.php) pueda registrar un pago
+ * hecho con el fondo del estudiante reutilizando ese mismo historial.
+ * CREATE TABLE IF NOT EXISTS no modifica una tabla que ya existe, así que
+ * este ALTER se hace aquí a mano, comprobando primero si 'fondo' ya está en
+ * el ENUM (seguro de ejecutar varias veces).
+ */
+function agregarMetodoFondoAPagosEstudiante(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'pagos_estudiante', 'metodo')) {
+        return $mensajes;
+    }
+    $stmt = $pdo->prepare(
+        "SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pagos_estudiante' AND COLUMN_NAME = 'metodo'"
+    );
+    $stmt->execute();
+    $tipoActual = (string) $stmt->fetchColumn();
+    if ($tipoActual !== '' && strpos($tipoActual, "'fondo'") === false) {
+        $pdo->exec("ALTER TABLE pagos_estudiante MODIFY metodo ENUM('efectivo','transferencia','sin_especificar','fondo') NOT NULL DEFAULT 'sin_especificar'");
+        $mensajes[] = 'Se habilitó "fondo" como método de pago (para los pagos aplicados desde el fondo del estudiante).';
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2121,6 +2149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria4($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria5($pdo));
         $mensajes = array_merge($mensajes, migrarPadresDesdeTextoLibre($pdo));
+        $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

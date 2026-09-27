@@ -86,6 +86,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fechaPago = $_POST['fecha_pago'] ?? '';
         $nota = trim((string) ($_POST['nota'] ?? ''));
 
+        // Un pago hecho con el fondo del estudiante (metodo='fondo') se
+        // corrige desde "Aplicar fondo" (permiso eventos_fondo), nunca desde
+        // aquí — así el movimiento en fondo_movimientos nunca se desincroniza
+        // del pago que representa. Ver aplicarFondoEstudiante()/
+        // eliminarMovimientoFondo() en includes/helpers.php.
+        $stmtChk = db()->prepare('SELECT metodo FROM pagos_estudiante WHERE id = ? AND entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?');
+        $stmtChk->execute([$pagoId, 'evento', $id, $estudianteId]);
+        if ($stmtChk->fetchColumn() === 'fondo') {
+            flash('Este pago se aplicó desde el fondo del estudiante. Para corregirlo, ve a "Aplicar fondo".', 'error');
+            redirect('pago_estudiante.php?id=' . $id . '&estudiante_id=' . $estudianteId);
+        }
+
         if (!$pagoId) {
             $errores[] = 'No se encontró el pago a corregir.';
         }
@@ -116,6 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($accion === 'eliminar_pago') {
         $pagoId = intOrNull($_POST['pago_id'] ?? null);
         if ($pagoId) {
+            $stmtChk = db()->prepare('SELECT metodo FROM pagos_estudiante WHERE id = ? AND entidad_tipo = ? AND entidad_id = ? AND estudiante_id = ?');
+            $stmtChk->execute([$pagoId, 'evento', $id, $estudianteId]);
+            if ($stmtChk->fetchColumn() === 'fondo') {
+                flash('Este pago se aplicó desde el fondo del estudiante. Para corregirlo, ve a "Aplicar fondo".', 'error');
+                redirect('pago_estudiante.php?id=' . $id . '&estudiante_id=' . $estudianteId);
+            }
             eliminarPagoEstudiante(db(), 'evento', $id, $estudianteId, $pagoId);
             flash('Pago eliminado.');
         }
@@ -256,20 +274,24 @@ require __DIR__ . '/../includes/layout_top.php';
           <td class="mono"><?= money($pago['monto']) ?></td>
           <td>
             <?php
-              $claseMetodo = $pago['metodo'] === 'efectivo' ? 'chip-success' : ($pago['metodo'] === 'transferencia' ? 'chip-neutral' : 'chip-muted');
+              $claseMetodo = $pago['metodo'] === 'efectivo' ? 'chip-success' : (in_array($pago['metodo'], ['transferencia', 'fondo'], true) ? 'chip-neutral' : 'chip-muted');
             ?>
             <span class="chip <?= $claseMetodo ?>"><?= e(etiquetaMetodoPago($pago['metodo'])) ?></span>
           </td>
           <td class="cell-muted"><?= e($pago['nota'] ?? '') ?></td>
           <?php if ($puedeEditar): ?>
             <td class="row-actions">
-              <a class="icon-btn" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= $estudianteId ?>&editar_pago=<?= (int) $pago['id'] ?>#agregar-pago" title="Editar pago"><?= icon('edit') ?></a>
-              <form method="post" style="display:inline;" data-confirm="¿Eliminar este pago de <?= e(money($pago['monto'])) ?>? No se puede deshacer.">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="eliminar_pago">
-                <input type="hidden" name="pago_id" value="<?= (int) $pago['id'] ?>">
-                <button class="icon-btn" type="submit" title="Eliminar pago"><?= icon('trash') ?></button>
-              </form>
+              <?php if ($pago['metodo'] === 'fondo'): ?>
+                <a class="cell-muted" style="font-size:.82rem;" href="aplicar_fondo.php?id=<?= $id ?>&estudiante_id=<?= $estudianteId ?>">Ver en Aplicar fondo</a>
+              <?php else: ?>
+                <a class="icon-btn" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= $estudianteId ?>&editar_pago=<?= (int) $pago['id'] ?>#agregar-pago" title="Editar pago"><?= icon('edit') ?></a>
+                <form method="post" style="display:inline;" data-confirm="¿Eliminar este pago de <?= e(money($pago['monto'])) ?>? No se puede deshacer.">
+                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                  <input type="hidden" name="accion" value="eliminar_pago">
+                  <input type="hidden" name="pago_id" value="<?= (int) $pago['id'] ?>">
+                  <button class="icon-btn" type="submit" title="Eliminar pago"><?= icon('trash') ?></button>
+                </form>
+              <?php endif; ?>
             </td>
           <?php endif; ?>
         </tr>

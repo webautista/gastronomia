@@ -1,0 +1,190 @@
+<?php
+/**
+ * Fondo del estudiante: depósitos (dinero que un padre adelanta) y
+ * aplicaciones (lo que ya se usó en cuotas de eventos/prácticas), con el
+ * saldo disponible calculado siempre en vivo. Depositar es un permiso
+ * aparte (estudiantes_fondo) de aplicar (eventos_fondo/practicas_fondo,
+ * ver eventos/aplicar_fondo.php y practicas/aplicar_fondo.php) — a pedido
+ * explícito de Eyaelkys, para poder asignar uno sin el otro. Por eso aquí
+ * solo se pueden corregir/eliminar depósitos: una aplicación se deshace
+ * desde la pantalla del evento/práctica donde se aplicó, con su propio
+ * permiso (ver aplicarFondoEstudiante()/eliminarMovimientoFondo() en
+ * includes/helpers.php).
+ */
+require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+
+$base = '..';
+$usuarioActual = requireLogin($base);
+requirePermission($usuarioActual, 'estudiantes_fondo', 'ver', $base);
+$puedeDepositar = can($usuarioActual, 'estudiantes_fondo', 'crear');
+$puedeEliminarDeposito = can($usuarioActual, 'estudiantes_fondo', 'eliminar');
+
+$id = intOrNull($_GET['id'] ?? null);
+if (!$id) {
+    redirect('index.php');
+}
+
+$stmt = db()->prepare('SELECT * FROM estudiantes WHERE id = ?');
+$stmt->execute([$id]);
+$estudiante = $stmt->fetch();
+if (!$estudiante) {
+    flash('Ese estudiante ya no existe.', 'error');
+    redirect('index.php');
+}
+
+$errores = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrfCheck();
+    $accion = $_POST['accion'] ?? '';
+
+    if ($accion === 'depositar') {
+        requirePermission($usuarioActual, 'estudiantes_fondo', 'crear', $base);
+        $monto = isset($_POST['monto']) ? (float) $_POST['monto'] : 0;
+        $fecha = $_POST['fecha'] ?? '';
+        $nota = trim((string) ($_POST['nota'] ?? ''));
+
+        if ($monto <= 0) {
+            $errores[] = 'El monto debe ser mayor a 0.';
+        }
+        if (!$fecha || !strtotime($fecha)) {
+            $errores[] = 'La fecha no es válida.';
+        }
+        if (mb_strlen($nota) > 150) {
+            $nota = mb_substr($nota, 0, 150);
+        }
+
+        if (!$errores) {
+            depositarFondoEstudiante(db(), $id, $monto, $fecha, $nota, $usuarioActual['id'], $usuarioActual['nombre']);
+            flash('Depósito registrado.');
+            redirect('detalle.php?id=' . $id);
+        }
+    } elseif ($accion === 'eliminar_deposito') {
+        requirePermission($usuarioActual, 'estudiantes_fondo', 'eliminar', $base);
+        $movimientoId = intOrNull($_POST['movimiento_id'] ?? null);
+        if ($movimientoId) {
+            $stmtChk = db()->prepare('SELECT tipo FROM fondo_movimientos WHERE id = ? AND estudiante_id = ?');
+            $stmtChk->execute([$movimientoId, $id]);
+            if ($stmtChk->fetchColumn() !== 'deposito') {
+                flash('Eso no es un depósito. Una aplicación se deshace desde el evento o práctica donde se usó.', 'error');
+                redirect('detalle.php?id=' . $id);
+            }
+            $errDel = eliminarMovimientoFondo(db(), $movimientoId, $id);
+            if ($errDel) {
+                flash($errDel[0], 'error');
+            } else {
+                flash('Depósito eliminado.');
+            }
+        }
+        redirect('detalle.php?id=' . $id);
+    }
+}
+
+$saldoFondo = saldoFondoEstudiante(db(), $id);
+$historial = historialFondoEstudiante(db(), $id);
+
+$pageTitle = $estudiante['nombre'];
+$activeNav = 'estudiantes';
+$breadcrumb = '<a href="index.php">Estudiantes</a> &nbsp;/&nbsp; <b>' . e($estudiante['nombre']) . '</b>';
+require __DIR__ . '/../includes/layout_top.php';
+?>
+
+<div class="page-head">
+  <div>
+    <h1><?= e($estudiante['nombre']) ?></h1>
+    <p>Fondo del estudiante</p>
+  </div>
+</div>
+
+<?php if ($errores): ?>
+  <div class="alert alert-error"><?= implode('<br>', array_map('e', $errores)) ?></div>
+<?php endif; ?>
+
+<div class="card card-pad" style="margin-bottom:16px;">
+  <div class="cell-muted" style="font-size:.82rem;">Saldo disponible</div>
+  <div class="mono" style="font-size:1.6rem;font-weight:700;"><?= money($saldoFondo) ?></div>
+</div>
+
+<?php if ($puedeDepositar): ?>
+<div class="card card-pad form-card" style="max-width:560px;margin-bottom:16px;">
+  <h2 class="section-title" style="margin-top:0;">Depositar al fondo</h2>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+    <input type="hidden" name="accion" value="depositar">
+    <div class="field-row">
+      <div class="field">
+        <label for="monto">Monto (RD$)</label>
+        <input type="number" id="monto" name="monto" min="0.01" step="0.01" required value="<?= e((string) ($_POST['monto'] ?? '')) ?>">
+      </div>
+      <div class="field">
+        <label for="fecha">Fecha</label>
+        <input type="date" id="fecha" name="fecha" required value="<?= e($_POST['fecha'] ?? date('Y-m-d')) ?>">
+      </div>
+    </div>
+    <div class="field">
+      <label for="nota">Nota (opcional)</label>
+      <input type="text" id="nota" name="nota" maxlength="150" placeholder="Ej. depósito de octubre" value="<?= e($_POST['nota'] ?? '') ?>">
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">Registrar depósito</button>
+    </div>
+  </form>
+</div>
+<?php endif; ?>
+
+<div class="card">
+  <div class="page-head" style="margin-bottom:0;padding:16px 16px 0;">
+    <h2 class="section-title" style="margin:0;">Historial del fondo</h2>
+  </div>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Fecha</th><th>Tipo</th><th>Monto</th><th>Dónde</th><th>Nota</th><th>Registrado por</th><th></th></tr></thead>
+    <tbody>
+      <?php if (!$historial): ?>
+        <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Todavía no hay movimientos en el fondo.</td></tr>
+      <?php endif; ?>
+      <?php foreach ($historial as $mov): ?>
+        <tr>
+          <td class="cell-muted"><?= fmtDate($mov['fecha']) ?></td>
+          <td>
+            <?php if ($mov['tipo'] === 'deposito'): ?>
+              <span class="chip chip-success">Depósito</span>
+            <?php else: ?>
+              <span class="chip chip-neutral">Aplicación</span>
+            <?php endif; ?>
+          </td>
+          <td class="mono"><?= money($mov['monto']) ?></td>
+          <td class="cell-muted">
+            <?php if ($mov['tipo'] === 'aplicacion' && $mov['entidad_nombre']): ?>
+              <?= e($mov['entidad_nombre']) ?>
+              <a href="<?= e($base) ?>/<?= $mov['entidad_tipo'] === 'evento' ? 'eventos' : 'practicas' ?>/aplicar_fondo.php?id=<?= (int) $mov['entidad_id'] ?>&estudiante_id=<?= $id ?>" style="margin-left:6px;font-size:.82rem;">ver</a>
+            <?php else: ?>
+              —
+            <?php endif; ?>
+          </td>
+          <td class="cell-muted"><?= e($mov['nota'] ?? '') ?></td>
+          <td class="cell-muted"><?= e($mov['registrado_por_nombre']) ?></td>
+          <td class="row-actions">
+            <?php if ($mov['tipo'] === 'deposito' && $puedeEliminarDeposito): ?>
+              <form method="post" data-confirm="¿Eliminar este depósito de <?= e(money($mov['monto'])) ?>?">
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="accion" value="eliminar_deposito">
+                <input type="hidden" name="movimiento_id" value="<?= (int) $mov['id'] ?>">
+                <button class="icon-btn" type="submit" title="Eliminar depósito"><?= icon('trash') ?></button>
+              </form>
+            <?php endif; ?>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="form-actions" style="margin-top:16px;">
+  <a class="btn btn-secondary" href="index.php">Volver</a>
+</div>
+
+<?php require __DIR__ . '/../includes/layout_bottom.php'; ?>

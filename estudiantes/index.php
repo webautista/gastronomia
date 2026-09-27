@@ -9,6 +9,7 @@ requirePermission($usuarioActual, 'estudiantes', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'estudiantes', 'editar');
 $puedeCrear = can($usuarioActual, 'estudiantes', 'crear');
 $puedeEliminar = can($usuarioActual, 'estudiantes', 'eliminar');
+$puedeVerFondo = can($usuarioActual, 'estudiantes_fondo', 'ver');
 
 // Eliminar estudiante (POST)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
@@ -97,6 +98,9 @@ require __DIR__ . '/../includes/layout_top.php';
           </td>
           <td class="cell-muted"><?= (int) $st['num_eventos'] ?></td>
           <td class="row-actions">
+            <?php if ($puedeVerFondo): ?>
+              <a class="icon-btn" href="detalle.php?id=<?= (int) $st['id'] ?>" title="Fondo del estudiante"><?= icon('wallet') ?></a>
+            <?php endif; ?>
             <?php if ($puedeEditar): ?>
               <a class="icon-btn" href="form.php?id=<?= (int) $st['id'] ?>" title="Editar"><?= icon('edit') ?></a>
             <?php endif; ?>

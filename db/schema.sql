@@ -485,6 +485,11 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('eventos_lista_compra_recetas', 'Recetas en Lista de Compra', 22),
 ('eventos_gastos', 'Gastos', 23),
 ('eventos_estudiantes', 'Estudiantes y pagos', 24),
+-- Aplicar el fondo del estudiante a la cuota de este evento/práctica es un
+-- permiso aparte del pago directo (eventos_estudiantes/practicas_estudiantes:
+-- editar), a pedido explícito de Eyaelkys, para poder asignar uno sin el
+-- otro (mismo "orden" que Estudiantes y pagos para salir justo debajo).
+('eventos_fondo', 'Aplicar fondo', 24),
 ('practicas', 'Prácticas', 25),
 -- Lo mismo, pero para el detalle de una Práctica.
 ('practicas_recetas', 'Recetas', 26),
@@ -492,11 +497,16 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('practicas_lista_compra_recetas', 'Recetas en Lista de Compra', 27),
 ('practicas_gastos', 'Gastos', 28),
 ('practicas_estudiantes', 'Estudiantes y pagos', 29),
+('practicas_fondo', 'Aplicar fondo', 29),
 -- "gastos" queda en desuso a partir de esta versión (ver "eventos_gastos" y
 -- "practicas_gastos" arriba) — se deja la fila para no romper datos viejos,
 -- pero ningún código ni la matriz de permisos la usan ya.
 ('gastos', 'Gastos de eventos', 30),
 ('estudiantes', 'Estudiantes', 40),
+-- Depositar al fondo, ver el historial general y corregir/eliminar un
+-- depósito: a nivel del estudiante (no de un evento/práctica en particular),
+-- separado también de "estudiantes" (que solo controla la lista maestra).
+('estudiantes_fondo', 'Fondo del estudiante', 40),
 ('padres', 'Padres/tutores (gestión)', 41),
 ('recetas', 'Recetas', 50),
 ('ingredientes', 'Ingredientes (catálogo)', 55),
@@ -811,6 +821,52 @@ CREATE TABLE IF NOT EXISTS pagos_estudiante (
     CONSTRAINT fk_pagoest_estudiante FOREIGN KEY (estudiante_id)
         REFERENCES estudiantes(id) ON DELETE CASCADE,
     INDEX idx_pagoest_entidad (entidad_tipo, entidad_id, estudiante_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- El método 'fondo' (pago hecho desde el fondo del estudiante, ver
+-- fondo_movimientos abajo) se agrega a la columna "metodo" de arriba desde
+-- setup.php (agregarMetodoFondoAPagosEstudiante()), nunca aquí en el CREATE
+-- TABLE — mismo criterio que cualquier otro cambio a una tabla ya existente.
+
+-- ---------------------------------------------------------------------
+-- Fondo del estudiante: dinero que un padre/tutor deposita por adelantado
+-- para que se vaya aplicando a las cuotas de eventos y prácticas, en vez de
+-- pagar cada una por separado. Un solo fondo compartido por estudiante
+-- (nunca por evento/práctica) — el saldo se calcula siempre en vivo
+-- (depósitos − aplicaciones, ver saldoFondoEstudiante() en helpers.php),
+-- nunca se guarda en una columna. registrado_por + registrado_por_nombre
+-- cubren "quién hizo qué y cuándo" (creado_en): se guarda también el
+-- nombre porque usuarios sí se puede borrar de verdad (usuarios/index.php),
+-- y el registro de auditoría no debe perderse si eso pasa más adelante.
+-- Aplicar el fondo a una cuota (tipo='aplicacion') reutiliza
+-- registrarPagoEstudiante()/pagos_estudiante con metodo='fondo' —
+-- pago_estudiante_id enlaza con esa fila para poder revertir los dos juntos
+-- (ver aplicarFondoEstudiante()/eliminarMovimientoFondo() en helpers.php) y
+-- para que el historial de pagos de ese evento/práctica ya muestre el pago
+-- hecho con fondo sin pantallas repetidas. Un depósito (tipo='deposito')
+-- no toca pagos_estudiante — solo aumenta lo disponible en el fondo.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fondo_movimientos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    estudiante_id INT UNSIGNED NOT NULL,
+    tipo ENUM('deposito','aplicacion') NOT NULL,
+    monto DECIMAL(10,2) NOT NULL,
+    fecha DATE NOT NULL,
+    entidad_tipo ENUM('evento','practica') NULL,
+    entidad_id INT UNSIGNED NULL,
+    pago_estudiante_id INT UNSIGNED NULL,
+    nota VARCHAR(150) NULL,
+    registrado_por INT UNSIGNED NULL,
+    registrado_por_nombre VARCHAR(150) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_fondomov_estudiante FOREIGN KEY (estudiante_id)
+        REFERENCES estudiantes(id) ON DELETE CASCADE,
+    CONSTRAINT fk_fondomov_usuario FOREIGN KEY (registrado_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    CONSTRAINT fk_fondomov_pago FOREIGN KEY (pago_estudiante_id)
+        REFERENCES pagos_estudiante(id) ON DELETE SET NULL,
+    INDEX idx_fondomov_estudiante (estudiante_id),
+    INDEX idx_fondomov_entidad (entidad_tipo, entidad_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Gastos asociados a un evento o a una práctica (uno de los dos, nunca

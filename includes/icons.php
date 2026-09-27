@@ -41,6 +41,7 @@ function icon(string $nombre): string
         'alertTriangle' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a1.7 1.7 0 0 0 1.5 2.5h17.2a1.7 1.7 0 0 0 1.5-2.5L13.7 3.9a1.7 1.7 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>',
         'receipt' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2Z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>',
         'heart' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-9.8-9.1C.6 8 2 4.7 5.2 4a4.6 4.6 0 0 1 6.8 2 4.6 4.6 0 0 1 6.8-2c3.2.7 4.6 4 3 7.4-2.3 4.5-9.8 9.1-9.8 9.1Z"/></svg>',
+        'wallet' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h11A2.5 2.5 0 0 1 19 7.5V8H5.5A2.5 2.5 0 0 1 3 5.5v2Z"/><path d="M3 7v10a2.5 2.5 0 0 0 2.5 2.5h13A1.5 1.5 0 0 0 20 18v-8a1.5 1.5 0 0 0-1.5-1.5H5.5A2.5 2.5 0 0 1 3 7Z"/><circle cx="16" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>',
     ];
 
     return $iconos[$nombre] ?? '';

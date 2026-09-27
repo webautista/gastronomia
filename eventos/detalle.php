@@ -16,6 +16,9 @@ $puedeVerEstudiantesTab = can($usuarioActual, 'eventos_estudiantes', 'ver');
 $puedeCrearEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'crear');
 $puedeEditarEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'editar');
 $puedeEliminarEstudianteTab = can($usuarioActual, 'eventos_estudiantes', 'eliminar');
+// Aplicar el fondo del estudiante es un permiso aparte del pago directo de
+// arriba (eventos_fondo, no eventos_estudiantes) — ver eventos/aplicar_fondo.php.
+$puedeVerFondoTab = can($usuarioActual, 'eventos_fondo', 'ver');
 $puedeVerRecetasTab = can($usuarioActual, 'eventos_recetas', 'ver');
 $puedeCrearRecetaTab = can($usuarioActual, 'eventos_recetas', 'crear');
 $puedeEditarRecetaTab = can($usuarioActual, 'eventos_recetas', 'editar');
@@ -461,6 +464,9 @@ require __DIR__ . '/../includes/layout_top.php';
             <td class="row-actions">
               <?php if ($puedeVerEstudiantesTab): ?>
                 <a class="btn btn-secondary btn-sm" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('receipt') ?> <?= $puedeEditarEstudianteTab ? 'Pagos' : 'Ver pagos' ?></a>
+              <?php endif; ?>
+              <?php if ($puedeVerFondoTab): ?>
+                <a class="btn btn-secondary btn-sm" href="aplicar_fondo.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('wallet') ?> Fondo</a>
               <?php endif; ?>
               <?php if ($puedeEliminarEstudianteTab): ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">

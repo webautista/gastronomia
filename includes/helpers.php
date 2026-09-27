@@ -471,14 +471,23 @@ function recomputarMontoPagadoEstudiante(PDO $pdo, string $entidadTipo, int $ent
     }
 }
 
-/** Agrega un pago al historial y recalcula el total cacheado (ver arriba). */
-function registrarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, float $monto, string $metodo, string $fechaPago, ?string $nota): void
+/**
+ * Agrega un pago al historial y recalcula el total cacheado (ver arriba).
+ * Devuelve el id del pago insertado (lo usa aplicarFondoEstudiante() para
+ * enlazar el movimiento del fondo con este pago) — se captura ANTES de
+ * llamar a recomputarMontoPagadoEstudiante(), porque ese UPDATE deja
+ * lastInsertId() en 0 en esta conexión (probado: un UPDATE posterior borra
+ * el valor que dejó el INSERT anterior).
+ */
+function registrarPagoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, float $monto, string $metodo, string $fechaPago, ?string $nota): int
 {
     $pdo->prepare(
         'INSERT INTO pagos_estudiante (entidad_tipo, entidad_id, estudiante_id, monto, metodo, fecha_pago, nota)
          VALUES (?, ?, ?, ?, ?, ?, ?)'
     )->execute([$entidadTipo, $entidadId, $estudianteId, $monto, $metodo, $fechaPago, ($nota !== null && $nota !== '') ? $nota : null]);
+    $pagoId = (int) $pdo->lastInsertId();
     recomputarMontoPagadoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId);
+    return $pagoId;
 }
 
 /** Corrige un pago ya registrado (monto/método/fecha/nota) y recalcula el total cacheado. */
@@ -507,9 +516,143 @@ function etiquetaMetodoPago(string $metodo): string
             return 'Efectivo';
         case 'transferencia':
             return 'Transferencia bancaria';
+        case 'fondo':
+            return 'Fondo del estudiante';
         default:
             return 'Sin especificar';
     }
+}
+
+/**
+ * ---------------------------------------------------------------------
+ * Fondo del estudiante (fondo_movimientos, ver db/schema.sql): un padre
+ * deposita por adelantado y ese saldo se va aplicando a cuotas de eventos y
+ * prácticas. El saldo NUNCA se guarda — siempre se calcula en vivo sumando
+ * depósitos y restando aplicaciones, para no arrastrar un total
+ * desincronizado si algo se corrige después.
+ * ---------------------------------------------------------------------
+ */
+
+/** Saldo disponible ahora mismo en el fondo de un estudiante. */
+function saldoFondoEstudiante(PDO $pdo, int $estudianteId): float
+{
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(CASE WHEN tipo = 'deposito' THEN monto ELSE -monto END), 0)
+         FROM fondo_movimientos WHERE estudiante_id = ?"
+    );
+    $stmt->execute([$estudianteId]);
+    return (float) $stmt->fetchColumn();
+}
+
+/**
+ * Historial completo de movimientos del fondo de un estudiante (depósitos y
+ * aplicaciones), del más reciente al más antiguo, con el nombre del
+ * evento/práctica cuando el movimiento es una aplicación.
+ */
+function historialFondoEstudiante(PDO $pdo, int $estudianteId): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT fm.*,
+                CASE fm.entidad_tipo
+                    WHEN 'evento' THEN (SELECT nombre FROM eventos WHERE id = fm.entidad_id)
+                    WHEN 'practica' THEN (SELECT nombre FROM practicas WHERE id = fm.entidad_id)
+                    ELSE NULL
+                END AS entidad_nombre
+         FROM fondo_movimientos fm
+         WHERE fm.estudiante_id = ?
+         ORDER BY fm.fecha DESC, fm.id DESC"
+    );
+    $stmt->execute([$estudianteId]);
+    return $stmt->fetchAll();
+}
+
+/** Registra un depósito al fondo de un estudiante. */
+function depositarFondoEstudiante(PDO $pdo, int $estudianteId, float $monto, string $fecha, ?string $nota, int $usuarioId, string $usuarioNombre): void
+{
+    $pdo->prepare(
+        'INSERT INTO fondo_movimientos (estudiante_id, tipo, monto, fecha, nota, registrado_por, registrado_por_nombre)
+         VALUES (?, \'deposito\', ?, ?, ?, ?, ?)'
+    )->execute([$estudianteId, $monto, $fecha, ($nota !== null && $nota !== '') ? $nota : null, $usuarioId, $usuarioNombre]);
+}
+
+/**
+ * Aplica un monto del fondo del estudiante a la cuota de un evento o
+ * práctica: registra el pago reutilizando registrarPagoEstudiante() (con
+ * metodo='fondo', para que el historial de pagos de ese evento/práctica y
+ * el monto_pagado ya existentes se mantengan en sincronía automáticamente,
+ * ver el comentario en pagos_estudiante en db/schema.sql) y, en la misma
+ * transacción, registra el movimiento en fondo_movimientos enlazado a ese
+ * pago. Devuelve un arreglo de errores (vacío si todo salió bien) — nunca
+ * deja aplicar más de lo que el estudiante tiene disponible en el fondo.
+ */
+function aplicarFondoEstudiante(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId, float $monto, string $fecha, ?string $nota, int $usuarioId, string $usuarioNombre): array
+{
+    if ($monto <= 0) {
+        return ['El monto debe ser mayor a 0.'];
+    }
+    $saldo = saldoFondoEstudiante($pdo, $estudianteId);
+    if ($monto > $saldo + 0.005) {
+        return ['El estudiante solo tiene ' . number_format($saldo, 2) . ' disponible en su fondo.'];
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $pagoId = registrarPagoEstudiante($pdo, $entidadTipo, $entidadId, $estudianteId, $monto, 'fondo', $fecha, $nota);
+
+        $pdo->prepare(
+            'INSERT INTO fondo_movimientos (estudiante_id, tipo, monto, fecha, entidad_tipo, entidad_id, pago_estudiante_id, nota, registrado_por, registrado_por_nombre)
+             VALUES (?, \'aplicacion\', ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$estudianteId, $monto, $fecha, $entidadTipo, $entidadId, $pagoId, ($nota !== null && $nota !== '') ? $nota : null, $usuarioId, $usuarioNombre]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    return [];
+}
+
+/**
+ * Elimina un movimiento del fondo (para corregir uno registrado por error).
+ * Un depósito solo se puede eliminar si el saldo restante, después de
+ * quitarlo, no queda negativo (es decir, si ya se aplicó más de lo que
+ * quedaría). Una aplicación siempre revierte también el pago vinculado en
+ * pagos_estudiante (eliminarPagoEstudiante(), que recalcula monto_pagado),
+ * para que el evento/práctica correspondiente no se quede con un pago
+ * "fantasma" que ya nadie respalda desde el fondo. Devuelve un arreglo de
+ * errores (vacío si se eliminó correctamente).
+ */
+function eliminarMovimientoFondo(PDO $pdo, int $movimientoId, int $estudianteId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM fondo_movimientos WHERE id = ? AND estudiante_id = ?');
+    $stmt->execute([$movimientoId, $estudianteId]);
+    $movimiento = $stmt->fetch();
+    if (!$movimiento) {
+        return ['Ese movimiento ya no existe.'];
+    }
+
+    if ($movimiento['tipo'] === 'deposito') {
+        $saldo = saldoFondoEstudiante($pdo, $estudianteId);
+        if ($saldo - (float) $movimiento['monto'] < -0.005) {
+            return ['No se puede eliminar: ya se aplicó del fondo más de lo que quedaría disponible sin este depósito.'];
+        }
+        $pdo->prepare('DELETE FROM fondo_movimientos WHERE id = ?')->execute([$movimientoId]);
+        return [];
+    }
+
+    // tipo === 'aplicacion': revertir también el pago vinculado, si todavía existe.
+    $pdo->beginTransaction();
+    try {
+        if ($movimiento['pago_estudiante_id'] && $movimiento['entidad_tipo'] && $movimiento['entidad_id']) {
+            eliminarPagoEstudiante($pdo, $movimiento['entidad_tipo'], (int) $movimiento['entidad_id'], $estudianteId, (int) $movimiento['pago_estudiante_id']);
+        }
+        $pdo->prepare('DELETE FROM fondo_movimientos WHERE id = ?')->execute([$movimientoId]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    return [];
 }
 
 /**
