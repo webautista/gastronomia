@@ -91,52 +91,63 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php else: ?>
   <div class="event-grid">
     <?php foreach ($eventos as $ev): ?>
-      <div class="event-card">
-        <div class="event-card-top">
-          <div><h3><a href="detalle.php?id=<?= (int) $ev['id'] ?>"><?= e($ev['nombre']) ?></a></h3></div>
-          <div class="row-actions">
-            <?php if (empty($ev['cuota_publica'])): ?>
-              <span class="chip chip-muted" title="La cuota de este evento no se muestra en la página pública"><?= icon('lock') ?> No pública</span>
-            <?php endif; ?>
-            <span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span>
+      <div class="dash-card">
+        <div class="dash-card-head">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('calendar') ?></div>
+              <div>
+                <div class="dash-title"><a href="detalle.php?id=<?= (int) $ev['id'] ?>"><?= e($ev['nombre']) ?></a></div>
+                <div class="dash-meta">
+                  <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
+                  <span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span>
+                  <span><?= icon('portion') ?> <?= (int) $ev['porciones_totales'] ?> porciones</span>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
+              <span class="chip <?= chipEstadoClase($ev['estado']) ?>"><?= e($ev['estado']) ?></span>
+              <?php if (empty($ev['cuota_publica'])): ?>
+                <span class="chip chip-muted" title="La cuota de este evento no se muestra en la página pública"><?= icon('lock') ?> No pública</span>
+              <?php endif; ?>
+            </div>
           </div>
         </div>
-        <div class="event-meta">
-          <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
-          <span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span>
-          <span><?= icon('portion') ?> <?= (int) $ev['porciones_totales'] ?> porciones</span>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <div class="mini-row"><span>Inversión total</span><span class="mono"><?= money($ev['total_proyeccion']) ?></span></div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat"><div class="dash-stat-label">Inversión total</div><div class="dash-stat-value"><?= money($ev['total_proyeccion']) ?></div></div>
+            <?php if ((int) $ev['num_estudiantes'] > 0): ?>
+              <div class="dash-stat"><div class="dash-stat-label">Cuota proyectada</div><div class="dash-stat-value"><?= money($ev['cuota_proyectada']) ?></div></div>
+              <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($ev['cuota_confirmada']) ?></div></div>
+              <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></div></div>
+            <?php else: ?>
+              <div class="dash-stat-empty">Asigna estudiantes para calcular la cuota.</div>
+            <?php endif; ?>
+          </div>
           <?php if ((int) $ev['num_estudiantes'] > 0): ?>
-            <div class="mini-row"><span>Cuota proyectada</span><span class="mono"><?= money($ev['cuota_proyectada']) ?></span></div>
-            <div class="mini-row"><span>Cuota confirmada</span><span class="mono"><?= money($ev['cuota_confirmada']) ?></span></div>
             <div>
               <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($ev['recaudado']) ?> / <?= money($ev['total_confirmado']) ?></span></div>
               <div class="meter <?= meterClase($ev['total_confirmado'] > 0 ? round($ev['recaudado'] / $ev['total_confirmado'] * 100) : 0) ?>"><span style="width:<?= $ev['total_confirmado'] > 0 ? min(round($ev['recaudado'] / $ev['total_confirmado'] * 100), 100) : 0 ?>%"></span></div>
             </div>
-            <div class="mini-row"><span>Estudiantes al día</span><span><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></span></div>
-          <?php else: ?>
-            <div class="mini-row"><span>Cuota</span><span class="cell-muted">Asigna estudiantes para calcularla</span></div>
           <?php endif; ?>
-        </div>
-        <div class="row-actions" style="justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
-          <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>
-          <?php if ($puedeEditar || $puedeEliminar): ?>
-            <div class="row-actions">
-              <?php if ($puedeEditar): ?>
-                <a class="icon-btn" href="form.php?id=<?= (int) $ev['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-              <?php endif; ?>
-              <?php if ($puedeEliminar): ?>
-                <form method="post" action="index.php" data-confirm="¿Eliminar el evento &quot;<?= e($ev['nombre']) ?>&quot;? Se perderán sus estudiantes asignados, recetas y gastos registrados.">
-                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                  <input type="hidden" name="accion" value="eliminar">
-                  <input type="hidden" name="id" value="<?= (int) $ev['id'] ?>">
-                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-                </form>
-              <?php endif; ?>
-            </div>
-          <?php endif; ?>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>
+            <?php if ($puedeEditar || $puedeEliminar): ?>
+              <div class="row-actions">
+                <?php if ($puedeEditar): ?>
+                  <a class="icon-btn" href="form.php?id=<?= (int) $ev['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+                <?php endif; ?>
+                <?php if ($puedeEliminar): ?>
+                  <form method="post" action="index.php" data-confirm="¿Eliminar el evento &quot;<?= e($ev['nombre']) ?>&quot;? Se perderán sus estudiantes asignados, recetas y gastos registrados.">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                    <input type="hidden" name="accion" value="eliminar">
+                    <input type="hidden" name="id" value="<?= (int) $ev['id'] ?>">
+                    <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                  </form>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
+          </div>
         </div>
       </div>
     <?php endforeach; ?>

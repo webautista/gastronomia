@@ -364,6 +364,41 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .pago-row .pago-monto{font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--text);min-width:90px;}
 .pago-row .pago-nota{color:var(--text-secondary);font-size:.78rem;margin-left:auto;}
 
+/* Tarjetas de Eventos y Prácticas en su listado (eventos/index.php,
+   practicas/index.php): mismo lenguaje visual que los paneles de padre y
+   estudiante de arriba (encabezado con degradado, mini-stats de color)
+   para que el listado dé un vistazo rápido y agradable en vez de la
+   tarjeta plana anterior. Puramente aditivo — usan el mismo contenedor de
+   cuadrícula .event-grid de siempre, y el listado de Recetas sigue usando
+   .event-card sin cambios. */
+.dash-card{border-radius:var(--radius-lg);overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);display:flex;flex-direction:column;height:100%;transition:box-shadow .15s ease;}
+.dash-card:hover{box-shadow:0 6px 20px rgba(42,27,23,.12);}
+.dash-card-head{padding:18px 20px 16px;color:#fff;background:linear-gradient(135deg,var(--accent) 0%,var(--copper) 100%);}
+.dash-card-head.is-practica{background:linear-gradient(135deg,var(--copper) 0%,var(--accent-strong) 100%);}
+.dash-head-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.dash-head-id{display:flex;align-items:flex-start;gap:12px;min-width:0;}
+.dash-icon{width:40px;height:40px;border-radius:11px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid rgba(255,255,255,.35);}
+.dash-icon svg{width:19px;height:19px;}
+.dash-title{font-family:'Fraunces',serif;font-size:1.05rem;font-weight:600;line-height:1.3;}
+.dash-title a{color:#fff;}
+.dash-title a:hover{text-decoration:underline;}
+.dash-meta{font-size:.78rem;opacity:.92;display:flex;gap:11px;flex-wrap:wrap;margin-top:6px;}
+.dash-meta span{display:inline-flex;align-items:center;gap:4px;}
+.dash-meta svg{width:12px;height:12px;}
+.dash-chips{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
+.dash-chips .chip-muted{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.5);color:#fff;}
+
+.dash-body{padding:16px 20px 18px;display:flex;flex-direction:column;gap:14px;flex:1;}
+.dash-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:9px;}
+.dash-stat{background:var(--surface-2);border-radius:var(--radius-md);padding:8px 11px;}
+.dash-stat-label{font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;color:var(--text-tertiary);font-weight:700;}
+.dash-stat-value{font-family:'IBM Plex Mono',monospace;font-size:.92rem;font-weight:700;color:var(--text);margin-top:2px;}
+.dash-stat.is-gold .dash-stat-value{color:var(--copper);}
+.dash-stat.is-sage .dash-stat-value{color:var(--success);}
+.dash-stat-empty{grid-column:1/-1;font-size:.82rem;color:var(--text-tertiary);}
+
+.dash-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
+
 /* Impresión de la pestaña "Lista de Compra" (eventos y prácticas): al
    imprimir (Ctrl+P) desde esa pestaña, se oculta todo el menú/navegación y
    los botones, dejando solo el contenido de la lista lista para llevar al

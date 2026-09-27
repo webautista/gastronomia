@@ -97,50 +97,58 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php else: ?>
   <div class="event-grid">
     <?php foreach ($practicas as $p): ?>
-      <div class="event-card">
-        <div class="event-card-top">
-          <div><h3><a href="detalle.php?id=<?= (int) $p['id'] ?>"><?= e($p['nombre']) ?></a></h3></div>
+      <div class="dash-card">
+        <div class="dash-card-head is-practica">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('whisk') ?></div>
+              <div>
+                <div class="dash-title"><a href="detalle.php?id=<?= (int) $p['id'] ?>"><?= e($p['nombre']) ?></a></div>
+                <div class="dash-meta">
+                  <span><?= icon('calendar') ?> <?= fmtDate($p['fecha']) ?></span>
+                  <?php if ($p['materia']): ?><span><?= icon('book') ?> <?= e($p['materia']) ?></span><?php endif; ?>
+                  <?php if ($p['maestro_responsable']): ?><span><?= icon('users') ?> <?= e($p['maestro_responsable']) ?></span><?php endif; ?>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="event-meta">
-          <span><?= icon('calendar') ?> <?= fmtDate($p['fecha']) ?></span>
-          <?php if ($p['materia']): ?><span><?= icon('book') ?> <?= e($p['materia']) ?></span><?php endif; ?>
-        </div>
-        <?php if ($p['maestro_responsable']): ?>
-          <div class="cell-muted" style="font-size:.82rem;margin-bottom:8px;"><?= icon('users') ?> <?= e($p['maestro_responsable']) ?></div>
-        <?php endif; ?>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <div class="mini-row"><span>Recetas asignadas</span><span class="mono"><?= (int) $p['num_recetas'] ?></span></div>
-          <div class="mini-row"><span>Costo estimado de materiales</span><span class="mono"><?= money($p['costo_materiales']) ?></span></div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat"><div class="dash-stat-label">Recetas asignadas</div><div class="dash-stat-value"><?= (int) $p['num_recetas'] ?></div></div>
+            <div class="dash-stat"><div class="dash-stat-label">Costo materiales</div><div class="dash-stat-value"><?= money($p['costo_materiales']) ?></div></div>
+            <?php if ($p['num_estudiantes'] > 0): ?>
+              <div class="dash-stat"><div class="dash-stat-label">Estudiantes asignados</div><div class="dash-stat-value"><?= (int) $p['num_estudiantes'] ?></div></div>
+              <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($p['cuota_confirmada']) ?></div></div>
+              <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?></div></div>
+            <?php elseif ($puedeVerGastos): ?>
+              <div class="dash-stat-empty">Asigna estudiantes para calcular la cuota.</div>
+            <?php endif; ?>
+          </div>
           <?php if ($p['num_estudiantes'] > 0): ?>
-            <div class="mini-row"><span>Estudiantes asignados</span><span class="mono"><?= (int) $p['num_estudiantes'] ?></span></div>
-            <div class="mini-row"><span>Cuota proyectada</span><span class="mono"><?= money($p['cuota_proyectada']) ?></span></div>
-            <div class="mini-row"><span>Cuota confirmada</span><span class="mono"><?= money($p['cuota_confirmada']) ?></span></div>
             <div>
               <div class="meter-row"><span>Recaudado</span><span class="mono"><?= money($p['recaudado']) ?> / <?= money($p['total_confirmado']) ?></span></div>
               <div class="meter <?= meterClase($p['total_confirmado'] > 0 ? round($p['recaudado'] / $p['total_confirmado'] * 100) : 0) ?>"><span style="width:<?= $p['total_confirmado'] > 0 ? min(round($p['recaudado'] / $p['total_confirmado'] * 100), 100) : 0 ?>%"></span></div>
             </div>
-            <div class="mini-row"><span>Estudiantes al día</span><span><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?></span></div>
-          <?php elseif ($puedeVerGastos): ?>
-            <div class="mini-row"><span>Cuota</span><span class="cell-muted">Asigna estudiantes para calcularla</span></div>
           <?php endif; ?>
-        </div>
-        <div class="row-actions" style="justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
-          <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $p['id'] ?>">Ver detalle</a>
-          <?php if ($puedeEditar || $puedeEliminar): ?>
-            <div class="row-actions">
-              <?php if ($puedeEditar): ?>
-                <a class="icon-btn" href="form.php?id=<?= (int) $p['id'] ?>" title="Editar"><?= icon('edit') ?></a>
-              <?php endif; ?>
-              <?php if ($puedeEliminar): ?>
-                <form method="post" action="index.php" data-confirm="¿Eliminar la práctica &quot;<?= e($p['nombre']) ?>&quot;? Se perderán las recetas asignadas a ella.">
-                  <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                  <input type="hidden" name="accion" value="eliminar">
-                  <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
-                  <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
-                </form>
-              <?php endif; ?>
-            </div>
-          <?php endif; ?>
+          <div class="dash-footer">
+            <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $p['id'] ?>">Ver detalle</a>
+            <?php if ($puedeEditar || $puedeEliminar): ?>
+              <div class="row-actions">
+                <?php if ($puedeEditar): ?>
+                  <a class="icon-btn" href="form.php?id=<?= (int) $p['id'] ?>" title="Editar"><?= icon('edit') ?></a>
+                <?php endif; ?>
+                <?php if ($puedeEliminar): ?>
+                  <form method="post" action="index.php" data-confirm="¿Eliminar la práctica &quot;<?= e($p['nombre']) ?>&quot;? Se perderán las recetas asignadas a ella.">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                    <input type="hidden" name="accion" value="eliminar">
+                    <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
+                    <button class="icon-btn" type="submit" title="Eliminar"><?= icon('trash') ?></button>
+                  </form>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
+          </div>
         </div>
       </div>
     <?php endforeach; ?>
