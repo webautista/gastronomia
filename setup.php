@@ -1740,7 +1740,10 @@ function sembrarRecetasReposteria3(PDO $pdo): array
 
 /**
  * Cuarta tanda de recetas nuevas pedidas por Eyaelkys por chat (sección 30):
- * Pastel de zanahoria con harina de almendras y Yogur con granola y frutas.
+ * Pastel de zanahoria con harina de almendras. (También incluía "Yogur con
+ * granola y frutas", quitada más adelante por duplicar "Yogurt con frutas y
+ * granola" de sembrarRecetasReposteria3() — ver el comentario al final de
+ * esta función.)
  * Pidió expresamente que cualquier ingrediente que faltara se agregara "con
  * todas sus equivalencias correspondientes".
  *
@@ -1862,31 +1865,18 @@ function sembrarRecetasReposteria4(PDO $pdo): array
         ]
     );
 
-    $crearReceta(
-        $idPostre,
-        'Yogur con granola y frutas',
-        6,
-        'Tiempo de preparación: 10 minutos.',
-        "1. Lava y corta todas las frutas.\n" .
-        "2. Coloca una porción de yogur en cada vaso o recipiente.\n" .
-        "3. Agrega una capa de granola.\n" .
-        "4. Incorpora las rodajas de banana, las fresas y el mango.\n" .
-        "5. Añade otra pequeña capa de yogur y granola.\n" .
-        "6. Decora con miel, nueces o almendras y una pizca de canela.\n" .
-        "7. Sirve inmediatamente para mantener la granola crujiente.\n" .
-        "\n" .
-        'Recomendación: Si vas a prepararlo con anticipación, conserva la granola separada y agrégala justo antes de servir.',
-        [
-            ['Yogurt natural (envase grande)', 'Yogur natural o griego', 6, 'Taza', 36.00, [], false, false, null],
-            ['Granola', 'Granola', 2, 'Taza', 44.18, [], false, false, null],
-            ['Guineo', 'Bananas cortadas en rodajas', 2, 'Unidad', 3.80, ['Cortado en rodajas'], false, false, null],
-            ['Fresa', 'Fresas cortadas', 1, 'Taza', 55.96, ['Cortado en trozos'], false, false, null],
-            ['Mango', 'Mango en cubos', 1, 'Taza', 22.44, ['Cortado en cubos'], false, false, null],
-            ['Miel de abeja', 'Miel', 6, 'Cucharada', 11.82, [], false, false, null],
-            ['Nueces', 'Nueces o almendras picadas', 0.5, 'Taza', 96.03, ['Picado'], false, true, null],
-            ['Canela en polvo', 'Canela en polvo', 0, 'Cucharadita', 3.80, [], true, true, null],
-        ]
-    );
+    // "Yogur con granola y frutas" se quitó de aquí (Eyaelkys: "deja de
+    // agregar la receta el yogen, que me la sigues duplicando"): esta receta
+    // era, en la práctica, la misma que "Yogurt con frutas y granola" de
+    // sembrarRecetasReposteria3() (yogur en capas con granola y frutas),
+    // creada aquí por separado con un nombre ligeramente distinto sin darse
+    // cuenta de que ya existía. Como la comprobación de "¿ya existe?" de
+    // $crearReceta() compara el nombre exacto, las dos convivían como
+    // recetas separadas — y si Eyaelkys borraba esta, setup.php se la volvía
+    // a crear en la siguiente corrida porque para el código ya no "existía".
+    // Quitar el bloque de aquí no borra la fila si ya está en su base de
+    // datos: eso lo hace ella misma desde Recetas, como con cualquier receta
+    // que ya no quiere.
 
     return $mensajes;
 }
