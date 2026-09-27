@@ -2087,6 +2087,25 @@ function agregarMetodoFondoAPagosEstudiante(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Agrega la columna "metodo" (efectivo/transferencia) a fondo_movimientos,
+ * a pedido de Eyaelkys, para poder indicar cómo entró un depósito al fondo
+ * — igual que en pagos_estudiante. Solo aplica a depósitos (una aplicación
+ * no la usa, queda NULL). CREATE TABLE IF NOT EXISTS no modifica una tabla
+ * que ya existe, así que esto se agrega aquí a mano, comprobando primero si
+ * la columna ya está (seguro de ejecutar varias veces).
+ */
+function agregarMetodoAFondoMovimientos(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'fondo_movimientos', 'id') || columnaExiste($pdo, 'fondo_movimientos', 'metodo')) {
+        return $mensajes;
+    }
+    $pdo->exec("ALTER TABLE fondo_movimientos ADD COLUMN metodo ENUM('efectivo','transferencia') NULL AFTER monto");
+    $mensajes[] = 'Se agregó el método (efectivo/transferencia) a los movimientos del fondo.';
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2150,6 +2169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria5($pdo));
         $mensajes = array_merge($mensajes, migrarPadresDesdeTextoLibre($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
+        $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

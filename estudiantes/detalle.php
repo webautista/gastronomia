@@ -43,11 +43,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($accion === 'depositar') {
         requirePermission($usuarioActual, 'estudiantes_fondo', 'crear', $base);
         $monto = isset($_POST['monto']) ? (float) $_POST['monto'] : 0;
+        $metodo = $_POST['metodo'] ?? '';
         $fecha = $_POST['fecha'] ?? '';
         $nota = trim((string) ($_POST['nota'] ?? ''));
 
         if ($monto <= 0) {
             $errores[] = 'El monto debe ser mayor a 0.';
+        }
+        if (!in_array($metodo, ['efectivo', 'transferencia'], true)) {
+            $errores[] = 'Elige cómo se hizo el depósito: efectivo o transferencia bancaria.';
         }
         if (!$fecha || !strtotime($fecha)) {
             $errores[] = 'La fecha no es válida.';
@@ -57,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!$errores) {
-            depositarFondoEstudiante(db(), $id, $monto, $fecha, $nota, $usuarioActual['id'], $usuarioActual['nombre']);
+            depositarFondoEstudiante(db(), $id, $monto, $metodo, $fecha, $nota, $usuarioActual['id'], $usuarioActual['nombre']);
             flash('Depósito registrado.');
             redirect('detalle.php?id=' . $id);
         }
@@ -122,6 +126,14 @@ require __DIR__ . '/../includes/layout_top.php';
         <label for="fecha">Fecha</label>
         <input type="date" id="fecha" name="fecha" required value="<?= e($_POST['fecha'] ?? date('Y-m-d')) ?>">
       </div>
+      <div class="field">
+        <label for="metodo">Método</label>
+        <select id="metodo" name="metodo" required>
+          <option value="">Elige uno...</option>
+          <option value="efectivo" <?= ($_POST['metodo'] ?? '') === 'efectivo' ? 'selected' : '' ?>>Efectivo</option>
+          <option value="transferencia" <?= ($_POST['metodo'] ?? '') === 'transferencia' ? 'selected' : '' ?>>Transferencia bancaria</option>
+        </select>
+      </div>
     </div>
     <div class="field">
       <label for="nota">Nota (opcional)</label>
@@ -140,10 +152,10 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Fecha</th><th>Tipo</th><th>Monto</th><th>Dónde</th><th>Nota</th><th>Registrado por</th><th></th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Tipo</th><th>Monto</th><th>Método</th><th>Dónde</th><th>Nota</th><th>Registrado por</th><th></th></tr></thead>
     <tbody>
       <?php if (!$historial): ?>
-        <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Todavía no hay movimientos en el fondo.</td></tr>
+        <tr><td colspan="8" class="cell-muted" style="text-align:center;padding:24px;">Todavía no hay movimientos en el fondo.</td></tr>
       <?php endif; ?>
       <?php foreach ($historial as $mov): ?>
         <tr>
@@ -156,6 +168,13 @@ require __DIR__ . '/../includes/layout_top.php';
             <?php endif; ?>
           </td>
           <td class="mono"><?= money($mov['monto']) ?></td>
+          <td class="cell-muted">
+            <?php if ($mov['tipo'] === 'deposito' && $mov['metodo']): ?>
+              <span class="chip <?= $mov['metodo'] === 'efectivo' ? 'chip-success' : 'chip-neutral' ?>"><?= e(etiquetaMetodoPago($mov['metodo'])) ?></span>
+            <?php else: ?>
+              —
+            <?php endif; ?>
+          </td>
           <td class="cell-muted">
             <?php if ($mov['tipo'] === 'aplicacion' && $mov['entidad_nombre']): ?>
               <?= e($mov['entidad_nombre']) ?>

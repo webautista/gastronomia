@@ -566,13 +566,13 @@ function historialFondoEstudiante(PDO $pdo, int $estudianteId): array
     return $stmt->fetchAll();
 }
 
-/** Registra un depósito al fondo de un estudiante. */
-function depositarFondoEstudiante(PDO $pdo, int $estudianteId, float $monto, string $fecha, ?string $nota, int $usuarioId, string $usuarioNombre): void
+/** Registra un depósito al fondo de un estudiante ($metodo: 'efectivo' o 'transferencia'). */
+function depositarFondoEstudiante(PDO $pdo, int $estudianteId, float $monto, string $metodo, string $fecha, ?string $nota, int $usuarioId, string $usuarioNombre): void
 {
     $pdo->prepare(
-        'INSERT INTO fondo_movimientos (estudiante_id, tipo, monto, fecha, nota, registrado_por, registrado_por_nombre)
-         VALUES (?, \'deposito\', ?, ?, ?, ?, ?)'
-    )->execute([$estudianteId, $monto, $fecha, ($nota !== null && $nota !== '') ? $nota : null, $usuarioId, $usuarioNombre]);
+        'INSERT INTO fondo_movimientos (estudiante_id, tipo, monto, metodo, fecha, nota, registrado_por, registrado_por_nombre)
+         VALUES (?, \'deposito\', ?, ?, ?, ?, ?, ?)'
+    )->execute([$estudianteId, $monto, $metodo, $fecha, ($nota !== null && $nota !== '') ? $nota : null, $usuarioId, $usuarioNombre]);
 }
 
 /**

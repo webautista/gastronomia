@@ -845,6 +845,11 @@ CREATE TABLE IF NOT EXISTS pagos_estudiante (
 -- para que el historial de pagos de ese evento/práctica ya muestre el pago
 -- hecho con fondo sin pantallas repetidas. Un depósito (tipo='deposito')
 -- no toca pagos_estudiante — solo aumenta lo disponible en el fondo.
+-- La columna "metodo" (efectivo/transferencia, cómo entró el depósito — a
+-- pedido de Eyaelkys, igual que en pagos_estudiante) se agrega desde
+-- setup.php (agregarMetodoAFondoMovimientos()), nunca aquí en el CREATE
+-- TABLE, porque esta tabla ya se había entregado sin esa columna. Solo
+-- aplica a depósitos; una aplicación no la usa (queda NULL).
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS fondo_movimientos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
