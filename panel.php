@@ -5,6 +5,25 @@ require_once __DIR__ . '/includes/auth.php';
 
 $base = '.';
 $usuarioActual = requireLogin($base);
+
+// Si quien inició sesión es un padre/tutor o un estudiante con cuenta
+// propia, su "panel" es el panel personalizado (fondo, pagos, y para el
+// estudiante también sus recetas/lista de compra) — no este dashboard
+// general, pensado para el equipo del taller (presupuestos y datos de
+// TODOS los eventos y estudiantes). panel.php sigue siendo el destino fijo
+// después de iniciar sesión (login.php e invitacion.php redirigen aquí);
+// desde aquí se reenvía a donde corresponda según quién es.
+$stmtPadre = db()->prepare('SELECT id FROM padres WHERE usuario_id = ?');
+$stmtPadre->execute([$usuarioActual['id']]);
+if ($stmtPadre->fetchColumn()) {
+    redirect('panel_padre.php');
+}
+$stmtEst = db()->prepare('SELECT id FROM estudiantes WHERE usuario_id = ?');
+$stmtEst->execute([$usuarioActual['id']]);
+if ($stmtEst->fetchColumn()) {
+    redirect('panel_estudiante.php');
+}
+
 requirePermission($usuarioActual, 'panel', 'ver', $base);
 $puedeCrearEvento = can($usuarioActual, 'eventos', 'crear');
 

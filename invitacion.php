@@ -29,7 +29,7 @@ if ($invitacion && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($password !== $password2) {
         $errores[] = 'Las contraseñas no coinciden.';
     } else {
-        $resultado = consumirInvitacionPadre(db(), $invitacion, $usuarioForm, $password);
+        $resultado = consumirInvitacionRegistro(db(), $invitacion, $usuarioForm, $password);
         if (!$resultado['ok']) {
             $errores = $resultado['errores'];
         } else {

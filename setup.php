@@ -2096,6 +2096,28 @@ function agregarMetodoAFondoMovimientos(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Agrega estudiantes.usuario_id (Paso 5: el estudiante también puede tener
+ * su propia cuenta de acceso, vía invitación — ver panel_estudiante.php y
+ * consumirInvitacionRegistro() en includes/helpers.php). Va aquí y no en el
+ * CREATE TABLE de db/schema.sql porque "estudiantes" ya se había entregado
+ * sin esta columna. Mismo patrón que padres.usuario_id (Paso 1): NULL
+ * mientras no tenga cuenta, único (un usuario de login le pertenece, como
+ * mucho, a un estudiante).
+ */
+function agregarUsuarioIdAEstudiantes(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'estudiantes', 'id') || columnaExiste($pdo, 'estudiantes', 'usuario_id')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE estudiantes ADD COLUMN usuario_id INT UNSIGNED NULL');
+    $pdo->exec('ALTER TABLE estudiantes ADD UNIQUE KEY uq_estudiantes_usuario (usuario_id)');
+    $pdo->exec('ALTER TABLE estudiantes ADD CONSTRAINT fk_estudiantes_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL');
+    $mensajes[] = 'Se agregó "usuario_id" a la tabla estudiantes (para su propia cuenta de acceso, ver panel_estudiante.php).';
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2160,6 +2182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, migrarPadresDesdeTextoLibre($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
+        $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {

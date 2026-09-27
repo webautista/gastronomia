@@ -528,7 +528,8 @@ CREATE TABLE IF NOT EXISTS roles (
 
 INSERT IGNORE INTO roles (nombre, descripcion, es_sistema) VALUES
 ('Administrador', 'Acceso completo a todos los módulos.', 1),
-('Padres', 'Acceso de solo lectura a eventos y recetas.', 0);
+('Padres', 'Acceso de solo lectura a eventos y recetas.', 0),
+('Estudiante', 'Acceso de solo lectura a su propio panel (fondo, sus eventos/prácticas y las recetas de esos).', 0);
 
 -- Permiso de un rol sobre un módulo: ver / crear / editar / eliminar
 CREATE TABLE IF NOT EXISTS permisos_rol (
@@ -555,6 +556,15 @@ INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar
 SELECT r.id, m.id, 1, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Padres' AND m.clave IN ('panel','eventos','recetas');
 INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar)
 SELECT r.id, m.id, 0, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Padres' AND m.clave IN ('gastos','estudiantes','ingredientes','configuracion','usuarios','practicas');
+
+-- Estudiante: no ve ningún módulo del sistema de administración (a
+-- diferencia de Padres, que sí ve Eventos/Recetas/Prácticas) — su único
+-- acceso es panel_estudiante.php, un panel personal de solo consulta
+-- (fondo, sus eventos/prácticas y las recetas de esos), al que panel.php lo
+-- redirige automáticamente. Se le da "ver" en el módulo "panel" solo para
+-- que el enlace "Panel" aparezca en su menú lateral.
+INSERT IGNORE INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar)
+SELECT r.id, m.id, 1, 0, 0, 0 FROM roles r JOIN modulos m ON r.nombre = 'Estudiante' AND m.clave = 'panel';
 
 CREATE TABLE IF NOT EXISTS usuarios (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

@@ -1340,8 +1340,10 @@ function urlInvitacion(string $token): string
  * Invitación activa (existe, no se usó, no venció) para $token, con el
  * nombre de la entidad ya resuelto para mostrarlo en la pantalla pública.
  * Devuelve null si el token no sirve por cualquier motivo, incluyendo que
- * el padre ya haya obtenido una cuenta por otra vía mientras el enlace
- * seguía sin usarse.
+ * el padre/estudiante ya haya obtenido una cuenta por otra vía mientras el
+ * enlace seguía sin usarse. Vale tanto para invitaciones de padre como de
+ * estudiante (Paso 5): mismo token, misma validación, solo cambia la tabla
+ * de la que se lee el nombre.
  */
 function obtenerInvitacionValida(PDO $pdo, string $token): ?array
 {
@@ -1354,33 +1356,28 @@ function obtenerInvitacionValida(PDO $pdo, string $token): ?array
         return null;
     }
 
-    if ($inv['entidad_tipo'] === 'padre') {
-        $stmtE = $pdo->prepare('SELECT * FROM padres WHERE id = ?');
-        $stmtE->execute([$inv['entidad_id']]);
-        $entidad = $stmtE->fetch();
-        if (!$entidad || $entidad['usuario_id']) {
-            return null;
-        }
-        $inv['entidad_nombre'] = $entidad['nombre'];
-    } else {
-        // Tipo 'estudiante': todavía no hay pantalla que las genere ni
-        // usuarios/rol para consumirlas (Paso 5), así que por ahora
-        // cualquier invitación de este tipo se trata como no válida.
+    $tabla = $inv['entidad_tipo'] === 'padre' ? 'padres' : 'estudiantes';
+    $stmtE = $pdo->prepare("SELECT * FROM $tabla WHERE id = ?");
+    $stmtE->execute([$inv['entidad_id']]);
+    $entidad = $stmtE->fetch();
+    if (!$entidad || $entidad['usuario_id']) {
         return null;
     }
+    $inv['entidad_nombre'] = $entidad['nombre'];
 
     return $inv;
 }
 
 /**
- * Consume una invitación de padre ya validada con obtenerInvitacionValida():
- * crea la cuenta de acceso (usuarios, rol "Padres"), la vincula en
- * padres.usuario_id y marca la invitación como usada, todo en una
- * transacción para no dejar una cuenta huérfana si algo falla a mitad de
- * camino. Devuelve ['ok' => true, 'usuario_id' => N] o ['ok' => false,
- * 'errores' => [...]].
+ * Consume una invitación (de padre o de estudiante) ya validada con
+ * obtenerInvitacionValida(): crea la cuenta de acceso (usuarios, rol
+ * "Padres" o "Estudiante" según corresponda), la vincula en
+ * padres.usuario_id o estudiantes.usuario_id, y marca la invitación como
+ * usada — todo en una transacción para no dejar una cuenta huérfana si algo
+ * falla a mitad de camino. Devuelve ['ok' => true, 'usuario_id' => N] o
+ * ['ok' => false, 'errores' => [...]].
  */
-function consumirInvitacionPadre(PDO $pdo, array $invitacion, string $usuarioLogin, string $password): array
+function consumirInvitacionRegistro(PDO $pdo, array $invitacion, string $usuarioLogin, string $password): array
 {
     $errores = [];
     if ($usuarioLogin === '' || !preg_match('/^[a-zA-Z0-9._-]{3,50}$/', $usuarioLogin)) {
@@ -1399,21 +1396,26 @@ function consumirInvitacionPadre(PDO $pdo, array $invitacion, string $usuarioLog
         return ['ok' => false, 'errores' => ['Ese nombre de usuario ya está en uso. Elige otro.']];
     }
 
-    $stmtRol = $pdo->prepare("SELECT id FROM roles WHERE nombre = 'Padres'");
-    $stmtRol->execute();
+    $esPadre = $invitacion['entidad_tipo'] === 'padre';
+    $tabla = $esPadre ? 'padres' : 'estudiantes';
+    $rolNombre = $esPadre ? 'Padres' : 'Estudiante';
+
+    $stmtRol = $pdo->prepare('SELECT id FROM roles WHERE nombre = ?');
+    $stmtRol->execute([$rolNombre]);
     $rolId = $stmtRol->fetchColumn();
     if (!$rolId) {
-        return ['ok' => false, 'errores' => ['No se encontró el rol de Padres. Contacta al administrador.']];
+        return ['ok' => false, 'errores' => ["No se encontró el rol de $rolNombre. Contacta al administrador."]];
     }
 
     $pdo->beginTransaction();
     try {
-        $stmtChk = $pdo->prepare('SELECT usuario_id FROM padres WHERE id = ? FOR UPDATE');
+        $stmtChk = $pdo->prepare("SELECT usuario_id FROM $tabla WHERE id = ? FOR UPDATE");
         $stmtChk->execute([$invitacion['entidad_id']]);
         $yaVinculado = $stmtChk->fetchColumn();
         if ($yaVinculado) {
             $pdo->rollBack();
-            return ['ok' => false, 'errores' => ['Este padre/tutor ya tiene una cuenta de acceso. Si es tuya, inicia sesión normalmente.']];
+            $mensajeEntidad = $esPadre ? 'Este padre/tutor' : 'Este estudiante';
+            return ['ok' => false, 'errores' => ["$mensajeEntidad ya tiene una cuenta de acceso. Si es tuya, inicia sesión normalmente."]];
         }
 
         $hash = password_hash($password, PASSWORD_DEFAULT);
@@ -1426,7 +1428,7 @@ function consumirInvitacionPadre(PDO $pdo, array $invitacion, string $usuarioLog
         // archivo).
         $usuarioId = (int) $pdo->lastInsertId();
 
-        $pdo->prepare('UPDATE padres SET usuario_id = ? WHERE id = ?')->execute([$usuarioId, $invitacion['entidad_id']]);
+        $pdo->prepare("UPDATE $tabla SET usuario_id = ? WHERE id = ?")->execute([$usuarioId, $invitacion['entidad_id']]);
         $pdo->prepare('UPDATE invitaciones SET usado_en = NOW() WHERE id = ?')->execute([$invitacion['id']]);
 
         $pdo->commit();
@@ -1436,4 +1438,152 @@ function consumirInvitacionPadre(PDO $pdo, array $invitacion, string $usuarioLog
     }
 
     return ['ok' => true, 'usuario_id' => $usuarioId];
+}
+
+/** Clase CSS (chip) para el método de un pago — igual criterio que ya usan eventos/pago_estudiante.php y practicas/pago_estudiante.php. */
+function claseChipMetodoPago(string $metodo): string
+{
+    if ($metodo === 'efectivo') {
+        return 'chip-success';
+    }
+    return in_array($metodo, ['transferencia', 'fondo'], true) ? 'chip-neutral' : 'chip-muted';
+}
+
+/**
+ * Todo en lo que participa un estudiante (eventos y prácticas donde está
+ * asignado), con su cuota, lo pagado, lo pendiente y el historial completo
+ * de pagos de cada uno (con método) — usado tanto por el panel del padre
+ * (panel_padre.php, ver los pagos de su hijo) como por el panel del propio
+ * estudiante (panel_estudiante.php). El más reciente primero.
+ */
+function participacionesEstudiante(PDO $pdo, int $estudianteId): array
+{
+    $filas = [];
+
+    $stmt = $pdo->prepare(
+        'SELECT ev.id, ev.nombre, ev.fecha, ee.monto_pagado
+         FROM evento_estudiante ee JOIN eventos ev ON ev.id = ee.evento_id
+         WHERE ee.estudiante_id = ? ORDER BY ev.fecha DESC'
+    );
+    $stmt->execute([$estudianteId]);
+    foreach ($stmt->fetchAll() as $ev) {
+        $stmtN = $pdo->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
+        $stmtN->execute([$ev['id']]);
+        $numEst = (int) $stmtN->fetchColumn();
+
+        $costoRecetas = costoRecetasConsolidado($pdo, 'evento', (int) $ev['id']);
+        $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', (int) $ev['id']);
+        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEst);
+        $montoPagado = (float) $ev['monto_pagado'];
+        $filas[] = [
+            'tipo' => 'evento',
+            'id' => (int) $ev['id'],
+            'nombre' => $ev['nombre'],
+            'fecha' => $ev['fecha'],
+            'cuota_confirmada' => $cuotas['confirmada'],
+            'monto_pagado' => $montoPagado,
+            'pendiente' => max(0.0, $cuotas['confirmada'] - $montoPagado),
+            'historial_pagos' => historialPagosEstudiante($pdo, 'evento', (int) $ev['id'], $estudianteId),
+        ];
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT p.id, p.nombre, p.fecha, pe.monto_pagado
+         FROM practica_estudiante pe JOIN practicas p ON p.id = pe.practica_id
+         WHERE pe.estudiante_id = ? ORDER BY p.fecha DESC'
+    );
+    $stmt->execute([$estudianteId]);
+    foreach ($stmt->fetchAll() as $p) {
+        $stmtN = $pdo->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ?');
+        $stmtN->execute([$p['id']]);
+        $numEst = (int) $stmtN->fetchColumn();
+
+        $costoMateriales = costoRecetasConsolidado($pdo, 'practica', (int) $p['id']);
+        $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', (int) $p['id']);
+        $cuotas = calcularCuotas($costoMateriales, $resumenGastos, $numEst);
+        $montoPagado = (float) $p['monto_pagado'];
+        $filas[] = [
+            'tipo' => 'practica',
+            'id' => (int) $p['id'],
+            'nombre' => $p['nombre'],
+            'fecha' => $p['fecha'],
+            'cuota_confirmada' => $cuotas['confirmada'],
+            'monto_pagado' => $montoPagado,
+            'pendiente' => max(0.0, $cuotas['confirmada'] - $montoPagado),
+            'historial_pagos' => historialPagosEstudiante($pdo, 'practica', (int) $p['id'], $estudianteId),
+        ];
+    }
+
+    usort($filas, fn($a, $b) => strcmp($b['fecha'], $a['fecha']));
+    return $filas;
+}
+
+/**
+ * Recetas asignadas a un evento o práctica con su detalle completo
+ * (ingredientes con cantidad/costo ya escalados a las porciones a preparar,
+ * costo total, y las acciones/cortes marcados por línea) — la misma
+ * información que ya arma eventos/detalle.php y practicas/detalle.php para
+ * su pestaña "Recetas e ingredientes", en una función aparte de solo
+ * lectura para el panel del estudiante (panel_estudiante.php), que no
+ * necesita ni el formulario de "porciones a preparar" ni el de "quitar
+ * receta". $entidadTipo es 'evento' o 'practica'.
+ */
+function recetasConDetalleParaConsulta(PDO $pdo, string $entidadTipo, int $entidadId): array
+{
+    if ($entidadTipo === 'practica') {
+        $stmt = $pdo->prepare(
+            'SELECT pr.porciones_necesarias, r.*, cr.nombre AS categoria FROM practica_receta pr
+             JOIN recetas r ON r.id = pr.receta_id
+             JOIN categorias_receta cr ON cr.id = r.categoria_id
+             WHERE pr.practica_id = ? ORDER BY r.nombre ASC'
+        );
+    } else {
+        $stmt = $pdo->prepare(
+            'SELECT er.porciones_necesarias, r.*, cr.nombre AS categoria FROM evento_receta er
+             JOIN recetas r ON r.id = er.receta_id
+             JOIN categorias_receta cr ON cr.id = r.categoria_id
+             WHERE er.evento_id = ? ORDER BY r.nombre ASC'
+        );
+    }
+    $stmt->execute([$entidadId]);
+    $recetas = $stmt->fetchAll();
+
+    $idsFilasTodas = [];
+    foreach ($recetas as &$rc) {
+        $porcionesBase = max(1, (int) $rc['porciones_base']);
+        $stmtIng = $pdo->prepare(
+            'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
+             JOIN unidades_medida um ON um.id = i.unidad_id
+             WHERE i.receta_id = ? ORDER BY i.orden ASC, i.id ASC'
+        );
+        $stmtIng->execute([$rc['id']]);
+        $rc['ingredientes'] = $stmtIng->fetchAll();
+        $rc['costo_total'] = 0.0;
+        foreach ($rc['ingredientes'] as $ing) {
+            $idsFilasTodas[] = (int) $ing['id'];
+            if (!empty($ing['al_gusto'])) {
+                continue;
+            }
+            $cantidad = calcularCantidad((float) $ing['cantidad'], $porcionesBase, (int) $rc['porciones_necesarias']);
+            $esEntera = (bool) ($ing['unidad_entera'] ?? false);
+            $rc['costo_total'] += montoLineaReceta($cantidad, (float) $ing['costo_unitario'], $esEntera);
+        }
+    }
+    unset($rc);
+
+    $accionesPorFila = [];
+    if ($idsFilasTodas) {
+        $in = implode(',', array_fill(0, count($idsFilasTodas), '?'));
+        $stmtAcc = $pdo->prepare(
+            "SELECT ia.receta_ingrediente_id, ac.nombre FROM ingrediente_accion ia
+             JOIN acciones_ingrediente ac ON ac.id = ia.accion_id
+             WHERE ia.receta_ingrediente_id IN ($in) ORDER BY ac.orden ASC, ac.nombre ASC"
+        );
+        $stmtAcc->execute($idsFilasTodas);
+        foreach ($stmtAcc->fetchAll() as $fa) {
+            $accionesPorFila[(int) $fa['receta_ingrediente_id']][] = $fa['nombre'];
+        }
+    }
+
+    return ['recetas' => $recetas, 'acciones_por_fila' => $accionesPorFila];
 }

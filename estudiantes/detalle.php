@@ -20,6 +20,9 @@ $usuarioActual = requireLogin($base);
 requirePermission($usuarioActual, 'estudiantes_fondo', 'ver', $base);
 $puedeDepositar = can($usuarioActual, 'estudiantes_fondo', 'crear');
 $puedeEliminarDeposito = can($usuarioActual, 'estudiantes_fondo', 'eliminar');
+// Generar la invitación de auto-registro (Paso 5) usa el mismo permiso que
+// ya protege el CRUD de estudiantes/form.php, no uno del fondo.
+$puedeGestionarCuenta = can($usuarioActual, 'estudiantes', 'editar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
@@ -83,11 +86,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         redirect('detalle.php?id=' . $id);
+    } elseif ($accion === 'generar_invitacion') {
+        requirePermission($usuarioActual, 'estudiantes', 'editar', $base);
+        if ($estudiante['usuario_id']) {
+            flash('Este estudiante ya tiene una cuenta de acceso.', 'error');
+        } else {
+            crearInvitacion(db(), 'estudiante', $id, $usuarioActual['id']);
+            flash('Enlace de invitación generado. Cópialo y compártelo con el estudiante.');
+        }
+        redirect('detalle.php?id=' . $id);
     }
 }
 
 $saldoFondo = saldoFondoEstudiante(db(), $id);
 $historial = historialFondoEstudiante(db(), $id);
+
+$invitacionActiva = null;
+if (!$estudiante['usuario_id']) {
+    $stmt = db()->prepare(
+        "SELECT * FROM invitaciones WHERE entidad_tipo = 'estudiante' AND entidad_id = ? AND usado_en IS NULL AND expira_en > NOW()
+         ORDER BY id DESC LIMIT 1"
+    );
+    $stmt->execute([$id]);
+    $invitacionActiva = $stmt->fetch() ?: null;
+}
 
 $pageTitle = $estudiante['nombre'];
 $activeNav = 'estudiantes';
@@ -105,6 +127,33 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php if ($errores): ?>
   <div class="alert alert-error"><?= implode('<br>', array_map('e', $errores)) ?></div>
 <?php endif; ?>
+
+<div class="card card-pad" style="margin-bottom:16px;">
+  <h2 class="section-title" style="margin-top:0;">Cuenta de acceso</h2>
+  <?php if (!empty($estudiante['usuario_id'])): ?>
+    <p><span class="chip chip-success"><?= icon('check') ?> Con acceso</span></p>
+  <?php else: ?>
+    <p class="cell-muted">Todavía no tiene cuenta de acceso al sistema.</p>
+
+    <?php if ($invitacionActiva): ?>
+      <div class="field" style="margin-top:10px;max-width:520px;">
+        <label>Enlace de invitación (vence el <?= fmtDate($invitacionActiva['expira_en']) ?>)</label>
+        <input type="text" class="mono" readonly onclick="this.select()" value="<?= e(urlInvitacion($invitacionActiva['token'])) ?>">
+        <small class="cell-muted">Cópialo y envíalo por WhatsApp, correo, etc. Es de un solo uso.</small>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($puedeGestionarCuenta): ?>
+      <form method="post" style="margin-top:10px;">
+        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+        <input type="hidden" name="accion" value="generar_invitacion">
+        <button class="btn btn-secondary" type="submit">
+          <?= icon('link') ?> <?= $invitacionActiva ? 'Generar un enlace nuevo' : 'Generar enlace de invitación' ?>
+        </button>
+      </form>
+    <?php endif; ?>
+  <?php endif; ?>
+</div>
 
 <div class="card card-pad" style="margin-bottom:16px;">
   <div class="cell-muted" style="font-size:.82rem;">Saldo disponible</div>
