@@ -1440,6 +1440,23 @@ function consumirInvitacionRegistro(PDO $pdo, array $invitacion, string $usuario
     return ['ok' => true, 'usuario_id' => $usuarioId];
 }
 
+/** Iniciales (hasta 2 letras) de un nombre completo, para el avatar circular de panel_padre.php/panel_estudiante.php. */
+function iniciales(string $nombre): string
+{
+    // Solo palabras que empiecen con una letra (evita usar "(" cuando el
+    // nombre trae una aclaración entre paréntesis, ej. "Juan (hermano)").
+    $partes = array_values(array_filter(
+        preg_split('/\s+/', trim($nombre)),
+        fn($p) => $p !== '' && preg_match('/^\p{L}/u', $p)
+    ));
+    if (!$partes) {
+        return '?';
+    }
+    $primera = mb_substr($partes[0], 0, 1);
+    $ultima = count($partes) > 1 ? mb_substr($partes[count($partes) - 1], 0, 1) : '';
+    return mb_strtoupper($primera . $ultima);
+}
+
 /** Clase CSS (chip) para el método de un pago — igual criterio que ya usan eventos/pago_estudiante.php y practicas/pago_estudiante.php. */
 function claseChipMetodoPago(string $metodo): string
 {

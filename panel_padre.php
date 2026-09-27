@@ -36,6 +36,8 @@ $hijos = $stmt->fetchAll();
 foreach ($hijos as &$h) {
     $h['saldo_fondo'] = saldoFondoEstudiante(db(), (int) $h['id']);
     $h['participaciones'] = participacionesEstudiante(db(), (int) $h['id']);
+    $h['total_pagado'] = array_sum(array_column($h['participaciones'], 'monto_pagado'));
+    $h['total_pendiente'] = array_sum(array_column($h['participaciones'], 'pendiente'));
 }
 unset($h);
 
@@ -60,54 +62,77 @@ require __DIR__ . '/includes/layout_top.php';
 <?php endif; ?>
 
 <?php foreach ($hijos as $h): ?>
-  <div class="card card-pad" style="margin-bottom:18px;">
-    <div class="page-head" style="margin-bottom:12px;">
-      <div>
-        <h2 class="section-title" style="margin:0;"><?= e($h['nombre']) ?></h2>
-        <p class="cell-muted" style="margin:2px 0 0;"><?= e($h['grupo'] ?? '—') ?></p>
+  <div class="child-card">
+    <div class="child-card-head">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div class="child-avatar"><?= e(iniciales($h['nombre'])) ?></div>
+        <div>
+          <div class="child-name"><?= e($h['nombre']) ?></div>
+          <div class="child-sub"><?= e($h['grupo'] ?? 'Sin grupo asignado') ?></div>
+        </div>
       </div>
-      <div style="text-align:right;">
-        <div class="cell-muted" style="font-size:.82rem;">Saldo en el fondo</div>
-        <div class="mono" style="font-size:1.3rem;font-weight:700;"><?= money($h['saldo_fondo']) ?></div>
+      <div class="child-balance">
+        <div class="child-balance-label">Saldo en el fondo</div>
+        <div class="child-balance-value"><?= money($h['saldo_fondo']) ?></div>
       </div>
     </div>
 
-    <?php if (!$h['participaciones']): ?>
-      <p class="cell-muted">Todavía no está asignado a ningún evento o práctica.</p>
-    <?php endif; ?>
-
-    <?php foreach ($h['participaciones'] as $part): ?>
-      <div style="margin-top:14px;">
-        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-          <?= $part['tipo'] === 'evento' ? icon('calendar') : icon('whisk') ?>
-          <b><?= e($part['nombre']) ?></b>
-          <span class="cell-muted" style="font-size:.85rem;"><?= fmtDate($part['fecha']) ?></span>
-          <span class="cell-muted" style="font-size:.85rem;margin-left:auto;">
-            Cuota <b class="mono"><?= money($part['cuota_confirmada']) ?></b>
-            &nbsp;·&nbsp; Pagado <b class="mono"><?= money($part['monto_pagado']) ?></b>
-            &nbsp;·&nbsp; Pendiente <b class="mono"><?= money($part['pendiente']) ?></b>
-          </span>
-        </div>
-        <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>Fecha de pago</th><th>Monto</th><th>Método</th><th>Nota</th></tr></thead>
-            <tbody>
-              <?php if (!$part['historial_pagos']): ?>
-                <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:16px;">Sin pagos registrados todavía.</td></tr>
-              <?php endif; ?>
-              <?php foreach ($part['historial_pagos'] as $pago): ?>
-                <tr>
-                  <td class="cell-muted"><?= fmtDate($pago['fecha_pago']) ?></td>
-                  <td class="mono"><?= money($pago['monto']) ?></td>
-                  <td><span class="chip <?= claseChipMetodoPago($pago['metodo']) ?>"><?= e(etiquetaMetodoPago($pago['metodo'])) ?></span></td>
-                  <td class="cell-muted"><?= e($pago['nota'] ?? '') ?></td>
-                </tr>
-              <?php endforeach; ?>
-            </tbody>
-          </table>
-        </div>
+    <div class="mini-stat-row">
+      <div class="mini-stat is-sage">
+        <div class="mini-stat-label">Total pagado</div>
+        <div class="mini-stat-value"><?= money($h['total_pagado']) ?></div>
       </div>
-    <?php endforeach; ?>
+      <div class="mini-stat is-danger">
+        <div class="mini-stat-label">Pendiente por pagar</div>
+        <div class="mini-stat-value"><?= money($h['total_pendiente']) ?></div>
+      </div>
+      <div class="mini-stat is-gold">
+        <div class="mini-stat-label">Eventos y prácticas</div>
+        <div class="mini-stat-value"><?= count($h['participaciones']) ?></div>
+      </div>
+    </div>
+
+    <div class="part-list">
+      <?php if (!$h['participaciones']): ?>
+        <p class="cell-muted" style="margin:8px 0 0;">Todavía no está asignado a ningún evento o práctica.</p>
+      <?php endif; ?>
+
+      <?php foreach ($h['participaciones'] as $part):
+        $pct = $part['cuota_confirmada'] > 0 ? round($part['monto_pagado'] / $part['cuota_confirmada'] * 100) : ($part['monto_pagado'] > 0 ? 100 : 0);
+      ?>
+        <div class="part-card">
+          <div class="part-card-head">
+            <div class="part-icon <?= e($part['tipo']) ?>"><?= $part['tipo'] === 'evento' ? icon('calendar') : icon('whisk') ?></div>
+            <div>
+              <div class="part-title"><?= e($part['nombre']) ?></div>
+              <div class="part-date"><?= fmtDate($part['fecha']) ?></div>
+            </div>
+            <div class="part-progress">
+              <div class="meter-row" style="margin-bottom:0;"><span>Pagado</span><span class="mono"><?= money($part['monto_pagado']) ?> / <?= money($part['cuota_confirmada']) ?></span></div>
+              <div class="meter <?= meterClase($pct) ?>"><span style="width:<?= min($pct, 100) ?>%"></span></div>
+            </div>
+          </div>
+          <div class="part-money-row" style="margin-bottom:10px;">
+            <span>Pendiente: <b class="mono"><?= money($part['pendiente']) ?></b></span>
+          </div>
+
+          <?php if (!$part['historial_pagos']): ?>
+            <p class="cell-muted" style="margin:0;font-size:.85rem;">Sin pagos registrados todavía.</p>
+          <?php else: ?>
+            <div class="pago-row-list">
+              <?php foreach ($part['historial_pagos'] as $pago): ?>
+                <div class="pago-row">
+                  <span class="pago-fecha"><?= fmtDate($pago['fecha_pago']) ?></span>
+                  <span class="pago-monto"><?= money($pago['monto']) ?></span>
+                  <span class="chip <?= claseChipMetodoPago($pago['metodo']) ?>"><?= e(etiquetaMetodoPago($pago['metodo'])) ?></span>
+                  <?php if ($pago['nota']): ?><span class="pago-nota"><?= e($pago['nota']) ?></span><?php endif; ?>
+                </div>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+        </div>
+      <?php endforeach; ?>
+    </div>
   </div>
 <?php endforeach; ?>
 

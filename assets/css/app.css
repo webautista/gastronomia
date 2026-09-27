@@ -320,6 +320,50 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 
 .badge-demo{font-size:.68rem;background:var(--surface-2);color:var(--text-secondary);padding:4px 10px;border-radius:999px;font-weight:600;}
 
+/* Panel del padre y panel del estudiante (panel_padre.php,
+   panel_estudiante.php): una persona que entra aquí quiere un vistazo
+   rápido y agradable, no una tabla de trabajo — así que usan tarjetas con
+   color en vez del estilo plano del resto del sistema (pensado para el
+   equipo del taller, que sí trabaja con los datos todo el día). */
+.child-card{border-radius:var(--radius-lg);overflow:hidden;background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:24px;}
+.child-card-head{padding:22px 24px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;background:linear-gradient(135deg,var(--accent) 0%,var(--copper) 100%);}
+.child-avatar{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:600;font-size:1.1rem;flex-shrink:0;border:2px solid rgba(255,255,255,.4);}
+.child-name{font-family:'Fraunces',serif;font-size:1.25rem;font-weight:600;line-height:1.25;}
+.child-sub{opacity:.88;font-size:.84rem;margin-top:2px;}
+.child-balance{text-align:right;}
+.child-balance-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.88;}
+.child-balance-value{font-family:'IBM Plex Mono',monospace;font-size:1.7rem;font-weight:700;margin-top:2px;}
+
+.mini-stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:18px 24px 6px;}
+@media (max-width:640px){.mini-stat-row{grid-template-columns:1fr;}}
+.mini-stat{border-radius:var(--radius-md);padding:12px 14px;background:var(--surface-2);}
+.mini-stat-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-tertiary);font-weight:700;}
+.mini-stat-value{font-family:'IBM Plex Mono',monospace;font-size:1.15rem;font-weight:700;margin-top:3px;color:var(--text);}
+.mini-stat.is-gold .mini-stat-value{color:var(--copper);}
+.mini-stat.is-danger .mini-stat-value{color:var(--danger);}
+.mini-stat.is-sage .mini-stat-value{color:var(--success);}
+
+.part-list{padding:6px 24px 22px;}
+.part-card{border:1px solid var(--border);border-radius:var(--radius-md);padding:16px 18px;margin-top:14px;background:var(--bg);}
+.part-card-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+.part-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.part-icon svg{width:18px;height:18px;}
+.part-icon.evento{background:var(--accent-soft);color:var(--accent);}
+.part-icon.practica{background:var(--copper-soft);color:var(--copper);}
+.part-title{font-weight:700;color:var(--text);font-size:.98rem;}
+.part-date{font-size:.8rem;color:var(--text-secondary);}
+.part-progress{margin-left:auto;min-width:180px;text-align:right;}
+.part-progress .meter-row{justify-content:flex-end;gap:8px;}
+.part-progress .meter{margin-top:5px;}
+.part-money-row{display:flex;justify-content:flex-end;gap:14px;font-size:.78rem;color:var(--text-secondary);flex-wrap:wrap;}
+.part-money-row b{color:var(--text);}
+
+.pago-row-list{display:flex;flex-direction:column;gap:6px;}
+.pago-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:9px;font-size:.85rem;flex-wrap:wrap;}
+.pago-row .pago-fecha{color:var(--text-tertiary);font-size:.78rem;min-width:120px;}
+.pago-row .pago-monto{font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--text);min-width:90px;}
+.pago-row .pago-nota{color:var(--text-secondary);font-size:.78rem;margin-left:auto;}
+
 /* Impresión de la pestaña "Lista de Compra" (eventos y prácticas): al
    imprimir (Ctrl+P) desde esa pestaña, se oculta todo el menú/navegación y
    los botones, dejando solo el contenido de la lista lista para llevar al
