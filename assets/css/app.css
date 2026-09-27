@@ -207,8 +207,23 @@ table.table{width:100%;border-collapse:collapse;}
 .bar-fill{height:100%;background:var(--copper);border-radius:999px;}
 .bar-fill.alt{background:var(--accent);}
 
-.recipe-card{border:1px solid var(--border);border-radius:var(--radius-md);padding:16px 18px;background:var(--surface);margin-bottom:14px;}
-.recipe-card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+/* Tarjeta de receta dentro del detalle de un Evento/Práctica: mismo
+   lenguaje visual que .dash-card (cabecera con degradado, alternando las 4
+   variantes según categoría — ver comentario junto a .dash-card-head.is-sage
+   más abajo), pero de ancho completo porque su cuerpo aloja una tabla de
+   ingredientes en vez de caber en una cuadrícula. La cabecera y la barra de
+   herramientas (recipe-card-toolbar: colapsar, porciones a preparar, quitar)
+   quedan visibles aun con la tarjeta colapsada — solo se oculta
+   .recipe-card-body (la tabla y "Ver preparación") — para poder ajustar
+   porciones o quitar la receta sin tener que expandirla primero.*/
+.recipe-card{border-radius:var(--radius-lg);overflow:hidden;border:1px solid var(--border);background:var(--surface);margin-bottom:14px;box-shadow:var(--shadow);}
+.recipe-card-head{padding:16px 20px;color:#fff;background:linear-gradient(135deg,var(--accent) 0%,var(--copper) 100%);}
+.recipe-card-head.is-practica{background:linear-gradient(135deg,var(--copper) 0%,var(--accent-strong) 100%);}
+.recipe-card-head.is-sage{background:linear-gradient(135deg,var(--success) 0%,var(--copper) 100%);}
+.recipe-card-head.is-wine-sage{background:linear-gradient(135deg,var(--accent) 0%,var(--success) 100%);}
+.recipe-card-head .dash-title{color:#fff;}
+.recipe-card-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--border);}
+.recipe-card-body{padding:16px 20px;}
 .recipe-card-head h4{margin:0;font-size:1rem;font-family:'Fraunces',serif;}
 .portion-control{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--text-secondary);}
 .portion-control input{width:72px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:.85rem;}
@@ -218,10 +233,22 @@ table.table{width:100%;border-collapse:collapse;}
    costo total) — útil para tener un overview rápido de varias recetas a la
    vez. El botón por tarjeta rota su flecha (mismo ícono chevronDown que el
    menú de acciones de recetas/form.php) para indicar el estado. */
-.recipe-card-head [data-role="recipe-collapse-toggle"] svg{transition:transform .15s;}
+.recipe-card-toolbar [data-role="recipe-collapse-toggle"] svg{transition:transform .15s;}
 .recipe-card.collapsed [data-role="recipe-collapse-toggle"] svg{transform:rotate(-90deg);}
 .recipe-card.collapsed .recipe-card-body{display:none;}
-.recipe-card-head [data-role="costo-total-badge"]{color:var(--text);font-weight:600;}
+
+/* Insignia circular de color junto a un <h2 class="section-title">, para
+   dar identidad visual a tarjetas de resumen que no usan cabecera de
+   degradado completa (p.ej. "Gastos por categoría"/"Estado de pagos" en la
+   pestaña Resumen de un evento) — mismo espíritu que .dash-card-head pero
+   para superficies blancas. */
+.section-title-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.section-title-row .section-title{margin:0;}
+.section-icon{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.section-icon svg{width:15px;height:15px;}
+.section-icon.is-gold{background:var(--copper-soft);color:var(--copper);}
+.section-icon.is-wine{background:var(--accent-soft);color:var(--accent);}
+.section-icon.is-sage{background:var(--success-soft);color:var(--success);}
 
 .empty{text-align:center;padding:40px 20px;color:var(--text-secondary);}
 .empty svg{width:38px;height:38px;color:var(--text-tertiary);margin-bottom:10px;}

@@ -334,7 +334,7 @@ require __DIR__ . '/../includes/layout_top.php';
 </div>
 
 <div class="summary-grid">
-  <div class="card card-pad">
+  <div class="stat-tile stat-tile--wine">
     <div class="stat-label">Inversión del evento</div>
     <div class="stat-value"><?= money($totalProyeccionInversion) ?></div>
     <?php if ($puedeVerGastos): ?>
@@ -348,7 +348,7 @@ require __DIR__ . '/../includes/layout_top.php';
       <div class="stat-hint">Costo estimado de recetas + gastos del evento.</div>
     <?php endif; ?>
   </div>
-  <div class="card card-pad">
+  <div class="stat-tile stat-tile--gold">
     <div class="stat-label">Cuota y recaudo</div>
     <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
     <div class="meter <?= meterClase($pctPago) ?>"><span style="width:<?= min($pctPago, 100) ?>%"></span></div>
@@ -358,7 +358,7 @@ require __DIR__ . '/../includes/layout_top.php';
       <div class="stat-hint" style="margin-top:8px;">Asigna estudiantes al evento para calcular la cuota.</div>
     <?php endif; ?>
   </div>
-  <div class="card card-pad">
+  <div class="stat-tile stat-tile--sage">
     <div class="stat-label">Porciones a preparar</div>
     <div class="stat-value"><?= (int) $porcionesTotalesEvento ?></div>
     <div class="stat-hint"><?= count($recetasEvento) ?> receta<?= count($recetasEvento) === 1 ? '' : 's' ?> asignada<?= count($recetasEvento) === 1 ? '' : 's' ?> · suma de las porciones de cada una</div>
@@ -390,30 +390,31 @@ require __DIR__ . '/../includes/layout_top.php';
   $pendientes = count($estudiantesEvento) - $numPagados;
   $maxPay = max(1, $numPagados, $pendientes);
 ?>
+  <?php $paletaCategorias = ['var(--copper)', 'var(--accent)', 'var(--success)', 'var(--accent-strong)']; ?>
   <div class="summary-grid" style="grid-template-columns:<?= $puedeVerGastos ? '1fr 1fr' : '1fr' ?>;">
     <?php if ($puedeVerGastos): ?>
     <div class="card card-pad">
-      <h2 class="section-title">Gastos por categoría</h2>
+      <div class="section-title-row"><span class="section-icon is-gold"><?= icon('receipt') ?></span><h2 class="section-title">Gastos por categoría</h2></div>
       <?php if (!$catTotales): ?>
         <div class="cell-muted">Aún no hay gastos registrados.</div>
       <?php else: ?>
         <div class="bar-list">
-          <?php foreach ($catTotales as $cat => $val): ?>
+          <?php $iCat = 0; foreach ($catTotales as $cat => $val): ?>
             <div class="bar-list-row">
               <span class="cell-muted"><?= e($cat) ?></span>
-              <div class="bar-track"><div class="bar-fill" style="width:<?= round($val / $maxCat * 100) ?>%"></div></div>
+              <div class="bar-track"><div class="bar-fill" style="width:<?= round($val / $maxCat * 100) ?>%;background:<?= $paletaCategorias[$iCat % count($paletaCategorias)] ?>;"></div></div>
               <span class="mono" style="text-align:right;"><?= money($val) ?></span>
             </div>
-          <?php endforeach; ?>
+          <?php $iCat++; endforeach; ?>
         </div>
       <?php endif; ?>
     </div>
     <?php endif; ?>
     <div class="card card-pad">
-      <h2 class="section-title">Estado de pagos</h2>
+      <div class="section-title-row"><span class="section-icon is-wine"><?= icon('users') ?></span><h2 class="section-title">Estado de pagos</h2></div>
       <div class="bar-list">
-        <div class="bar-list-row"><span class="cell-muted">Pagado</span><div class="bar-track"><div class="bar-fill alt" style="width:<?= round($numPagados / $maxPay * 100) ?>%"></div></div><span class="mono" style="text-align:right;"><?= $numPagados ?></span></div>
-        <div class="bar-list-row"><span class="cell-muted">Pendiente</span><div class="bar-track"><div class="bar-fill" style="width:<?= round($pendientes / $maxPay * 100) ?>%"></div></div><span class="mono" style="text-align:right;"><?= $pendientes ?></span></div>
+        <div class="bar-list-row"><span class="cell-muted">Pagado</span><div class="bar-track"><div class="bar-fill alt" style="width:<?= round($numPagados / $maxPay * 100) ?>%"></div></div><span class="mono" style="text-align:right;font-weight:700;color:var(--success);"><?= $numPagados ?></span></div>
+        <div class="bar-list-row"><span class="cell-muted">Pendiente</span><div class="bar-track"><div class="bar-fill" style="width:<?= round($pendientes / $maxPay * 100) ?>%"></div></div><span class="mono" style="text-align:right;font-weight:700;color:var(--accent);"><?= $pendientes ?></span></div>
       </div>
       <div class="stat-hint" style="margin-top:14px;"><?= count($estudiantesEvento) ?> estudiante<?= count($estudiantesEvento) === 1 ? '' : 's' ?> asignado<?= count($estudiantesEvento) === 1 ? '' : 's' ?> a este evento.</div>
     </div>
@@ -431,43 +432,59 @@ require __DIR__ . '/../includes/layout_top.php';
       <a class="btn btn-secondary btn-sm" href="asignar_estudiante.php?id=<?= $id ?>"><?= icon('plus') ?> Agregar estudiante</a>
     <?php endif; ?>
   </div>
-  <div class="card">
-    <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Nombre</th><th>Grupo</th><th>Teléfono</th><th>Pagado</th><th>Pendiente</th><th></th></tr></thead>
-      <tbody>
-        <?php if (!$estudiantesEvento): ?>
-          <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay estudiantes asignados a este evento.</td></tr>
-        <?php endif; ?>
-        <?php foreach ($estudiantesEvento as $a):
-          $montoPagado = (float) $a['monto_pagado'];
-          $pendienteEstudiante = max(0, $cuotaConfirmada - $montoPagado);
-          $alDia = $pendienteEstudiante <= 0.005;
-        ?>
-          <tr>
-            <td class="cell-name"><?= e($a['nombre']) ?></td>
-            <td class="cell-muted"><?= e($a['grupo']) ?></td>
-            <td class="cell-muted mono"><?= e($a['telefono']) ?></td>
-            <td>
-              <span class="mono"><?= money($montoPagado) ?></span>
-              <?php if ($montoPagado > 0 && $a['fecha_pago']): ?>
-                <div class="stat-hint" style="margin-top:4px;">Último pago: <?= fmtDate($a['fecha_pago']) ?></div>
-              <?php endif; ?>
-            </td>
-            <td>
+  <?php if (!$estudiantesEvento): ?>
+    <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+      <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin estudiantes</div>
+      <div>Aún no hay estudiantes asignados a este evento.</div>
+    </div></div>
+  <?php else: ?>
+  <div class="event-grid">
+    <?php foreach ($estudiantesEvento as $a):
+      $montoPagado = (float) $a['monto_pagado'];
+      $pendienteEstudiante = max(0, $cuotaConfirmada - $montoPagado);
+      $alDia = $pendienteEstudiante <= 0.005;
+      $pctPagoEst = $cuotaConfirmada > 0 ? round(min($montoPagado, $cuotaConfirmada) / $cuotaConfirmada * 100) : ($montoPagado > 0 ? 100 : 0);
+    ?>
+      <div class="dash-card">
+        <div class="dash-card-head <?= $alDia ? 'is-sage' : '' ?>">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="child-avatar" style="width:40px;height:40px;font-size:.95rem;"><?= e(iniciales($a['nombre'])) ?></div>
+              <div>
+                <div class="dash-title"><?= e($a['nombre']) ?></div>
+                <div class="dash-meta">
+                  <span><?= icon('users') ?> <?= e($a['grupo'] ?? 'Sin grupo asignado') ?></span>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
               <?php if ($alDia): ?>
-                <span class="chip chip-success"><?= icon('check') ?> Al día</span>
+                <span class="chip chip-muted"><?= icon('check') ?> Al día</span>
               <?php else: ?>
-                <span class="chip chip-warning"><?= money($pendienteEstudiante) ?></span>
+                <span class="chip chip-muted"><?= money($pendienteEstudiante) ?> pendiente</span>
               <?php endif; ?>
-            </td>
-            <td class="row-actions">
-              <?php if ($puedeVerEstudiantesTab): ?>
-                <a class="btn btn-secondary btn-sm" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('receipt') ?> <?= $puedeEditarEstudianteTab ? 'Pagos' : 'Ver pagos' ?></a>
-              <?php endif; ?>
-              <?php if ($puedeVerFondoTab): ?>
-                <a class="btn btn-secondary btn-sm" href="aplicar_fondo.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('wallet') ?> Fondo</a>
-              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="person-meta">
+            <span><?= icon('phone') ?> <?= $a['telefono'] ? e($a['telefono']) : 'Sin teléfono' ?></span>
+          </div>
+          <div>
+            <div class="meter-row"><span>Pagado</span><span class="mono"><?= money($montoPagado) ?> / <?= money($cuotaConfirmada) ?></span></div>
+            <div class="meter <?= meterClase($pctPagoEst) ?>"><span style="width:<?= min($pctPagoEst, 100) ?>%"></span></div>
+            <?php if ($montoPagado > 0 && $a['fecha_pago']): ?>
+              <div class="stat-hint" style="margin-top:6px;">Último pago: <?= fmtDate($a['fecha_pago']) ?></div>
+            <?php endif; ?>
+          </div>
+          <div class="dash-footer">
+            <?php if ($puedeVerEstudiantesTab): ?>
+              <a class="btn btn-secondary btn-sm" href="pago_estudiante.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('receipt') ?> <?= $puedeEditarEstudianteTab ? 'Pagos' : 'Ver pagos' ?></a>
+            <?php endif; ?>
+            <?php if ($puedeVerFondoTab): ?>
+              <a class="btn btn-secondary btn-sm" href="aplicar_fondo.php?id=<?= $id ?>&estudiante_id=<?= (int) $a['id'] ?>"><?= icon('wallet') ?> Fondo</a>
+            <?php endif; ?>
+            <div class="row-actions">
               <?php if ($puedeEliminarEstudianteTab): ?>
                 <form method="post" data-confirm="¿Quitar a &quot;<?= e($a['nombre']) ?>&quot; de este evento?">
                   <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -476,13 +493,13 @@ require __DIR__ . '/../includes/layout_top.php';
                   <button class="icon-btn" type="submit" title="Quitar del evento"><?= icon('x') ?></button>
                 </form>
               <?php endif; ?>
-            </td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-    </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
+  <?php endif; ?>
 
 <?php elseif ($tab === 'recetas'): ?>
   <div class="toolbar no-print">
@@ -502,37 +519,52 @@ require __DIR__ . '/../includes/layout_top.php';
       <div>Agrega recetas del catálogo para calcular los ingredientes.</div>
     </div></div>
   <?php endif; ?>
+  <?php $variantesCabecera = ['', 'is-practica', 'is-sage', 'is-wine-sage']; ?>
   <div data-role="lista-recetas-evento">
   <?php foreach ($recetasEvento as $rc):
     $porcionesBase = max(1, (int) $rc['porciones_base']);
     $ingredientesReceta = $rc['ingredientes'];
     $costoTotal = $rc['costo_total'];
+    $varianteCabecera = $variantesCabecera[(int) $rc['categoria_id'] % 4];
   ?>
     <div class="recipe-card" data-recipe-card data-porciones-base="<?= $porcionesBase ?>">
-      <div class="recipe-card-head">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button class="icon-btn no-print" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
-          <div>
-            <h4><?= e($rc['nombre']) ?></h4>
-            <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones · <span class="mono" data-role="costo-total-badge"><?= money($costoTotal) ?></span></div>
+      <div class="recipe-card-head <?= $varianteCabecera ?>">
+        <div class="dash-head-top">
+          <div class="dash-head-id">
+            <div class="dash-icon"><?= icon('whisk') ?></div>
+            <div>
+              <div class="dash-title"><?= e($rc['nombre']) ?></div>
+              <div class="dash-meta">
+                <span><?= e($rc['categoria']) ?></span>
+                <span>base <?= $porcionesBase ?> porciones</span>
+              </div>
+            </div>
+          </div>
+          <div class="dash-chips">
+            <span class="chip chip-muted" data-role="costo-total-badge"><?= money($costoTotal) ?></span>
           </div>
         </div>
-        <?php if ($puedeEditarRecetaTab): ?>
-          <form method="post" class="no-print" style="display:flex;align-items:center;gap:14px;">
-            <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-            <input type="hidden" name="accion" value="actualizar_porciones">
-            <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
-            <div class="portion-control">
-              <span>Porciones a preparar</span>
-              <input type="number" min="1" name="porciones_necesarias" value="<?= (int) $rc['porciones_necesarias'] ?>" data-role="porciones-input">
-            </div>
-            <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
-          </form>
-        <?php else: ?>
-          <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
-        <?php endif; ?>
+      </div>
+      <div class="recipe-card-toolbar no-print">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <button class="icon-btn" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
+          <?php if ($puedeEditarRecetaTab): ?>
+            <form method="post" style="display:flex;align-items:center;gap:14px;">
+              <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+              <input type="hidden" name="accion" value="actualizar_porciones">
+              <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
+              <div class="portion-control">
+                <span>Porciones a preparar</span>
+                <input type="number" min="1" name="porciones_necesarias" value="<?= (int) $rc['porciones_necesarias'] ?>" data-role="porciones-input">
+              </div>
+              <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
+            </form>
+          <?php else: ?>
+            <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
+          <?php endif; ?>
+        </div>
         <?php if ($puedeEliminarRecetaTab): ?>
-          <form method="post" class="no-print" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
+          <form method="post" data-confirm="¿Quitar la receta &quot;<?= e($rc['nombre']) ?>&quot; de este evento?">
             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
             <input type="hidden" name="accion" value="quitar_receta">
             <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
@@ -592,6 +624,11 @@ require __DIR__ . '/../includes/layout_top.php';
       <a class="btn btn-secondary btn-sm" href="lista_compra_txt.php?id=<?= $id ?>"><?= icon('download') ?> Descargar (.txt)</a>
     </div>
   </div>
+  <div class="stat-tile stat-tile--gold" style="margin-bottom:16px;">
+    <div class="stat-label"><?= icon('basket') ?> Costo estimado de la lista de compra</div>
+    <div class="stat-value"><?= money($consolidado['total'] ?? 0) ?></div>
+    <div class="stat-hint"><?= count($consolidado['lineas']) ?> ingrediente<?= count($consolidado['lineas']) === 1 ? '' : 's' ?> a comprar<?= $consolidado['al_gusto'] ? ' · ' . count($consolidado['al_gusto']) . ' al gusto' : '' ?></div>
+  </div>
   <div class="card">
     <div class="table-wrap">
     <table class="table">
@@ -611,9 +648,9 @@ require __DIR__ . '/../includes/layout_top.php';
                   <?php if ($modo === 'paquete'): ?>
                     comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?>
                   <?php elseif ($modo === 'exacto'): ?>
-                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · comprar solo lo necesario
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · <span class="chip chip-warning" style="font-size:.65rem;">Solo lo necesario</span>
                   <?php else: ?>
-                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · ya lo tienes
+                    <span style="text-decoration:line-through;">comprar ≈ <?= numFmt($cantCompleta) ?> <?= e($l['compra']['unidad']) ?></span> · <span class="chip chip-muted" style="font-size:.65rem;">Ya lo tienes</span>
                   <?php endif; ?>
                 </div>
                 <?php if ($puedeEditarCompras): ?>
@@ -642,9 +679,9 @@ require __DIR__ . '/../includes/layout_top.php';
               <?= money($l['monto']) ?>
               <?php if (!empty($l['compra_decision'])): $modoMonto = $l['compra_decision']['modo'] ?? 'paquete'; ?>
                 <?php if ($modoMonto === 'ya_tiene'): ?>
-                  <div class="cell-muted" style="font-size:.72rem;font-weight:400;">ya lo tienes</div>
+                  <div style="margin-top:4px;"><span class="chip chip-muted" style="font-size:.65rem;">Ya lo tienes</span></div>
                 <?php elseif ($modoMonto === 'exacto'): ?>
-                  <div class="cell-muted" style="font-size:.72rem;font-weight:400;">costo exacto, sin paquete</div>
+                  <div style="margin-top:4px;"><span class="chip chip-warning" style="font-size:.65rem;">Costo exacto</span></div>
                 <?php endif; ?>
               <?php endif; ?>
             </td>
@@ -688,52 +725,71 @@ require __DIR__ . '/../includes/layout_top.php';
       <a class="btn btn-secondary btn-sm" href="gasto_form.php?evento_id=<?= $id ?>"><?= icon('plus') ?> Agregar partida</a>
     <?php endif; ?>
   </div>
-  <div class="card">
-    <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Estado</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Monto</th><th></th></tr></thead>
-      <tbody>
-        <?php if (!$gastosEvento): ?>
-          <tr><td colspan="7" class="cell-muted" style="text-align:center;padding:24px;">Aún no hay gastos ni partidas proyectadas.</td></tr>
-        <?php endif; ?>
-        <?php foreach ($gastosEvento as $g): ?>
-          <tr>
-            <td>
-              <?php if ($g['estado'] === 'proyectado'): ?>
-                <span class="chip chip-warning">Proyectado</span>
-              <?php elseif ($g['estado'] === 'confirmado'): ?>
-                <span class="chip chip-neutral">Confirmado</span>
-              <?php else: ?>
-                <span class="chip chip-success">Pagado</span>
-              <?php endif; ?>
-              <?php if (!empty($g['es_material_receta'])): ?><div class="cell-muted" style="font-size:.72rem;margin-top:2px;">Material de receta</div><?php endif; ?>
-            </td>
-            <td class="cell-muted">
-              <?= fmtDate($g['fecha']) ?>
-              <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><div style="font-size:.72rem;">Pagado: <?= fmtDate($g['fecha_pago']) ?></div><?php endif; ?>
-            </td>
-            <td><span class="chip chip-neutral"><?= e($g['categoria']) ?></span></td>
-            <td><?= e($g['descripcion']) ?></td>
-            <td class="cell-muted"><?= e($g['proveedor']) ?></td>
-            <td class="mono">
-              <?= money(montoEfectivoGasto($g)) ?>
-              <?php if ($g['estado'] === 'pagado' && !empty($g['factura'])): ?>
-                <div><a href="<?= e($base . '/' . $g['factura']) ?>" target="_blank" rel="noopener" class="cell-muted" style="font-size:.78rem;"><?= icon('receipt') ?> Ver factura</a></div>
-              <?php endif; ?>
-            </td>
-            <td class="row-actions">
-              <?php if ($g['estado'] === 'proyectado' && $puedeEditarGasto): ?>
-              <form method="post" data-confirm="¿Confirmar esta partida por el monto indicado?" style="display:flex;gap:6px;align-items:center;">
-                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
-                <input type="hidden" name="accion" value="confirmar_gasto">
-                <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
-                <input type="number" name="monto_confirmado" min="0.01" step="0.01" value="<?= e((string) $g['monto']) ?>" style="width:100px;" title="Monto confirmado">
-                <button class="btn btn-primary btn-sm" type="submit"><?= icon('check') ?> Confirmar</button>
-              </form>
-              <?php endif; ?>
-              <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
-                <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
-              <?php endif; ?>
+  <?php if (!$gastosEvento): ?>
+    <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+      <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin gastos</div>
+      <div>Aún no hay gastos ni partidas proyectadas.</div>
+    </div></div>
+  <?php else: ?>
+  <div class="event-grid">
+    <?php foreach ($gastosEvento as $g):
+      $varianteGasto = $g['estado'] === 'pagado' ? 'is-sage' : ($g['estado'] === 'confirmado' ? 'is-wine-sage' : '');
+      $estadoLabel = $g['estado'] === 'proyectado' ? 'Proyectado' : ($g['estado'] === 'confirmado' ? 'Confirmado' : 'Pagado');
+    ?>
+      <div class="dash-card">
+        <div class="dash-card-head <?= $varianteGasto ?>">
+          <div class="dash-head-top">
+            <div class="dash-head-id">
+              <div class="dash-icon"><?= icon('receipt') ?></div>
+              <div>
+                <div class="dash-title"><?= e($g['descripcion']) ?></div>
+                <div class="dash-meta">
+                  <span><?= icon('calendar') ?> <?= fmtDate($g['fecha']) ?></span>
+                  <span><?= e($g['categoria']) ?></span>
+                </div>
+              </div>
+            </div>
+            <div class="dash-chips">
+              <span class="chip chip-muted"><?= $estadoLabel ?></span>
+            </div>
+          </div>
+        </div>
+        <div class="dash-body">
+          <div class="dash-stats">
+            <div class="dash-stat is-gold">
+              <div class="dash-stat-label">Monto</div>
+              <div class="dash-stat-value"><?= money(montoEfectivoGasto($g)) ?></div>
+            </div>
+            <?php if ($g['proveedor']): ?>
+            <div class="dash-stat">
+              <div class="dash-stat-label">Proveedor</div>
+              <div class="dash-stat-value" style="font-size:.8rem;"><?= e($g['proveedor']) ?></div>
+            </div>
+            <?php endif; ?>
+          </div>
+          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || ($g['estado'] === 'pagado' && !empty($g['factura']))): ?>
+          <div class="cell-muted" style="font-size:.78rem;display:flex;flex-direction:column;gap:4px;">
+            <?php if (!empty($g['es_material_receta'])): ?><span>Material de receta</span><?php endif; ?>
+            <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><span>Pagado: <?= fmtDate($g['fecha_pago']) ?></span><?php endif; ?>
+            <?php if ($g['estado'] === 'pagado' && !empty($g['factura'])): ?>
+              <a href="<?= e($base . '/' . $g['factura']) ?>" target="_blank" rel="noopener"><?= icon('receipt') ?> Ver factura</a>
+            <?php endif; ?>
+          </div>
+          <?php endif; ?>
+          <div class="dash-footer">
+            <?php if ($g['estado'] === 'proyectado' && $puedeEditarGasto): ?>
+            <form method="post" data-confirm="¿Confirmar esta partida por el monto indicado?" style="display:flex;gap:6px;align-items:center;">
+              <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+              <input type="hidden" name="accion" value="confirmar_gasto">
+              <input type="hidden" name="gasto_id" value="<?= (int) $g['id'] ?>">
+              <input type="number" name="monto_confirmado" min="0.01" step="0.01" value="<?= e((string) $g['monto']) ?>" style="width:90px;" title="Monto confirmado">
+              <button class="btn btn-primary btn-sm" type="submit"><?= icon('check') ?> Confirmar</button>
+            </form>
+            <?php endif; ?>
+            <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
+              <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
+            <?php endif; ?>
+            <div class="row-actions">
               <?php if ($puedeEliminarGasto && ($g['estado'] !== 'pagado' || $esAdmin)): ?>
               <form method="post" data-confirm="<?= $g['estado'] === 'pagado' ? '¿Eliminar este gasto ya pagado? Es una acción de auditoría, solo un Administrador puede hacerla.' : '¿Eliminar esta partida?' ?>">
                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -742,13 +798,13 @@ require __DIR__ . '/../includes/layout_top.php';
                 <button class="icon-btn" type="submit"><?= icon('trash') ?></button>
               </form>
               <?php endif; ?>
-            </td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-    </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
   </div>
+  <?php endif; ?>
 <?php endif; ?>
 
 <?php require __DIR__ . '/../includes/layout_bottom.php'; ?>
