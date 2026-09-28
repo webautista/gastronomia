@@ -649,6 +649,133 @@ function mapaPadresPorEstudiante(PDO $pdo): array
 }
 
 /**
+ * Estado de cuenta consolidado de un estudiante: todas sus participaciones
+ * (eventos y prácticas, con su cuota vigente/pagado/pendiente — reutiliza
+ * participacionesEstudiante()) más el fondo (saldo actual e historial
+ * completo) — para reportes/estado_cuenta.php. Null si ya no existe.
+ */
+function estadoCuentaEstudiante(PDO $pdo, int $estudianteId): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT e.*, g.nombre AS grupo FROM estudiantes e
+         LEFT JOIN grupos_estudiante g ON g.id = e.grupo_id
+         WHERE e.id = ?'
+    );
+    $stmt->execute([$estudianteId]);
+    $estudiante = $stmt->fetch();
+    if (!$estudiante) {
+        return null;
+    }
+
+    $participaciones = participacionesEstudiante($pdo, $estudianteId);
+
+    return [
+        'estudiante' => $estudiante,
+        'participaciones' => $participaciones,
+        'total_cuota' => array_sum(array_column($participaciones, 'cuota_confirmada')),
+        'total_pagado' => array_sum(array_column($participaciones, 'monto_pagado')),
+        'total_pendiente' => array_sum(array_column($participaciones, 'pendiente')),
+        'saldo_fondo' => saldoFondoEstudiante($pdo, $estudianteId),
+        'historial_fondo' => historialFondoEstudiante($pdo, $estudianteId),
+    ];
+}
+
+/**
+ * Cierre financiero de un evento o práctica: costo real vs. proyectado,
+ * cuota sugerida vs. confirmada (con su nota si hay un ajuste manual, ver
+ * sección 33), gastos por categoría, y estado de pago de cada estudiante —
+ * para reportes/cierre.php. $entidadTipo es 'evento' o 'practica', siempre
+ * uno de estos dos literales fijos. Null si la entidad ya no existe.
+ */
+function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
+{
+    if ($entidadTipo === 'evento') {
+        $stmt = $pdo->prepare(
+            'SELECT ev.*, es.nombre AS estado_nombre FROM eventos ev
+             JOIN estados_evento es ON es.id = ev.estado_id WHERE ev.id = ?'
+        );
+        $stmt->execute([$entidadId]);
+        $entidad = $stmt->fetch();
+        if (!$entidad) {
+            return null;
+        }
+        $costo = costoRecetasConsolidado($pdo, 'evento', $entidadId);
+        $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', $entidadId);
+        $stmtGastos = $pdo->prepare(
+            "SELECT g.*, cg.nombre AS categoria FROM gastos g
+             JOIN categorias_gasto cg ON cg.id = g.categoria_id
+             WHERE g.evento_id = ? AND g.eliminado_en IS NULL
+             ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
+        );
+        $stmtGastos->execute([$entidadId]);
+        $stmtEst = $pdo->prepare(
+            'SELECT ee.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
+             FROM evento_estudiante ee JOIN estudiantes est ON est.id = ee.estudiante_id
+             WHERE ee.evento_id = ? ORDER BY est.nombre ASC'
+        );
+        $stmtEst->execute([$entidadId]);
+    } else {
+        $stmt = $pdo->prepare('SELECT * FROM practicas WHERE id = ?');
+        $stmt->execute([$entidadId]);
+        $entidad = $stmt->fetch();
+        if (!$entidad) {
+            return null;
+        }
+        $entidad['estado_nombre'] = null;
+        $costo = costoRecetasConsolidado($pdo, 'practica', $entidadId);
+        $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', $entidadId);
+        $stmtGastos = $pdo->prepare(
+            "SELECT g.*, cg.nombre AS categoria FROM gastos g
+             JOIN categorias_gasto cg ON cg.id = g.categoria_id
+             WHERE g.practica_id = ? AND g.eliminado_en IS NULL
+             ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
+        );
+        $stmtGastos->execute([$entidadId]);
+        $stmtEst = $pdo->prepare(
+            'SELECT pe.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
+             FROM practica_estudiante pe JOIN estudiantes est ON est.id = pe.estudiante_id
+             WHERE pe.practica_id = ? ORDER BY est.nombre ASC'
+        );
+        $stmtEst->execute([$entidadId]);
+    }
+
+    $gastos = $stmtGastos->fetchAll();
+    $estudiantes = $stmtEst->fetchAll();
+
+    $cuotaManual = $entidad['cuota_confirmada_manual'] !== null ? (float) $entidad['cuota_confirmada_manual'] : null;
+    $cuotas = calcularCuotas($costo, $resumenGastos, count($estudiantes), $cuotaManual);
+    $cuotaConfirmada = $cuotas['confirmada'];
+
+    $catTotales = [];
+    foreach ($gastos as $g) {
+        $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + montoEfectivoGasto($g);
+    }
+
+    $filasEstudiantes = [];
+    foreach ($estudiantes as $e) {
+        $pagado = (float) $e['monto_pagado'];
+        $filasEstudiantes[] = [
+            'estudiante_id' => (int) $e['estudiante_id'],
+            'estudiante_nombre' => $e['estudiante_nombre'],
+            'pagado' => $pagado,
+            'pendiente' => max(0.0, $cuotaConfirmada - $pagado),
+        ];
+    }
+
+    return [
+        'tipo' => $entidadTipo,
+        'entidad' => $entidad,
+        'costo_recetas' => $costo,
+        'gastos' => $gastos,
+        'gastos_por_categoria' => $catTotales,
+        'cuotas' => $cuotas,
+        'estudiantes' => $filasEstudiantes,
+        'recaudado' => array_sum(array_column($filasEstudiantes, 'pagado')),
+        'cantidad_estudiantes' => count($estudiantes),
+    ];
+}
+
+/**
  * Historial de pagos (tabla pagos_estudiante) de un estudiante en un evento
  * o práctica, del más reciente al más antiguo — para la pantalla
  * eventos/pago_estudiante.php y practicas/pago_estudiante.php.
