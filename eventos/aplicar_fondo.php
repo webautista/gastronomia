@@ -96,7 +96,8 @@ $resumenGastos = resumenGastosVinculo(db(), 'evento_id', $id);
 $stmt = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
 $stmt->execute([$id]);
 $cantidadEstudiantes = (int) $stmt->fetchColumn();
-$cuotas = calcularCuotas($costoRecetas, $resumenGastos, $cantidadEstudiantes);
+$cuotaManual = $evento['cuota_confirmada_manual'] !== null ? (float) $evento['cuota_confirmada_manual'] : null;
+$cuotas = calcularCuotas($costoRecetas, $resumenGastos, $cantidadEstudiantes, $cuotaManual);
 $cuotaConfirmada = $cuotas['confirmada'];
 
 $montoPagado = (float) $estudiante['monto_pagado'];

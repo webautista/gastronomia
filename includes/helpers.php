@@ -449,8 +449,23 @@ function etiquetaCampoGastoHistorial(string $campo): string
  * real (materiales-final + otros ya confirmados/pagados) — es la que se
  * usa para cobrarle a cada estudiante. Con 0 estudiantes asignados ambas
  * cuotas quedan en 0 (no se puede repartir entre nadie todavía).
+ *
+ * $cuotaManual (eventos.cuota_confirmada_manual / practicas.
+ * cuota_confirmada_manual, ver setup.php) es el ajuste que el taller puede
+ * fijar cuando decide cobrar MENOS de lo que costó de verdad (ej. por
+ * logística) — a pedido explícito de Eyaelkys, para que un estudiante que
+ * ya pagó lo acordado no siga apareciendo con un "pendiente" fantasma
+ * calculado contra el costo real. Cuando viene NULL (el caso normal),
+ * 'confirmada' es igual que antes: el cálculo automático. Cuando viene un
+ * número, 'confirmada' pasa a ser ESE número en vez del cálculo — pero el
+ * cálculo automático se sigue devolviendo aparte, en 'confirmada_sugerida',
+ * para poder mostrarlo al lado como referencia. 'meta_recaudo' (cuota
+ * final × estudiantes) es lo que de verdad se espera recaudar en total —
+ * antes las barras de progreso usaban 'total_confirmado' (el costo real),
+ * que con un ajuste manual activo nunca llegaría a 100% aunque todos ya
+ * hubieran pagado lo acordado.
  */
-function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidadEstudiantes): array
+function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidadEstudiantes, ?float $cuotaManual = null): array
 {
     $materialUsado = $resumenGastos['material_usado'];
     $materialProyectado = $resumenGastos['material_proyectado'];
@@ -461,6 +476,9 @@ function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidad
     $totalProyeccion = $materialesFinal + $materialProyectado + $otrosProyectado + $otrosUsado;
     $totalConfirmado = $materialesFinal + $otrosUsado;
 
+    $confirmadaSugerida = $cantidadEstudiantes > 0 ? $totalConfirmado / $cantidadEstudiantes : 0.0;
+    $confirmadaFinal = $cuotaManual ?? $confirmadaSugerida;
+
     return [
         'materiales_final' => $materialesFinal,
         'material_excedido' => $materialUsado > $costoRecetas + 0.005,
@@ -468,8 +486,40 @@ function calcularCuotas(float $costoRecetas, array $resumenGastos, int $cantidad
         'total_proyeccion' => $totalProyeccion,
         'total_confirmado' => $totalConfirmado,
         'proyectada' => $cantidadEstudiantes > 0 ? $totalProyeccion / $cantidadEstudiantes : 0.0,
-        'confirmada' => $cantidadEstudiantes > 0 ? $totalConfirmado / $cantidadEstudiantes : 0.0,
+        'confirmada_sugerida' => $confirmadaSugerida,
+        'confirmada' => $confirmadaFinal,
+        'cuota_ajustada' => $cuotaManual !== null,
+        'meta_recaudo' => $confirmadaFinal * $cantidadEstudiantes,
     ];
+}
+
+/**
+ * Anota en cuota_historial un cambio al ajuste manual de la cuota
+ * confirmada de un evento o práctica (ver calcularCuotas() arriba y
+ * eventos/cuota_editar.php, practicas/cuota_editar.php). No hace nada si
+ * el valor no cambió (ninguno de los dos, o el mismo número).
+ * $entidadTipo es 'evento' o 'practica' — siempre uno de estos dos
+ * literales fijos, nunca entrada del usuario.
+ */
+function registrarCambioCuota(PDO $pdo, string $entidadTipo, int $entidadId, ?float $anterior, ?float $nuevo, ?string $nota, int $usuarioId, string $usuarioNombre): void
+{
+    $antStr = $anterior !== null ? sprintf('%.2f', $anterior) : null;
+    $nuevStr = $nuevo !== null ? sprintf('%.2f', $nuevo) : null;
+    if ($antStr === $nuevStr) {
+        return;
+    }
+    $pdo->prepare(
+        'INSERT INTO cuota_historial (entidad_tipo, entidad_id, valor_anterior, valor_nuevo, nota, registrado_por, registrado_por_nombre)
+         VALUES (?,?,?,?,?,?,?)'
+    )->execute([$entidadTipo, $entidadId, $anterior, $nuevo, ($nota !== null && $nota !== '') ? $nota : null, $usuarioId, $usuarioNombre]);
+}
+
+/** Historial de ajustes de cuota de un evento o práctica (ver registrarCambioCuota()), más reciente primero. */
+function historialCuota(PDO $pdo, string $entidadTipo, int $entidadId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM cuota_historial WHERE entidad_tipo = ? AND entidad_id = ? ORDER BY creado_en DESC, id DESC');
+    $stmt->execute([$entidadTipo, $entidadId]);
+    return $stmt->fetchAll();
 }
 
 /**
@@ -1524,7 +1574,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
     $filas = [];
 
     $stmt = $pdo->prepare(
-        'SELECT ev.id, ev.nombre, ev.fecha, ee.monto_pagado
+        'SELECT ev.id, ev.nombre, ev.fecha, ev.cuota_confirmada_manual, ee.monto_pagado
          FROM evento_estudiante ee JOIN eventos ev ON ev.id = ee.evento_id
          WHERE ee.estudiante_id = ? ORDER BY ev.fecha ASC'
     );
@@ -1536,7 +1586,8 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
 
         $costoRecetas = costoRecetasConsolidado($pdo, 'evento', (int) $ev['id']);
         $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', (int) $ev['id']);
-        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEst);
+        $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
+        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEst, $cuotaManual);
         $montoPagado = (float) $ev['monto_pagado'];
         $filas[] = [
             'tipo' => 'evento',
@@ -1551,7 +1602,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
     }
 
     $stmt = $pdo->prepare(
-        'SELECT p.id, p.nombre, p.fecha, pe.monto_pagado
+        'SELECT p.id, p.nombre, p.fecha, p.cuota_confirmada_manual, pe.monto_pagado
          FROM practica_estudiante pe JOIN practicas p ON p.id = pe.practica_id
          WHERE pe.estudiante_id = ? ORDER BY p.fecha ASC'
     );
@@ -1563,7 +1614,8 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
 
         $costoMateriales = costoRecetasConsolidado($pdo, 'practica', (int) $p['id']);
         $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', (int) $p['id']);
-        $cuotas = calcularCuotas($costoMateriales, $resumenGastos, $numEst);
+        $cuotaManual = $p['cuota_confirmada_manual'] !== null ? (float) $p['cuota_confirmada_manual'] : null;
+        $cuotas = calcularCuotas($costoMateriales, $resumenGastos, $numEst, $cuotaManual);
         $montoPagado = (float) $p['monto_pagado'];
         $filas[] = [
             'tipo' => 'practica',

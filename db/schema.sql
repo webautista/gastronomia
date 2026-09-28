@@ -993,4 +993,27 @@ CREATE TABLE IF NOT EXISTS compra_decisiones (
     UNIQUE KEY uq_compradecision (entidad_tipo, entidad_id, ingrediente_catalogo_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Historial de cambios a la cuota confirmada MANUAL de un evento o práctica
+-- (eventos.cuota_confirmada_manual / practicas.cuota_confirmada_manual,
+-- agregadas solo vía setup.php — ver migrarColumnasNuevas() — igual criterio
+-- que "modo" en compra_decisiones arriba). Mismo patrón que gastos_historial
+-- más arriba: un registro por cada vez que se fija/cambia/quita el ajuste
+-- manual, nunca se sobrescribe en silencio, y entidad_tipo/entidad_id son
+-- polimórficos (evento o práctica) igual que en compra_decisiones. Ver
+-- eventos/cuota_editar.php y practicas/cuota_editar.php.
+CREATE TABLE IF NOT EXISTS cuota_historial (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('evento','practica') NOT NULL,
+    entidad_id INT UNSIGNED NOT NULL,
+    valor_anterior DECIMAL(10,2) NULL,
+    valor_nuevo DECIMAL(10,2) NULL,
+    nota VARCHAR(255) NULL,
+    registrado_por INT UNSIGNED NULL,
+    registrado_por_nombre VARCHAR(150) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_cuotahist_usuario FOREIGN KEY (registrado_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    KEY idx_cuotahist_entidad (entidad_tipo, entidad_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

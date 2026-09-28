@@ -254,10 +254,17 @@ if ($puedeVerGastos) {
     $gastosPractica = $stmt->fetchAll();
 }
 
-$cuotas = calcularCuotas($costoMateriales, $resumenGastos, $cantidadEstudiantes);
+// Ver el mismo comentario en eventos/detalle.php: "confirmada" puede venir
+// de un ajuste manual (practicas.cuota_confirmada_manual) en vez del
+// cálculo automático, cuando el taller decide cobrar menos de lo que costó
+// de verdad — ver practicas/cuota_editar.php.
+$cuotaManualPractica = $practica['cuota_confirmada_manual'] !== null ? (float) $practica['cuota_confirmada_manual'] : null;
+$cuotas = calcularCuotas($costoMateriales, $resumenGastos, $cantidadEstudiantes, $cuotaManualPractica);
 $cuotaProyectada = $cuotas['proyectada'];
 $cuotaConfirmada = $cuotas['confirmada'];
-$totalConfirmadoConMateriales = $cuotas['total_confirmado'];
+$cuotaSugerida = $cuotas['confirmada_sugerida'];
+$cuotaAjustada = $cuotas['cuota_ajustada'];
+$totalConfirmadoConMateriales = $cuotas['meta_recaudo'];
 $totalProyeccionInversion = $cuotas['total_proyeccion'];
 
 $recaudado = array_sum(array_column($estudiantesPractica, 'monto_pagado'));
@@ -304,11 +311,23 @@ require __DIR__ . '/../includes/layout_top.php';
     <?php endif; ?>
   </div>
   <div class="stat-tile stat-tile--gold">
-    <div class="stat-label">Cuota y recaudo</div>
+    <div class="stat-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>Cuota y recaudo</span>
+      <?php if ($puedeEditarGasto): ?>
+        <a href="cuota_editar.php?id=<?= $id ?>" title="Ajustar la cuota confirmada" style="color:inherit;opacity:.75;display:inline-flex;"><?= icon('edit') ?></a>
+      <?php endif; ?>
+    </div>
     <?php if ($cantidadEstudiantes > 0): ?>
       <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
       <div class="meter <?= meterClase($pctPago) ?>"><span style="width:<?= min($pctPago, 100) ?>%"></span></div>
-      <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+      <?php if ($cuotaAjustada): ?>
+        <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> <span class="chip chip-muted" style="font-size:.7rem;">ajustada</span> · Cuota sugerida: <b class="mono"><?= money($cuotaSugerida) ?></b> por estudiante</div>
+        <?php if (!empty($practica['cuota_confirmada_manual_nota'])): ?>
+          <div class="stat-hint" style="margin-top:2px;font-style:italic;">“<?= e($practica['cuota_confirmada_manual_nota']) ?>”</div>
+        <?php endif; ?>
+      <?php else: ?>
+        <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+      <?php endif; ?>
     <?php else: ?>
       <div class="stat-value" style="font-size:1.05rem;">—</div>
       <div class="stat-hint">Asigna estudiantes a la práctica para calcular la cuota.</div>

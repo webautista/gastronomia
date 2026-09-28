@@ -10,7 +10,7 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/icons.php';
 
 $stmt = db()->query(
-    "SELECT ev.id, ev.nombre, ev.fecha, ev.lugar, ev.banner, ev.cuota_publica
+    "SELECT ev.id, ev.nombre, ev.fecha, ev.lugar, ev.banner, ev.cuota_publica, ev.cuota_confirmada_manual
      FROM eventos ev
      JOIN estados_evento es ON es.id = ev.estado_id
      WHERE es.nombre <> 'Finalizado' AND ev.fecha >= CURDATE()
@@ -38,9 +38,13 @@ foreach ($proximosEventos as &$ev) {
         $stmtNum->execute([$ev['id']]);
         $numEstudiantes = (int) $stmtNum->fetchColumn();
 
-        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEstudiantes);
+        $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
+        $cuotas = calcularCuotas($costoRecetas, $resumenGastos, $numEstudiantes, $cuotaManual);
         $ev['num_estudiantes'] = $numEstudiantes;
-        $ev['cuota_proyectada'] = $cuotas['proyectada'];
+        // Si ya hay una cuota confirmada manual, esa es la cifra real que se
+        // les va a cobrar — se muestra esa en vez de la proyectada, para no
+        // publicar un monto que en la práctica ya se sabe que no va a ser.
+        $ev['cuota_proyectada'] = $cuotas['cuota_ajustada'] ? $cuotas['confirmada'] : $cuotas['proyectada'];
     }
 }
 unset($ev);

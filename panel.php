@@ -52,10 +52,11 @@ $eventos = $stmt->fetchAll();
 foreach ($eventos as &$ev) {
     $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
-    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
+    $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
+    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes'], $cuotaManual);
     $ev['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
     $ev['presupuesto_total'] = $cuotas['total_proyeccion'];
-    $ev['total_confirmado'] = $cuotas['total_confirmado'];
+    $ev['total_confirmado'] = $cuotas['meta_recaudo'];
     $ev['cuota_confirmada'] = $cuotas['confirmada'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ? AND monto_pagado >= ?');
@@ -98,10 +99,11 @@ $practicas = $stmt->fetchAll();
 foreach ($practicas as &$p) {
     $costoMateriales = costoRecetasConsolidado(db(), 'practica', (int) $p['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
-    $cuotas = calcularCuotas($costoMateriales, $resumenGastos, (int) $p['num_estudiantes']);
+    $cuotaManual = $p['cuota_confirmada_manual'] !== null ? (float) $p['cuota_confirmada_manual'] : null;
+    $cuotas = calcularCuotas($costoMateriales, $resumenGastos, (int) $p['num_estudiantes'], $cuotaManual);
     $p['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
     $p['presupuesto_total'] = $cuotas['total_proyeccion'];
-    $p['total_confirmado'] = $cuotas['total_confirmado'];
+    $p['total_confirmado'] = $cuotas['meta_recaudo'];
     $p['cuota_confirmada'] = $cuotas['confirmada'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ? AND monto_pagado >= ?');

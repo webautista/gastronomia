@@ -91,7 +91,8 @@ $resumenGastos = resumenGastosVinculo(db(), 'practica_id', $id);
 $stmt = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ?');
 $stmt->execute([$id]);
 $cantidadEstudiantes = (int) $stmt->fetchColumn();
-$cuotas = calcularCuotas($costoMateriales, $resumenGastos, $cantidadEstudiantes);
+$cuotaManual = $practica['cuota_confirmada_manual'] !== null ? (float) $practica['cuota_confirmada_manual'] : null;
+$cuotas = calcularCuotas($costoMateriales, $resumenGastos, $cantidadEstudiantes, $cuotaManual);
 $cuotaConfirmada = $cuotas['confirmada'];
 
 $montoPagado = (float) $estudiante['monto_pagado'];

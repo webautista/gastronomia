@@ -48,12 +48,14 @@ $eventos = $stmt->fetchAll();
 foreach ($eventos as &$ev) {
     $costoRecetas = costoRecetasConsolidado(db(), 'evento', (int) $ev['id']);
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
-    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes']);
+    $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
+    $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes'], $cuotaManual);
     $ev['costo_recetas'] = $costoRecetas;
     $ev['total_proyeccion'] = $cuotas['total_proyeccion'];
-    $ev['total_confirmado'] = $cuotas['total_confirmado'];
+    $ev['total_confirmado'] = $cuotas['meta_recaudo'];
     $ev['cuota_proyectada'] = $cuotas['proyectada'];
     $ev['cuota_confirmada'] = $cuotas['confirmada'];
+    $ev['cuota_ajustada'] = $cuotas['cuota_ajustada'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ? AND monto_pagado >= ?');
     $stmtPag->execute([(int) $ev['id'], $cuotas['confirmada'] - 0.005]);

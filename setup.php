@@ -321,6 +321,35 @@ function migrarColumnasNuevas(PDO $pdo): array
         $mensajes[] = 'Columna "telefono_padre_tutor" agregada a la tabla estudiantes.';
     }
 
+    // Cuota confirmada manual: por defecto la cuota que se le cobra a cada
+    // estudiante sigue calculándose sola (costo real de materiales + otros
+    // gastos, dividido entre los estudiantes — ver calcularCuotas() en
+    // includes/helpers.php), pero a veces el taller decide cobrar MENOS de
+    // lo que costó de verdad (ej. por logística, o para no trasladarle a las
+    // familias un sobrecosto puntual) — a pedido explícito de Eyaelkys. Sin
+    // esto, cualquier estudiante que ya pagó lo acordado seguía apareciendo
+    // con un "pendiente" fantasma, porque el sistema lo comparaba contra el
+    // costo real en vez de contra lo que en verdad se decidió cobrar. NULL
+    // (el default) = seguir calculando sola, igual que siempre; un valor
+    // aquí REEMPLAZA la cuota confirmada calculada en todas las pantallas
+    // (Resumen, Estudiantes y pagos, paneles de padres/estudiantes), pero el
+    // cálculo automático se sigue mostrando al lado como "cuota sugerida"
+    // para referencia. La nota es opcional, para dejar constancia de por qué
+    // se ajustó. Cada cambio queda anotado en cuota_historial (mismo
+    // criterio que gastos_historial: un registro por cambio, nunca se
+    // sobrescribe en silencio) — ver eventos/cuota_editar.php y
+    // practicas/cuota_editar.php.
+    if (columnaExiste($pdo, 'eventos', 'id') && !columnaExiste($pdo, 'eventos', 'cuota_confirmada_manual')) {
+        $pdo->exec('ALTER TABLE eventos ADD COLUMN cuota_confirmada_manual DECIMAL(10,2) NULL AFTER cuota');
+        $pdo->exec('ALTER TABLE eventos ADD COLUMN cuota_confirmada_manual_nota VARCHAR(255) NULL AFTER cuota_confirmada_manual');
+        $mensajes[] = 'Columnas "cuota_confirmada_manual" y "cuota_confirmada_manual_nota" agregadas a la tabla eventos.';
+    }
+    if (columnaExiste($pdo, 'practicas', 'id') && !columnaExiste($pdo, 'practicas', 'cuota_confirmada_manual')) {
+        $pdo->exec('ALTER TABLE practicas ADD COLUMN cuota_confirmada_manual DECIMAL(10,2) NULL AFTER notas');
+        $pdo->exec('ALTER TABLE practicas ADD COLUMN cuota_confirmada_manual_nota VARCHAR(255) NULL AFTER cuota_confirmada_manual');
+        $mensajes[] = 'Columnas "cuota_confirmada_manual" y "cuota_confirmada_manual_nota" agregadas a la tabla practicas.';
+    }
+
     return $mensajes;
 }
 

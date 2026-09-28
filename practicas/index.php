@@ -56,10 +56,12 @@ foreach ($practicas as &$p) {
     $p['num_estudiantes'] = (int) $stmtEst->fetchColumn();
 
     $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
-    $cuotas = calcularCuotas($p['costo_materiales'], $resumenGastos, $p['num_estudiantes']);
+    $cuotaManual = $p['cuota_confirmada_manual'] !== null ? (float) $p['cuota_confirmada_manual'] : null;
+    $cuotas = calcularCuotas($p['costo_materiales'], $resumenGastos, $p['num_estudiantes'], $cuotaManual);
     $p['cuota_proyectada'] = $cuotas['proyectada'];
     $p['cuota_confirmada'] = $cuotas['confirmada'];
-    $p['total_confirmado'] = $cuotas['total_confirmado'];
+    $p['cuota_ajustada'] = $cuotas['cuota_ajustada'];
+    $p['total_confirmado'] = $cuotas['meta_recaudo'];
 
     $stmtPag = db()->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ? AND monto_pagado >= ?');
     $stmtPag->execute([(int) $p['id'], $cuotas['confirmada'] - 0.005]);

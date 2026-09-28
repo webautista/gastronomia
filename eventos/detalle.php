@@ -277,17 +277,27 @@ if ($puedeVerGastos) {
     $gastosEvento = $stmt->fetchAll();
 }
 
-// La cuota ya no se escribe a mano: siempre es el costo de las recetas (o
-// el gasto real en materiales, el que sea mayor) más los "otros" gastos
-// del evento, dividido entre los estudiantes asignados. "Proyectada" es la
-// estimación más completa (incluye lo aún no confirmado); "confirmada" es
-// solo lo que ya es gasto real, y es la que se usa para cobrarle a cada
-// estudiante.
+// La cuota se calcula sola por defecto: costo de las recetas (o el gasto
+// real en materiales, el que sea mayor) más los "otros" gastos del evento,
+// dividido entre los estudiantes asignados. "Proyectada" es la estimación
+// más completa (incluye lo aún no confirmado); "confirmada" es lo que se
+// usa para cobrarle a cada estudiante — normalmente el cálculo automático
+// ("confirmada_sugerida"), salvo que el taller haya fijado un ajuste manual
+// (eventos.cuota_confirmada_manual, ver eventos/cuota_editar.php) para
+// cuando deciden cobrar menos de lo que costó de verdad (ej. logística) —
+// así, un estudiante que ya pagó lo acordado no aparece con un "pendiente"
+// que en realidad no se le va a cobrar.
 $cantidadEstudiantes = count($estudiantesEvento);
-$cuotas = calcularCuotas($costoRecetasEvento, $resumenGastos, $cantidadEstudiantes);
+$cuotaManualEvento = $evento['cuota_confirmada_manual'] !== null ? (float) $evento['cuota_confirmada_manual'] : null;
+$cuotas = calcularCuotas($costoRecetasEvento, $resumenGastos, $cantidadEstudiantes, $cuotaManualEvento);
 $cuotaProyectada = $cuotas['proyectada'];
 $cuotaConfirmada = $cuotas['confirmada'];
-$totalConfirmadoConRecetas = $cuotas['total_confirmado'];
+$cuotaSugerida = $cuotas['confirmada_sugerida'];
+$cuotaAjustada = $cuotas['cuota_ajustada'];
+// Lo que de verdad se espera recaudar en total (cuota vigente × estudiantes)
+// — no el costo real, que con un ajuste manual activo nunca llegaría a
+// 100% aunque todos ya hubieran pagado lo acordado.
+$totalConfirmadoConRecetas = $cuotas['meta_recaudo'];
 
 // Cuánto necesitará el evento en total, calculado como referencia (incluye
 // todo lo proyectado todavía sin confirmar, de cualquier balde).
@@ -349,11 +359,23 @@ require __DIR__ . '/../includes/layout_top.php';
     <?php endif; ?>
   </div>
   <div class="stat-tile stat-tile--gold">
-    <div class="stat-label">Cuota y recaudo</div>
+    <div class="stat-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>Cuota y recaudo</span>
+      <?php if ($puedeEditarGasto): ?>
+        <a href="cuota_editar.php?id=<?= $id ?>" title="Ajustar la cuota confirmada" style="color:inherit;opacity:.75;display:inline-flex;"><?= icon('edit') ?></a>
+      <?php endif; ?>
+    </div>
     <div class="meter-row" style="margin-top:8px;"><span class="mono"><?= money($recaudado) ?> recaudado</span><span><?= (int) $pctPago ?>%</span></div>
     <div class="meter <?= meterClase($pctPago) ?>"><span style="width:<?= min($pctPago, 100) ?>%"></span></div>
     <?php if ($cantidadEstudiantes > 0): ?>
-      <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+      <?php if ($cuotaAjustada): ?>
+        <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> <span class="chip chip-muted" style="font-size:.7rem;">ajustada</span> · Cuota sugerida: <b class="mono"><?= money($cuotaSugerida) ?></b> por estudiante</div>
+        <?php if (!empty($evento['cuota_confirmada_manual_nota'])): ?>
+          <div class="stat-hint" style="margin-top:2px;font-style:italic;">“<?= e($evento['cuota_confirmada_manual_nota']) ?>”</div>
+        <?php endif; ?>
+      <?php else: ?>
+        <div class="stat-hint" style="margin-top:8px;">Cuota confirmada: <b class="mono"><?= money($cuotaConfirmada) ?></b> · Cuota proyectada: <b class="mono"><?= money($cuotaProyectada) ?></b> por estudiante</div>
+      <?php endif; ?>
     <?php else: ?>
       <div class="stat-hint" style="margin-top:8px;">Asigna estudiantes al evento para calcular la cuota.</div>
     <?php endif; ?>
