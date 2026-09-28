@@ -511,6 +511,12 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('recetas', 'Recetas', 50),
 ('ingredientes', 'Ingredientes (catálogo)', 55),
 ('configuracion', 'Configuración / catálogos', 60),
+-- Reportes generales (reportes/index.php): cartera (cuentas por cobrar) y
+-- fondo de estudiantes (saldo a favor) — a pedido explícito de Eyaelkys. Un
+-- solo módulo de solo "ver" para las dos pestañas del reporte (no se
+-- separó en uno por pestaña como Eventos/Prácticas porque las dos son la
+-- misma vista financiera de conjunto, pensada para el mismo tipo de rol).
+('reportes', 'Reportes', 65),
 ('usuarios', 'Usuarios y roles', 70);
 
 -- =======================================================================

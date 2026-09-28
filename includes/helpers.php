@@ -523,6 +523,132 @@ function historialCuota(PDO $pdo, string $entidadTipo, int $entidadId): array
 }
 
 /**
+ * ---------------------------------------------------------------------
+ * Reportes generales (reportes/index.php) — a pedido explícito de
+ * Eyaelkys: "estudiantes con saldo a favor, padres con deuda pendiente".
+ * ---------------------------------------------------------------------
+ */
+
+/**
+ * Reporte de cartera: una fila por cada estudiante con un pendiente real
+ * (mayor a RD$0.01) en algún evento o práctica, usando la cuota VIGENTE
+ * (calcularCuotas() — el ajuste manual si existe, si no el cálculo
+ * automático) para no mostrar una deuda que en realidad ya no se le va a
+ * cobrar. No filtra por estado del evento ni por fecha: un evento ya
+ * Finalizado con un pendiente real sigue siendo dinero que falta por
+ * cobrar, y es justamente el caso que más interesa dar seguimiento.
+ */
+function reporteCartera(PDO $pdo): array
+{
+    $filas = [];
+
+    $eventos = $pdo->query(
+        "SELECT ev.*, es.nombre AS estado_nombre
+         FROM eventos ev JOIN estados_evento es ON es.id = ev.estado_id"
+    )->fetchAll();
+    foreach ($eventos as $ev) {
+        $stmtEst = $pdo->prepare(
+            'SELECT ee.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
+             FROM evento_estudiante ee JOIN estudiantes est ON est.id = ee.estudiante_id
+             WHERE ee.evento_id = ?'
+        );
+        $stmtEst->execute([$ev['id']]);
+        $estudiantesFilas = $stmtEst->fetchAll();
+        if (!$estudiantesFilas) {
+            continue;
+        }
+        $costoRecetas = costoRecetasConsolidado($pdo, 'evento', (int) $ev['id']);
+        $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', (int) $ev['id']);
+        $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
+        $cuotaConfirmada = calcularCuotas($costoRecetas, $resumenGastos, count($estudiantesFilas), $cuotaManual)['confirmada'];
+        foreach ($estudiantesFilas as $fila) {
+            $pendiente = $cuotaConfirmada - (float) $fila['monto_pagado'];
+            if ($pendiente > 0.005) {
+                $filas[] = [
+                    'entidad_tipo' => 'evento', 'entidad_id' => (int) $ev['id'],
+                    'entidad_nombre' => $ev['nombre'], 'entidad_fecha' => $ev['fecha'], 'entidad_estado' => $ev['estado_nombre'],
+                    'estudiante_id' => (int) $fila['estudiante_id'], 'estudiante_nombre' => $fila['estudiante_nombre'],
+                    'cuota' => $cuotaConfirmada, 'pagado' => (float) $fila['monto_pagado'], 'pendiente' => $pendiente,
+                ];
+            }
+        }
+    }
+
+    $practicas = $pdo->query('SELECT * FROM practicas')->fetchAll();
+    foreach ($practicas as $p) {
+        $stmtEst = $pdo->prepare(
+            'SELECT pe.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
+             FROM practica_estudiante pe JOIN estudiantes est ON est.id = pe.estudiante_id
+             WHERE pe.practica_id = ?'
+        );
+        $stmtEst->execute([$p['id']]);
+        $estudiantesFilas = $stmtEst->fetchAll();
+        if (!$estudiantesFilas) {
+            continue;
+        }
+        $costoMateriales = costoRecetasConsolidado($pdo, 'practica', (int) $p['id']);
+        $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', (int) $p['id']);
+        $cuotaManual = $p['cuota_confirmada_manual'] !== null ? (float) $p['cuota_confirmada_manual'] : null;
+        $cuotaConfirmada = calcularCuotas($costoMateriales, $resumenGastos, count($estudiantesFilas), $cuotaManual)['confirmada'];
+        foreach ($estudiantesFilas as $fila) {
+            $pendiente = $cuotaConfirmada - (float) $fila['monto_pagado'];
+            if ($pendiente > 0.005) {
+                $filas[] = [
+                    'entidad_tipo' => 'practica', 'entidad_id' => (int) $p['id'],
+                    'entidad_nombre' => $p['nombre'], 'entidad_fecha' => $p['fecha'], 'entidad_estado' => null,
+                    'estudiante_id' => (int) $fila['estudiante_id'], 'estudiante_nombre' => $fila['estudiante_nombre'],
+                    'cuota' => $cuotaConfirmada, 'pagado' => (float) $fila['monto_pagado'], 'pendiente' => $pendiente,
+                ];
+            }
+        }
+    }
+
+    usort($filas, fn ($a, $b) => $a['estudiante_nombre'] <=> $b['estudiante_nombre'] ?: $a['entidad_fecha'] <=> $b['entidad_fecha']);
+
+    return $filas;
+}
+
+/**
+ * Reporte de fondo: saldo a favor de cada estudiante que tenga saldo
+ * disponible ahora mismo (mismo cálculo en vivo que saldoFondoEstudiante(),
+ * pero de una vez para todos, para no hacer una consulta por estudiante).
+ */
+function reporteFondoSaldos(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        "SELECT e.id AS estudiante_id, e.nombre AS estudiante_nombre,
+                COALESCE(SUM(CASE WHEN fm.tipo = 'deposito' THEN fm.monto ELSE -fm.monto END), 0) AS saldo,
+                MAX(fm.fecha) AS ultimo_movimiento
+         FROM estudiantes e
+         JOIN fondo_movimientos fm ON fm.estudiante_id = e.id
+         GROUP BY e.id, e.nombre
+         HAVING saldo > 0.005
+         ORDER BY saldo DESC"
+    );
+    return $stmt->fetchAll();
+}
+
+/**
+ * Mapa estudiante_id => ["Padre (teléfono)", ...] — para mostrar a quién
+ * contactar junto a cada fila de los reportes de cartera/fondo, sin hacer
+ * una consulta de padres por cada estudiante.
+ */
+function mapaPadresPorEstudiante(PDO $pdo): array
+{
+    $stmt = $pdo->query(
+        'SELECT pe.estudiante_id, p.nombre, p.telefono
+         FROM padre_estudiante pe JOIN padres p ON p.id = pe.padre_id
+         ORDER BY p.nombre ASC'
+    );
+    $mapa = [];
+    foreach ($stmt->fetchAll() as $fila) {
+        $etiqueta = $fila['nombre'] . ($fila['telefono'] ? ' (' . $fila['telefono'] . ')' : '');
+        $mapa[(int) $fila['estudiante_id']][] = $etiqueta;
+    }
+    return $mapa;
+}
+
+/**
  * Historial de pagos (tabla pagos_estudiante) de un estudiante en un evento
  * o práctica, del más reciente al más antiguo — para la pantalla
  * eventos/pago_estudiante.php y practicas/pago_estudiante.php.
