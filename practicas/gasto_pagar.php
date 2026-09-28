@@ -34,7 +34,15 @@ $montoPagado = $gasto['monto_confirmado'] ?? $gasto['monto'];
 $fechaPago = date('Y-m-d');
 $errores = [];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+    // Ver el mismo bloque en eventos/gasto_pagar.php: si la foto supera el
+    // límite total de subida del servidor (post_max_size), PHP descarta
+    // todo el POST —incluido el token de seguridad— antes de llegar aquí,
+    // sin ningún código de error en $_FILES. La compresión de imagen en el
+    // navegador (assets/js/app.js) debería evitar esto casi siempre; este
+    // aviso queda como respaldo si la imagen igual llega demasiado pesada.
+    $errores[] = 'La imagen es demasiado pesada para este servidor. Tu navegador ya intenta reducirla automáticamente; si el problema sigue, prueba con otra foto o con una de menor resolución.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
     $montoPagado = (float) ($_POST['monto_pagado'] ?? 0);
     $fechaPago = $_POST['fecha_pago'] ?? '';

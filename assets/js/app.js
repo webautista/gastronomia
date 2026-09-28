@@ -168,4 +168,134 @@
       aplicarFiltroRecetas(e.target);
     }
   });
+
+  /* Comprimir fotos antes de subirlas (factura de gasto, banner de evento,
+     foto de receta, etc.). Una foto tomada con el celular puede pesar
+     8-15 MB; si eso supera el límite de subida del servidor (post_max_size
+     / upload_max_filesize en PHP), la subida fallaba en silencio: cuando
+     post_max_size se excede PHP vacía todo el $_POST (incluido el token de
+     seguridad) antes de que la página pueda avisar nada, así que se veía
+     como que el formulario "no hacía nada" al intentar cargar la imagen.
+     Aquí se reescala a un máximo de 1600px de lado más largo y se
+     recomprime como JPEG (calidad 82%), respetando la orientación original
+     de la foto, para que el archivo que llega al servidor sea siempre
+     liviano sin importar cuánto pese la foto original. Se aplica solo a
+     campos de tipo archivo que aceptan imágenes, sin tocar cada
+     formulario por separado. */
+  var comprimiendoPorInput = new WeakMap();
+
+  function yaEsLiviana(archivo) {
+    return archivo.size <= 700 * 1024;
+  }
+
+  function comprimirImagenParaSubida(archivo) {
+    return new Promise(function (resolve) {
+      if (!archivo || archivo.type.indexOf('image/') !== 0 || yaEsLiviana(archivo)) {
+        resolve(archivo);
+        return;
+      }
+
+      var maxLado = 1600;
+      var calidad = 0.82;
+
+      var procesarImagenFuente = function (fuente) {
+        try {
+          var ancho = fuente.width;
+          var alto = fuente.height;
+          if (ancho > maxLado || alto > maxLado) {
+            var escala = maxLado / Math.max(ancho, alto);
+            ancho = Math.round(ancho * escala);
+            alto = Math.round(alto * escala);
+          }
+          var canvas = document.createElement('canvas');
+          canvas.width = ancho;
+          canvas.height = alto;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(fuente, 0, 0, ancho, alto);
+          canvas.toBlob(function (blob) {
+            if (!blob || blob.size >= archivo.size) {
+              resolve(archivo);
+              return;
+            }
+            var nombreBase = archivo.name.replace(/\.[^./\\]+$/, '') || 'imagen';
+            resolve(new File([blob], nombreBase + '.jpg', { type: 'image/jpeg' }));
+          }, 'image/jpeg', calidad);
+        } catch (err) {
+          resolve(archivo);
+        }
+      };
+
+      if (typeof window.createImageBitmap === 'function') {
+        window.createImageBitmap(archivo, { imageOrientation: 'from-image' })
+          .catch(function () { return window.createImageBitmap(archivo); })
+          .then(procesarImagenFuente)
+          .catch(function () { resolve(archivo); });
+      } else {
+        var img = new Image();
+        var url = URL.createObjectURL(archivo);
+        img.onload = function () {
+          procesarImagenFuente(img);
+          URL.revokeObjectURL(url);
+        };
+        img.onerror = function () {
+          resolve(archivo);
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      }
+    });
+  }
+
+  document.addEventListener('change', function (e) {
+    var input = e.target;
+    if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
+    var accept = input.getAttribute('accept') || '';
+    if (accept.indexOf('image/') === -1) return;
+    var archivo = input.files && input.files[0];
+    if (!archivo) return;
+
+    var boton = input.form ? input.form.querySelector('button[type="submit"]') : null;
+    var textoOriginalBoton = boton ? boton.textContent : null;
+    if (boton) {
+      boton.disabled = true;
+      boton.textContent = 'Preparando imagen…';
+    }
+
+    var promesa = comprimirImagenParaSubida(archivo).then(function (comprimido) {
+      if (comprimido !== archivo) {
+        try {
+          var dt = new DataTransfer();
+          dt.items.add(comprimido);
+          input.files = dt.files;
+        } catch (err) {
+          /* Navegador sin soporte para reemplazar el archivo: se sube el original. */
+        }
+      }
+    }).catch(function () {
+      /* Cualquier fallo inesperado: seguir con el archivo original. */
+    }).then(function () {
+      comprimiendoPorInput.delete(input);
+      if (boton) {
+        boton.disabled = false;
+        boton.textContent = textoOriginalBoton;
+      }
+    });
+
+    comprimiendoPorInput.set(input, promesa);
+  });
+
+  document.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    var pendientes = [];
+    form.querySelectorAll('input[type="file"]').forEach(function (input) {
+      var p = comprimiendoPorInput.get(input);
+      if (p) pendientes.push(p);
+    });
+    if (!pendientes.length) return;
+    e.preventDefault();
+    Promise.all(pendientes).then(function () {
+      form.submit();
+    });
+  });
 })();

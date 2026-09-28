@@ -40,7 +40,18 @@ $montoPagado = $gasto['monto_confirmado'] ?? $gasto['monto'];
 $fechaPago = date('Y-m-d');
 $errores = [];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+    // Si la foto (junto al resto del formulario) supera el límite total de
+    // subida del servidor (post_max_size en PHP), PHP descarta todo el
+    // POST —incluido el token de seguridad— antes de que este script
+    // llegue a ejecutarse, sin ningún código de error en $_FILES. Antes
+    // esto hacía fallar csrfCheck() con una página casi en blanco y sin
+    // explicación (se sentía como que la carga de la factura simplemente
+    // no hacía nada). La compresión de imagen en el navegador (ver
+    // assets/js/app.js) debería evitar que esto pase casi siempre, pero se
+    // deja este aviso claro por si la imagen igual llega demasiado pesada.
+    $errores[] = 'La imagen es demasiado pesada para este servidor. Tu navegador ya intenta reducirla automáticamente; si el problema sigue, prueba con otra foto o con una de menor resolución.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
     $montoPagado = (float) ($_POST['monto_pagado'] ?? 0);
     $fechaPago = $_POST['fecha_pago'] ?? '';
