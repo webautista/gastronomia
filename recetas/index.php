@@ -9,6 +9,14 @@ requirePermission($usuarioActual, 'recetas', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'recetas', 'editar');
 $puedeCrear = can($usuarioActual, 'recetas', 'crear');
 $puedeEliminar = can($usuarioActual, 'recetas', 'eliminar');
+// Padres puede ver el catálogo de recetas, pero no debe enterarse de en
+// cuántos eventos se usa cada una: eso revelaría el menú de un evento
+// sorpresa antes de tiempo (mismo motivo por el que Padres no tiene acceso
+// a la pestaña "Recetas" dentro del detalle de un evento — ver
+// establecerPermisosPadresPorPestana() en setup.php). Se reutiliza ese
+// mismo permiso (eventos_recetas/ver) como bandera: quien puede ver esa
+// pestaña también puede ver el conteo de uso aquí.
+$puedeVerUsoEnEventos = can($usuarioActual, 'eventos_recetas', 'ver');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
     requirePermission($usuarioActual, 'recetas', 'eliminar', $base);
@@ -202,7 +210,9 @@ require __DIR__ . '/../includes/layout_top.php';
         <div class="dash-body">
           <div class="dash-stats">
             <div class="dash-stat is-gold"><div class="dash-stat-label">Costo de preparación</div><div class="dash-stat-value"><?= money($rc['costo_preparacion']) ?></div></div>
-            <div class="dash-stat is-sage"><div class="dash-stat-label">Usada en</div><div class="dash-stat-value"><?= (int) $rc['num_eventos'] ?> evento<?= $rc['num_eventos'] == 1 ? '' : 's' ?></div></div>
+            <?php if ($puedeVerUsoEnEventos): ?>
+              <div class="dash-stat is-sage"><div class="dash-stat-label">Usada en</div><div class="dash-stat-value"><?= (int) $rc['num_eventos'] ?> evento<?= $rc['num_eventos'] == 1 ? '' : 's' ?></div></div>
+            <?php endif; ?>
           </div>
           <div style="font-size:.82rem;color:var(--text-secondary);">
             <?= e(implode(', ', array_slice($nombresIng, 0, 4))) ?><?= count($nombresIng) > 4 ? '…' : '' ?>
