@@ -928,6 +928,34 @@ CREATE TABLE IF NOT EXISTS gastos (
     KEY idx_gastos_evento (evento_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Historial de cambios a un gasto ya pagado (a pedido de Eyaelkys: antes un
+-- gasto "Pagado" quedaba completamente cerrado —solo "Ver factura" y borrar,
+-- y borrar solo lo podía hacer un Administrador—, así que si se subía la
+-- foto de la factura equivocada no había forma de corregirla; ver
+-- eventos/gasto_editar.php y practicas/gasto_editar.php). Un registro por
+-- CAMPO cambiado (no una fila por edición completa), para poder mostrar
+-- "el monto pagado cambió de X a Y" línea por línea en vez de un blob. Solo
+-- se usa para gastos en estado 'pagado' (el flujo de proyectado/confirmado
+-- ya tiene su propio historial implícito por las columnas monto/
+-- monto_confirmado). registrado_por + registrado_por_nombre repiten el
+-- mismo criterio que fondo_movimientos más arriba: usuarios sí se puede
+-- borrar de verdad, y el registro de auditoría no debe perderse si eso pasa.
+CREATE TABLE IF NOT EXISTS gastos_historial (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    gasto_id INT UNSIGNED NOT NULL,
+    campo VARCHAR(30) NOT NULL,
+    valor_anterior TEXT NULL,
+    valor_nuevo TEXT NULL,
+    registrado_por INT UNSIGNED NULL,
+    registrado_por_nombre VARCHAR(150) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_gastoshist_gasto FOREIGN KEY (gasto_id)
+        REFERENCES gastos(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gastoshist_usuario FOREIGN KEY (registrado_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    KEY idx_gastoshist_gasto (gasto_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Decisiones de compra por evento o práctica: cuando la lista de compra
 -- sugiere llevar el paquete completo de un ingrediente (ej. pasta, queso —
 -- no se vende suelto en la cantidad exacta de la receta), aquí se guarda si

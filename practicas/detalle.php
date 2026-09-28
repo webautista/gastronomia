@@ -708,6 +708,9 @@ require __DIR__ . '/../includes/layout_top.php';
             <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
               <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
             <?php endif; ?>
+            <?php if ($g['estado'] === 'pagado' && $puedeEditarGasto): ?>
+              <a class="btn btn-secondary btn-sm" href="gasto_editar.php?id=<?= (int) $g['id'] ?>"><?= icon('edit') ?> Editar</a>
+            <?php endif; ?>
             <div class="row-actions">
               <?php if ($puedeEliminarGasto && ($g['estado'] !== 'pagado' || $esAdmin)): ?>
               <form method="post" data-confirm="<?= $g['estado'] === 'pagado' ? '¿Eliminar este gasto ya pagado? Es una acción de auditoría, solo un Administrador puede hacerla.' : '¿Eliminar esta partida?' ?>">

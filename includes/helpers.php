@@ -383,6 +383,52 @@ function resumenGastosVinculo(PDO $pdo, string $columna, int $id): array
 }
 
 /**
+ * Anota en gastos_historial un cambio a UN campo de un gasto (pensado para
+ * un gasto ya "pagado": ver eventos/gasto_editar.php y
+ * practicas/gasto_editar.php). Un gasto pagado es un registro de
+ * auditoría, así que cualquier corrección posterior queda anotada aquí
+ * —quién, cuándo, de qué valor a cuál— en vez de sobrescribirse en
+ * silencio. No hace nada si el valor no cambió (comparación como texto,
+ * para no anotar "cambios" que en realidad son el mismo valor con distinto
+ * formato, ej. "500" vs "500.00").
+ */
+function registrarCambioGasto(PDO $pdo, int $gastoId, string $campo, ?string $anterior, ?string $nuevo, int $usuarioId, string $usuarioNombre): void
+{
+    if ((string) $anterior === (string) $nuevo) {
+        return;
+    }
+    $pdo->prepare(
+        'INSERT INTO gastos_historial (gasto_id, campo, valor_anterior, valor_nuevo, registrado_por, registrado_por_nombre)
+         VALUES (?,?,?,?,?,?)'
+    )->execute([$gastoId, $campo, $anterior, $nuevo, $usuarioId, $usuarioNombre]);
+}
+
+/** Historial de cambios de un gasto (ver registrarCambioGasto()), más reciente primero. */
+function historialGasto(PDO $pdo, int $gastoId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM gastos_historial WHERE gasto_id = ? ORDER BY creado_en DESC, id DESC');
+    $stmt->execute([$gastoId]);
+    return $stmt->fetchAll();
+}
+
+/** Nombre visible de cada campo que se puede rastrear en el historial de un gasto. */
+function etiquetaCampoGastoHistorial(string $campo): string
+{
+    return match ($campo) {
+        'categoria'         => 'Categoría',
+        'descripcion'       => 'Descripción',
+        'proveedor'         => 'Proveedor',
+        'monto'             => 'Monto proyectado',
+        'monto_confirmado'  => 'Monto confirmado',
+        'monto_pagado'      => 'Monto pagado',
+        'fecha'             => 'Fecha del gasto',
+        'fecha_pago'        => 'Fecha de pago',
+        'factura'           => 'Factura',
+        default             => ucfirst($campo),
+    };
+}
+
+/**
  * Cuota proyectada y confirmada por estudiante de un evento o práctica. El
  * total a repartir ya no se escribe a mano: siempre se calcula a partir del
  * costo de recetas y los gastos reales, dividido entre los estudiantes
