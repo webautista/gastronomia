@@ -68,13 +68,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
             } elseif ($_FILES['factura']['size'] > 5 * 1024 * 1024) {
                 $errores[] = 'La imagen de la factura no puede pesar más de 5 MB.';
             } else {
-                $directorioDestino = __DIR__ . '/../assets/uploads/facturas';
+                // Las facturas son contenido privado (solo lo ve quien tiene
+                // permiso de Gastos), pero igual deben sobrevivir a los
+                // despliegues, así que se guardan en el almacenamiento
+                // compartido fuera del repositorio (enlace `private/` en la
+                // raíz del proyecto -> ../shared/private), igual que las
+                // fotos públicas usan `public/`.
+                $directorioDestino = __DIR__ . '/../private/facturas';
                 if (!is_dir($directorioDestino)) {
                     mkdir($directorioDestino, 0775, true);
                 }
                 $nombreArchivo = 'factura_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
                 if (move_uploaded_file($_FILES['factura']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
-                    $facturaFinal = 'assets/uploads/facturas/' . $nombreArchivo;
+                    $facturaFinal = 'private/facturas/' . $nombreArchivo;
                 } else {
                     $errores[] = 'No se pudo guardar la factura en el servidor. Vuelve a intentarlo.';
                 }

@@ -2147,6 +2147,84 @@ function agregarUsuarioIdAEstudiantes(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Mueve las facturas de gastos que quedaron guardadas en
+ * assets/uploads/facturas/ (dentro del repositorio, así que un despliegue
+ * las borra) hacia private/facturas/ (el enlace `private/` en la raíz del
+ * proyecto -> ../shared/private, fuera del repositorio, igual que ya se hizo
+ * con las fotos de recetas y de eventos en `public/`). Pedido de Eyaelkys:
+ * "Las facturas deben ir al private no a los assets."
+ *
+ * Solo se activa si `private/` ya existe como carpeta real en este entorno
+ * (el enlace simbólico/junction tiene que estar creado y apuntando a algo
+ * real — si no, no hace nada, para no intentar mover archivos a un destino
+ * que no sirve). Por cada gasto con una factura vieja: si el archivo
+ * físico todavía existe en la ruta antigua, se mueve y solo ENTONCES se
+ * actualiza la columna `factura` en la base de datos (nunca al revés, para
+ * no dejar la base de datos apuntando a un archivo que en realidad no se
+ * movió). Si el archivo físico ya no está (por ejemplo, porque un
+ * despliegue anterior lo borró antes de este arreglo), se deja la fila tal
+ * cual y se avisa por separado, para que Eyaelkys sepa que esa factura en
+ * particular habría que volver a cargarla a mano.
+ *
+ * Como el resto de migraciones del proyecto, es segura de correr varias
+ * veces: una vez que una fila ya apunta a private/facturas/... deja de
+ * aparecer en el WHERE y no se vuelve a tocar.
+ */
+function migrarFacturasAPrivado(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'gastos', 'factura')) {
+        return $mensajes;
+    }
+
+    $directorioDestino = __DIR__ . '/private/facturas';
+    $directorioPrivado = __DIR__ . '/private';
+    if (!is_dir($directorioPrivado)) {
+        // El enlace `private/` no está creado (o no apunta a una carpeta
+        // real) en este entorno todavía — no hay dónde mover nada, así que
+        // no se intenta, para no arriesgar los archivos actuales.
+        return $mensajes;
+    }
+    if (!is_dir($directorioDestino)) {
+        // Ver Sección 20 del documento maestro: mkdir() recursivo casi
+        // nunca logra crear una subcarpeta nueva a través de un enlace
+        // simbólico/junction, así que esto probablemente no alcance por sí
+        // solo — pero se deja el intento por si acaso, igual que en
+        // recetas/form.php y eventos/form.php.
+        @mkdir($directorioDestino, 0775, true);
+    }
+
+    $movidos = 0;
+    $noEncontrados = 0;
+    $stmt = $pdo->query("SELECT id, factura FROM gastos WHERE factura LIKE 'assets/uploads/facturas/%'");
+    $actualizarStmt = $pdo->prepare('UPDATE gastos SET factura = ? WHERE id = ?');
+    foreach ($stmt->fetchAll() as $fila) {
+        $nombreArchivo = basename($fila['factura']);
+        $rutaVieja = __DIR__ . '/' . $fila['factura'];
+        $rutaNueva = $directorioDestino . '/' . $nombreArchivo;
+
+        if (!is_file($rutaVieja)) {
+            $noEncontrados++;
+            continue;
+        }
+        if (!is_dir($directorioDestino) || !@rename($rutaVieja, $rutaNueva)) {
+            $noEncontrados++;
+            continue;
+        }
+        $actualizarStmt->execute(['private/facturas/' . $nombreArchivo, $fila['id']]);
+        $movidos++;
+    }
+
+    if ($movidos > 0) {
+        $mensajes[] = "$movidos factura(s) movidas de assets/uploads/facturas/ a private/facturas/ (ya no se pierden en un despliegue).";
+    }
+    if ($noEncontrados > 0) {
+        $mensajes[] = "$noEncontrados factura(s) en la base de datos apuntaban a assets/uploads/facturas/ pero el archivo ya no estaba en el servidor (probablemente se perdió en un despliegue anterior) — esos gastos quedarían sin la imagen de la factura hasta volver a cargarla a mano.";
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2212,6 +2290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
         $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
+        $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
