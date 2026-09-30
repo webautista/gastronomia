@@ -34,6 +34,12 @@ $puedeVerGastos = can($usuarioActual, 'practicas_gastos', 'ver');
 $puedeCrearGasto = can($usuarioActual, 'practicas_gastos', 'crear');
 $puedeEditarGasto = can($usuarioActual, 'practicas_gastos', 'editar');
 $puedeEliminarGasto = can($usuarioActual, 'practicas_gastos', 'eliminar');
+// Fotos de los trabajos de los chicos en esta práctica — visibles también
+// para Padres (solo "ver"); solo el staff con "crear"/"eliminar" sube o
+// quita fotos.
+$puedeVerFotosTab = can($usuarioActual, 'practicas_fotos', 'ver');
+$puedeCrearFotoTab = can($usuarioActual, 'practicas_fotos', 'crear');
+$puedeEliminarFotoTab = can($usuarioActual, 'practicas_fotos', 'eliminar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
@@ -55,6 +61,9 @@ if ($puedeVerCompras) {
 }
 if ($puedeVerGastos) {
     $tabsValidos[] = 'gastos';
+}
+if ($puedeVerFotosTab) {
+    $tabsValidos[] = 'fotos';
 }
 $tabPorDefecto = $tabsValidos[0] ?? '';
 $tab = in_array($_GET['tab'] ?? '', $tabsValidos, true) ? $_GET['tab'] : $tabPorDefecto;
@@ -137,6 +146,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$montoConfirmado, $gastoId, $id]);
             flash('Gasto confirmado.');
         }
+    } elseif ($accion === 'subir_foto') {
+        requirePermission($usuarioActual, 'practicas_fotos', 'crear', $base);
+        $descripcionFoto = trim((string) ($_POST['descripcion'] ?? ''));
+        if (!isset($_FILES['foto']) || $_FILES['foto']['error'] === UPLOAD_ERR_NO_FILE) {
+            flash('Elige una foto para subir.', 'error');
+        } elseif ($_FILES['foto']['error'] !== UPLOAD_ERR_OK) {
+            flash('No se pudo subir la foto. Intenta de nuevo.', 'error');
+        } else {
+            $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+            $mime = @mime_content_type($_FILES['foto']['tmp_name']);
+            if (!isset($tiposPermitidos[$mime])) {
+                flash('La foto debe ser una imagen JPG, PNG o WEBP.', 'error');
+            } elseif ($_FILES['foto']['size'] > 5 * 1024 * 1024) {
+                flash('La foto no puede pesar más de 5 MB.', 'error');
+            } else {
+                // Los trabajos de los chicos son contenido que también ven
+                // los padres, así que se guardan en el almacenamiento
+                // compartido fuera del repositorio (enlace `public/` en la
+                // raíz del proyecto -> ../shared/public), igual que las
+                // fotos de recetas y los banners de eventos — para que
+                // sobrevivan a los despliegues.
+                $directorioDestino = __DIR__ . '/../public/practicas';
+                if (!is_dir($directorioDestino)) {
+                    mkdir($directorioDestino, 0775, true);
+                }
+                $nombreArchivo = 'practica_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
+                if (move_uploaded_file($_FILES['foto']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
+                    $pdo->prepare('INSERT INTO practica_fotos (practica_id, ruta, descripcion) VALUES (?,?,?)')
+                        ->execute([$id, 'public/practicas/' . $nombreArchivo, $descripcionFoto !== '' ? $descripcionFoto : null]);
+                    flash('Foto agregada.');
+                } else {
+                    flash('No se pudo guardar la foto en el servidor. Vuelve a intentarlo.', 'error');
+                }
+            }
+        }
+    } elseif ($accion === 'eliminar_foto') {
+        requirePermission($usuarioActual, 'practicas_fotos', 'eliminar', $base);
+        $fotoId = intOrNull($_POST['foto_id'] ?? null);
+        if ($fotoId) {
+            $stmtFoto = $pdo->prepare('SELECT ruta FROM practica_fotos WHERE id = ? AND practica_id = ?');
+            $stmtFoto->execute([$fotoId, $id]);
+            $rutaFoto = $stmtFoto->fetchColumn();
+            if ($rutaFoto) {
+                $pdo->prepare('DELETE FROM practica_fotos WHERE id = ?')->execute([$fotoId]);
+                @unlink(__DIR__ . '/../' . $rutaFoto);
+                flash('Foto eliminada.');
+            }
+        }
     } elseif ($accion === 'guardar_decision_compra') {
         requirePermission($usuarioActual, 'practicas_lista_compra', 'editar', $base);
         $catalogoId = intOrNull($_POST['catalogo_id'] ?? null);
@@ -164,6 +221,13 @@ $stmt = db()->prepare(
 );
 $stmt->execute([$id]);
 $recetasPractica = $stmt->fetchAll();
+
+$fotosPractica = [];
+if ($puedeVerFotosTab) {
+    $stmt = db()->prepare('SELECT * FROM practica_fotos WHERE practica_id = ? ORDER BY creado_en DESC');
+    $stmt->execute([$id]);
+    $fotosPractica = $stmt->fetchAll();
+}
 
 foreach ($recetasPractica as &$rc) {
     $porcionesBase = max(1, (int) $rc['porciones_base']);
@@ -352,6 +416,9 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
   <?php if ($puedeVerGastos): ?>
     <a class="tab <?= $tab === 'gastos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=gastos">Gastos</a>
+  <?php endif; ?>
+  <?php if ($puedeVerFotosTab): ?>
+    <a class="tab <?= $tab === 'fotos' ? 'active' : '' ?>" href="detalle.php?id=<?= $id ?>&tab=fotos"><?= icon('camera') ?> Fotos</a>
   <?php endif; ?>
 </div>
 
@@ -742,6 +809,55 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
           </div>
         </div>
+      </div>
+    <?php endforeach; ?>
+  </div>
+  <?php endif; ?>
+<?php elseif ($tab === 'fotos'): ?>
+  <?php if ($puedeCrearFotoTab): ?>
+  <div class="card card-pad no-print" style="margin-bottom:20px;">
+    <div class="section-title-row"><span class="section-icon is-gold"><?= icon('camera') ?></span><h2 class="section-title">Agregar foto</h2></div>
+    <form method="post" enctype="multipart/form-data" style="margin-top:10px;">
+      <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+      <input type="hidden" name="accion" value="subir_foto">
+      <div class="field">
+        <label>Foto (JPG, PNG o WEBP, máx. 5 MB)</label>
+        <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required>
+      </div>
+      <div class="field">
+        <label>Descripción (opcional)</label>
+        <input type="text" name="descripcion" maxlength="255" placeholder="Ej. Pastel de zanahoria de Juan">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit"><?= icon('plus') ?> Agregar foto</button>
+      </div>
+    </form>
+  </div>
+  <?php endif; ?>
+
+  <?php if (!$fotosPractica): ?>
+    <div class="card"><div class="empty"><?= icon('boxEmpty') ?>
+      <div style="font-weight:600;color:var(--text);margin-bottom:2px;">Sin fotos todavía</div>
+      <div>Las fotos de los trabajos de esta práctica aparecerán aquí.</div>
+    </div></div>
+  <?php else: ?>
+  <div class="fotos-practica-grid">
+    <?php foreach ($fotosPractica as $foto): ?>
+      <div class="fotos-practica-card">
+        <a href="<?= e($base . '/' . $foto['ruta']) ?>" target="_blank" rel="noopener">
+          <img src="<?= e($base . '/' . $foto['ruta']) ?>" alt="<?= e($foto['descripcion'] ?: 'Foto del trabajo de un estudiante') ?>" loading="lazy">
+        </a>
+        <?php if ($puedeEliminarFotoTab): ?>
+          <form method="post" class="fotos-practica-delete no-print" data-confirm="¿Eliminar esta foto?">
+            <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+            <input type="hidden" name="accion" value="eliminar_foto">
+            <input type="hidden" name="foto_id" value="<?= (int) $foto['id'] ?>">
+            <button class="icon-btn" type="submit" title="Eliminar foto"><?= icon('trash') ?></button>
+          </form>
+        <?php endif; ?>
+        <?php if (!empty($foto['descripcion'])): ?>
+          <div class="fotos-practica-caption"><?= e($foto['descripcion']) ?></div>
+        <?php endif; ?>
       </div>
     <?php endforeach; ?>
   </div>

@@ -490,6 +490,9 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 -- editar), a pedido explícito de Eyaelkys, para poder asignar uno sin el
 -- otro (mismo "orden" que Estudiantes y pagos para salir justo debajo).
 ('eventos_fondo', 'Aplicar fondo', 24),
+-- Galería de fotos del evento (distinta del banner) — pestaña "Fotos" en el
+-- detalle, mismo criterio que "practicas_fotos" (ver más abajo).
+('eventos_fotos', 'Fotos del evento', 24),
 ('practicas', 'Prácticas', 25),
 -- Lo mismo, pero para el detalle de una Práctica.
 ('practicas_recetas', 'Recetas', 26),
@@ -498,6 +501,12 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 ('practicas_gastos', 'Gastos', 28),
 ('practicas_estudiantes', 'Estudiantes y pagos', 29),
 ('practicas_fondo', 'Aplicar fondo', 29),
+-- Fotos de los trabajos que hacen los chicos en una práctica (pestaña
+-- "Fotos" en el detalle) — a pedido de Eyaelkys, para que los padres puedan
+-- ver las creaciones. Solo "ver" y "crear"/"eliminar" tienen efecto en el
+-- código (no hay una acción de "editar" una foto ya subida: se borra y se
+-- vuelve a subir).
+('practicas_fotos', 'Fotos de trabajos', 29),
 -- "gastos" queda en desuso a partir de esta versión (ver "eventos_gastos" y
 -- "practicas_gastos" arriba) — se deja la fila para no romper datos viejos,
 -- pero ningún código ni la matriz de permisos la usan ya.
@@ -778,6 +787,20 @@ CREATE TABLE IF NOT EXISTS evento_receta (
         REFERENCES recetas(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Fotos del evento (galería, distinta del banner) — pedido de Eyaelkys de
+-- poder cargar fotos de los eventos, mismo criterio que practica_fotos
+-- (Sección 36). Una práctica puede tener varias fotos, cada una con una
+-- descripción corta opcional. Se borra en cascada junto con el evento.
+CREATE TABLE IF NOT EXISTS evento_fotos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    evento_id INT UNSIGNED NOT NULL,
+    ruta VARCHAR(255) NOT NULL,
+    descripcion VARCHAR(255) NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_evento_fotos_evento FOREIGN KEY (evento_id)
+        REFERENCES eventos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------------
 -- Prácticas: sesiones de práctica de clase (no eventos con estudiantes ni
 -- cobro de cuota) en las que se preparan una o varias recetas en una fecha
@@ -826,6 +849,21 @@ CREATE TABLE IF NOT EXISTS practica_estudiante (
         REFERENCES practicas(id) ON DELETE CASCADE,
     CONSTRAINT fk_pe_estudiante FOREIGN KEY (estudiante_id)
         REFERENCES estudiantes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Fotos de los trabajos que hacen los chicos en una práctica (pedido de
+-- Eyaelkys: "quiero que a nivel de las practicas se puedan cargar fotos de
+-- los trabajos de los chicos [...] podran ser mostradas a los padres").
+-- Una práctica puede tener varias fotos (galería), cada una con una
+-- descripción corta opcional. Se borra en cascada junto con la práctica.
+CREATE TABLE IF NOT EXISTS practica_fotos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    practica_id INT UNSIGNED NOT NULL,
+    ruta VARCHAR(255) NOT NULL,
+    descripcion VARCHAR(255) NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_practica_fotos_practica FOREIGN KEY (practica_id)
+        REFERENCES practicas(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Historial de pagos de un estudiante en un evento o práctica: cada pago

@@ -338,6 +338,14 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .event-banner-preview{width:100%;max-width:520px;border-radius:var(--radius-md);border:1px solid var(--border);display:block;margin-bottom:10px;object-fit:cover;aspect-ratio:21/9;}
 .event-banner-hero{width:100%;max-height:280px;object-fit:cover;border-radius:var(--radius-lg);border:1px solid var(--border);display:block;margin-bottom:18px;}
 
+/* Galería de fotos de trabajos (pestaña "Fotos" de una práctica) */
+.fotos-practica-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;}
+.fotos-practica-card{position:relative;border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border);background:var(--surface);}
+.fotos-practica-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;}
+.fotos-practica-caption{padding:8px 10px;font-size:.8rem;color:var(--text-secondary);}
+.fotos-practica-delete{position:absolute;top:8px;right:8px;}
+.fotos-practica-delete .icon-btn{background:var(--surface);}
+
 .check-list{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:6px;}
 .check-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;}
 .check-row:hover{background:var(--surface-2);}

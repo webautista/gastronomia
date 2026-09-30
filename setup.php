@@ -2225,6 +2225,60 @@ function migrarFacturasAPrivado(PDO $pdo): array
     return $mensajes;
 }
 
+/**
+ * Rol "Padres": ve la nueva pestaña "Fotos" (trabajos de los chicos) dentro
+ * de una práctica, igual que ya ve "Estudiantes y pagos" — a pedido de
+ * Eyaelkys ("podran ser mostradas a los padres para que puedan ver las
+ * creaciones de los chicos"). El módulo "practicas_fotos" en sí lo crea
+ * `schema.sql` (INSERT IGNORE, como el resto del catálogo de módulos);
+ * aquí solo se siembra el permiso de "ver" para Padres, y solo si esa fila
+ * todavía no existe — si Eyaelkys ya la personalizó desde Usuarios y
+ * roles → Roles, esto no la pisa.
+ */
+function otorgarAccesoPadresAFotosPracticas(PDO $pdo): array
+{
+    $mensajes = [];
+    $idRolPadres = idPorNombre($pdo, 'roles', 'nombre', 'Padres');
+    $idModulo = idPorNombre($pdo, 'modulos', 'clave', 'practicas_fotos');
+    if (!$idRolPadres || !$idModulo) {
+        return $mensajes;
+    }
+    $existeStmt = $pdo->prepare('SELECT 1 FROM permisos_rol WHERE rol_id = ? AND modulo_id = ?');
+    $existeStmt->execute([$idRolPadres, $idModulo]);
+    if (!$existeStmt->fetchColumn()) {
+        $pdo->prepare('INSERT INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar) VALUES (?,?,1,0,0,0)')
+            ->execute([$idRolPadres, $idModulo]);
+        $mensajes[] = 'Rol "Padres": acceso de solo lectura otorgado a la pestaña "Fotos" (trabajos de los chicos) de una práctica.';
+    }
+    return $mensajes;
+}
+
+/**
+ * Rol "Padres": ve la nueva pestaña "Fotos" de un evento (galería, distinta
+ * del banner), igual que ya ve "Estudiantes y pagos" — mismo pedido y mismo
+ * patrón que otorgarAccesoPadresAFotosPracticas() (Sección 37, fotos de
+ * eventos). El módulo "eventos_fotos" en sí lo crea `schema.sql` (INSERT
+ * IGNORE); aquí solo se siembra el permiso de "ver" para Padres, y solo si
+ * esa fila todavía no existe.
+ */
+function otorgarAccesoPadresAFotosEventos(PDO $pdo): array
+{
+    $mensajes = [];
+    $idRolPadres = idPorNombre($pdo, 'roles', 'nombre', 'Padres');
+    $idModulo = idPorNombre($pdo, 'modulos', 'clave', 'eventos_fotos');
+    if (!$idRolPadres || !$idModulo) {
+        return $mensajes;
+    }
+    $existeStmt = $pdo->prepare('SELECT 1 FROM permisos_rol WHERE rol_id = ? AND modulo_id = ?');
+    $existeStmt->execute([$idRolPadres, $idModulo]);
+    if (!$existeStmt->fetchColumn()) {
+        $pdo->prepare('INSERT INTO permisos_rol (rol_id, modulo_id, ver, crear, editar, eliminar) VALUES (?,?,1,0,0,0)')
+            ->execute([$idRolPadres, $idModulo]);
+        $mensajes[] = 'Rol "Padres": acceso de solo lectura otorgado a la pestaña "Fotos" de un evento.';
+    }
+    return $mensajes;
+}
+
 /** Crea el primer usuario administrador si la tabla usuarios está vacía. */
 function bootstrapAdmin(PDO $pdo): ?array
 {
@@ -2291,6 +2345,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
         $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
+        $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));
+        $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosEventos($pdo));
 
         $adminNuevo = bootstrapAdmin($pdo);
         if ($adminNuevo) {
