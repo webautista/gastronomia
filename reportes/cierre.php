@@ -131,10 +131,10 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
   <div class="card card-pad">
     <div class="section-title-row"><span class="section-icon is-wine"><?= icon('portion') ?></span><h2 class="section-title">Proyección vs. costo real</h2></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;padding:6px 0;border-bottom:1px solid var(--border);">
+    <div class="kv-row" style="font-size:.85rem;padding:6px 0;border-bottom:1px solid var(--border);">
       <span class="cell-muted">Proyección total (todo lo aún no confirmado incluido)</span><span class="mono" style="font-weight:700;"><?= money($cuotas['total_proyeccion']) ?></span>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;padding:6px 0;">
+    <div class="kv-row" style="font-size:.85rem;padding:6px 0;">
       <span class="cell-muted">Materiales (proyectado en recetas o gasto real, el mayor)</span><span class="mono"><?= money($cuotas['materiales_final']) ?></span>
     </div>
     <?php if ($cuotas['material_excedido']): ?>

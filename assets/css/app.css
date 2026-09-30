@@ -209,6 +209,16 @@ table.table{width:100%;border-collapse:collapse;}
 .bar-fill{height:100%;background:var(--copper);border-radius:999px;}
 .bar-fill.alt{background:var(--accent);}
 
+/* Fila "etiqueta ... monto" de un resumen tipo llave-valor (ej. "Proyección
+   vs. costo real" en el Cierre financiero) — grid en vez de flex
+   space-between para que, cuando la etiqueta es larga y tiene que partirse
+   en dos líneas, el monto se quede fijo a la derecha en su propia columna
+   (sin salto de línea, gracias a .mono abajo) en vez de terminar cayendo a
+   una tercera línea suelta y viéndose apretado (reportado por Eyaelkys en
+   la impresión del Cierre financiero). */
+.kv-row{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:baseline;}
+.kv-row .mono{white-space:nowrap;}
+
 /* Tarjeta de receta dentro del detalle de un Evento/Práctica: mismo
    lenguaje visual que .dash-card (cabecera con degradado, alternando las 4
    variantes según categoría — ver comentario junto a .dash-card-head.is-sage
@@ -471,12 +481,29 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 @media print{
   .sidebar,.topbar,.tabs,.summary-grid,.page-head,.no-print{display:none !important;}
   body,.app,.main,.content{background:#fff !important;}
-  .content{margin:0 !important;padding:0 !important;}
+  .content{margin:0 !important;padding:0 !important;max-width:none !important;}
   .card{box-shadow:none !important;border:none !important;}
   *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
 
   body.report-print .page-head{display:flex !important;}
   body.report-print .summary-grid{display:grid !important;}
+
+  /* Reportes imprimibles (Cierre financiero, Estado de cuenta): que una
+     fila de una tabla nunca quede cortada a la mitad entre una página
+     impresa y la siguiente, y que el renglón "Total" (tfoot) no se repita
+     de más — por defecto el navegador trata <tfoot> como un pie que se
+     repite al final de CADA página igual que <thead> se repite arriba, así
+     que en una tabla larga el total terminaba apareciendo antes de tiempo,
+     a mitad de la tabla, en la primera página (reportado por Eyaelkys:
+     "que los números no se aprieten"). Con esto, el encabezado sigue
+     repitiéndose arriba en cada página nueva, pero el total solo aparece
+     una vez, al final de verdad.
+  */
+  body.report-print table thead{display:table-header-group;}
+  body.report-print table tfoot{display:table-row-group;}
+  body.report-print table tr,
+  body.report-print .stat-tile,
+  body.report-print .card{break-inside:avoid;page-break-inside:avoid;}
 }
 
 @page{margin:14mm 12mm;}
