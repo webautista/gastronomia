@@ -43,7 +43,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'elimi
 $busqueda = trim($_GET['q'] ?? '');
 
 $sql = "SELECT p.*,
-               (SELECT COUNT(*) FROM padre_estudiante pe WHERE pe.padre_id = p.id) AS num_estudiantes
+               (SELECT COUNT(*) FROM padre_estudiante pe WHERE pe.padre_id = p.id) AS num_estudiantes,
+               (SELECT GROUP_CONCAT(e.nombre ORDER BY e.nombre SEPARATOR ', ')
+                  FROM padre_estudiante pe
+                  JOIN estudiantes e ON e.id = pe.estudiante_id
+                 WHERE pe.padre_id = p.id) AS nombres_estudiantes
         FROM padres p";
 $params = [];
 if ($busqueda !== '') {
@@ -95,7 +99,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <div>
                 <div class="dash-title"><a href="detalle.php?id=<?= (int) $pa['id'] ?>"><?= e($pa['nombre']) ?></a></div>
                 <div class="dash-meta">
-                  <span><?= icon('users') ?> <?= (int) $pa['num_estudiantes'] ?> estudiante<?= $pa['num_estudiantes'] == 1 ? '' : 's' ?> vinculado<?= $pa['num_estudiantes'] == 1 ? '' : 's' ?></span>
+                  <span><?= icon('users') ?> <?= $pa['num_estudiantes'] > 0 ? e($pa['nombres_estudiantes']) : 'Sin estudiantes vinculados' ?></span>
                 </div>
               </div>
             </div>
