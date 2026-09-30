@@ -80,14 +80,6 @@ require __DIR__ . '/../includes/layout_top.php';
   <a class="tab <?= $conEstudiantes ? 'active' : '' ?>" href="<?= e($hrefVista) ?>&detalle=1"><?= icon('users') ?> Vista interna, con estudiantes</a>
 </div>
 
-<p class="cell-muted" style="margin:-10px 0 20px;font-size:.82rem;">
-  <?php if ($conEstudiantes): ?>
-    Incluye el estado de pago de cada estudiante — para uso interno, no para compartir con las familias.
-  <?php else: ?>
-    Resumen general de <?= $tipo === 'evento' ? 'este evento' : 'esta práctica' ?>, sin el detalle de pago de cada estudiante. Lista para compartir con las familias.
-  <?php endif; ?>
-</p>
-
 <div class="summary-grid summary-grid-5">
   <div class="stat-tile stat-tile--wine">
     <div class="stat-label">Costo estimado</div>
