@@ -88,7 +88,12 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
 </p>
 
-<div class="summary-grid">
+<div class="summary-grid summary-grid-4">
+  <div class="stat-tile stat-tile--wine">
+    <div class="stat-label">Costo estimado (lista de compra)</div>
+    <div class="stat-value"><?= money($datos['costo_recetas']) ?></div>
+    <div class="stat-hint">lo que se estimó en recetas, con las decisiones de compra ya guardadas</div>
+  </div>
   <div class="stat-tile">
     <div class="stat-label">Costo real</div>
     <div class="stat-value"><?= money($cuotas['total_confirmado']) ?></div>
