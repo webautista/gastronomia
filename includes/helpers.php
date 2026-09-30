@@ -1253,6 +1253,16 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
  * el costo por porción original, solo para referencia en pantalla).
  *
  * $recetasConPorciones: array de ['receta_id' => int, 'porciones_necesarias' => int]
+ * — se reordena internamente por receta_id antes de procesar nada (ver el
+ * primer 'usort' dentro de la función), así que no importa en qué orden lo
+ * arme quien llama: cuando dos recetas comparten un ingrediente escrito en
+ * unidades distintas (ej. una en Gramos, otra en Unidad), cuál de las dos
+ * "gana" y decide si ese ingrediente redondea a unidades completas
+ * (es_entera, ver más abajo) queda siempre fijo, en vez de depender del
+ * orden en que se haya hecho la consulta a la base de datos — antes de este
+ * reordenamiento, esa misma práctica/evento podía costar distinto en el
+ * detalle (ORDER BY nombre) que en el Cierre financiero (sin ORDER BY,
+ * vía recetasAsignadas()) sin que nada hubiera cambiado en los datos.
  * $decisiones: array [catalogo_id => ['comprar_paquete' => bool, 'precio_paquete' => ?float]],
  * tal como lo devuelve cargarDecisionesCompra() — las decisiones que la
  * usuaria ya guardó para este evento/práctica sobre qué comprar completo.
@@ -1280,6 +1290,25 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
             $catalogoPorNombreNormalizado[$normalizado][] = (int) $c['id'];
         }
     }
+
+    // Cuando dos o más recetas comparten un ingrediente pero lo escribieron
+    // en unidades distintas (ej. una en Gramos, otra en Unidad), la línea
+    // que se procesa PRIMERO es la que decide en qué unidad queda anclado
+    // el grupo — y de eso depende si el total redondea hacia arriba a
+    // unidades completas o no (ver más abajo, 'es_entera'). Si
+    // $recetasConPorciones llega en un orden distinto según quién llama a
+    // esta función (practicas/detalle.php pide las recetas por nombre;
+    // cierreFinanciero(), a través de recetasAsignadas(), las pide sin
+    // ORDER BY — el orden que MySQL decida darles), la MISMA práctica podía
+    // mostrar dos costos distintos en dos pantallas distintas sin que nada
+    // hubiera cambiado en los datos (bug reportado por Eyaelkys: "Practica
+    // #2" mostraba un monto en el detalle y otro en el Cierre financiero
+    // para la misma práctica y las mismas decisiones de compra guardadas).
+    // Se ordena aquí por receta_id — un criterio arbitrario pero siempre el
+    // mismo sin importar en qué orden haya llegado el array — así esta
+    // función procesa las recetas en el mismo orden pase lo que pase quién
+    // la llame, y el resultado deja de depender del orden de entrada.
+    usort($recetasConPorciones, fn($a, $b) => ($a['receta_id'] ?? 0) <=> ($b['receta_id'] ?? 0));
 
     $grupos = [];
     // Para cada ingrediente (claveBase), lista de las claves de grupo ya
