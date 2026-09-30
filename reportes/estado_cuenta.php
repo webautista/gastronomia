@@ -36,6 +36,7 @@ $padres = $stmtPadres->fetchAll();
 
 $pageTitle = 'Estado de cuenta';
 $activeNav = 'reportes';
+$bodyClass = 'report-print';
 $breadcrumb = '<a href="index.php?tab=cuenta">Reportes</a> &nbsp;/&nbsp; <b>' . e($estudiante['nombre']) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>

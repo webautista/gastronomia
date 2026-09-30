@@ -9,6 +9,14 @@
  *                                        ('.' para archivos de raíz, '..'
  *                                        para archivos dentro de una subcarpeta)
  *   $breadcrumb (string HTML, opcional) — si no se define, se usa $pageTitle
+ *   $bodyClass  (string, opcional)    — clase(s) para <body>; usada hoy por
+ *                                        reportes/cierre.php y
+ *                                        reportes/estado_cuenta.php
+ *                                        ("report-print") para que el título
+ *                                        y las tarjetas de resumen sí se
+ *                                        impriman (ver @media print en
+ *                                        app.css), a diferencia de la Lista
+ *                                        de Compra.
  */
 require_once __DIR__ . '/icons.php';
 require_once __DIR__ . '/auth.php';
@@ -17,6 +25,7 @@ $base = $base ?? '.';
 $activeNav = $activeNav ?? 'panel';
 $pageTitle = $pageTitle ?? 'Fogón Eventos';
 $breadcrumb = $breadcrumb ?? ('<b>' . e($pageTitle) . '</b>');
+$bodyClass = $bodyClass ?? '';
 
 // Cada página protegida ya llamó a requireLogin() antes de llegar aquí,
 // así que debería haber un usuario — currentUser() vuelve a leerlo de
@@ -55,7 +64,7 @@ $cssVersion = @filemtime(__DIR__ . '/../assets/css/app.css') ?: '1';
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="<?= e($base) ?>/assets/css/app.css?v=<?= e((string) $cssVersion) ?>">
 </head>
-<body>
+<body class="<?= e(trim($bodyClass)) ?>">
 <div class="app">
   <div class="overlay" id="overlay"></div>
   <aside class="sidebar" id="sidebar">

@@ -26,6 +26,14 @@ if (!in_array($tipo, ['evento', 'practica'], true) || !$id) {
     redirect('index.php?tab=cierre');
 }
 
+// Dos vistas de la misma pantalla, para poder imprimir/guardar como PDF
+// cualquiera de las dos (a pedido de Eyaelkys): la vista completa de
+// siempre (con el detalle de pago de cada estudiante, uso interno) y una
+// vista resumida sin esa tabla, pensada para compartir con las familias sin
+// mostrarles el estado de pago de los demás estudiantes.
+$conEstudiantes = !empty($_GET['detalle']);
+$hrefVista = 'cierre.php?tipo=' . urlencode($tipo) . '&id=' . $id;
+
 $datos = cierreFinanciero(db(), $tipo, $id);
 if (!$datos) {
     flash('Ese ' . ($tipo === 'evento' ? 'evento' : 'práctica') . ' ya no existe.', 'error');
@@ -42,6 +50,7 @@ $paletaCategorias = ['var(--copper)', 'var(--accent)', 'var(--success)', 'var(--
 
 $pageTitle = 'Cierre financiero';
 $activeNav = 'reportes';
+$bodyClass = 'report-print';
 $breadcrumb = '<a href="index.php?tab=cierre">Reportes</a> &nbsp;/&nbsp; <b>' . e($entidad['nombre']) . '</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
@@ -65,6 +74,19 @@ require __DIR__ . '/../includes/layout_top.php';
     <button class="btn btn-secondary btn-sm" type="button" onclick="window.print()"><?= icon('printer') ?> Imprimir</button>
   </div>
 </div>
+
+<div class="tabs">
+  <a class="tab <?= !$conEstudiantes ? 'active' : '' ?>" href="<?= e($hrefVista) ?>"><?= icon('heart') ?> Para compartir con los padres</a>
+  <a class="tab <?= $conEstudiantes ? 'active' : '' ?>" href="<?= e($hrefVista) ?>&detalle=1"><?= icon('users') ?> Vista interna, con estudiantes</a>
+</div>
+
+<p class="cell-muted" style="margin:-10px 0 20px;font-size:.82rem;">
+  <?php if ($conEstudiantes): ?>
+    Incluye el estado de pago de cada estudiante — para uso interno, no para compartir con las familias.
+  <?php else: ?>
+    Resumen general de <?= $tipo === 'evento' ? 'este evento' : 'esta práctica' ?>, sin el detalle de pago de cada estudiante. Lista para compartir con las familias.
+  <?php endif; ?>
+</p>
 
 <div class="summary-grid">
   <div class="stat-tile">
@@ -152,6 +174,7 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
 </div>
 
+<?php if ($conEstudiantes): ?>
 <div class="card">
   <div class="page-head" style="margin-bottom:0;padding:16px 16px 0;"><h2 class="section-title" style="margin:0;">Estudiantes</h2></div>
   <div class="table-wrap">
@@ -184,6 +207,7 @@ require __DIR__ . '/../includes/layout_top.php';
   </table>
   </div>
 </div>
+<?php endif; ?>
 
 <div class="form-actions no-print" style="margin-top:16px;">
   <a class="btn btn-secondary" href="index.php?tab=cierre">Volver</a>
