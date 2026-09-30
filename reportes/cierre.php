@@ -92,17 +92,17 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="stat-tile stat-tile--wine">
     <div class="stat-label">Costo estimado</div>
     <div class="stat-value"><?= money($datos['costo_estimado']) ?></div>
-    <div class="stat-hint">costo base de las recetas, antes de marcar "Ya lo tienes" o comprar paquete completo</div>
+    <div class="stat-hint">Costo base de las recetas</div>
   </div>
   <div class="stat-tile stat-tile--gold">
     <div class="stat-label">Monto lista de compra</div>
     <div class="stat-value"><?= money($datos['costo_recetas']) ?></div>
-    <div class="stat-hint">lo que de verdad falta comprar, ya con "Ya lo tienes"/paquete completo aplicado</div>
+    <div class="stat-hint">Inversión en la lista de compra de materiales faltantes.</div>
   </div>
   <div class="stat-tile">
     <div class="stat-label">Costo real</div>
     <div class="stat-value"><?= money($cuotas['total_confirmado']) ?></div>
-    <div class="stat-hint">materiales (recetas o gasto real, el mayor) + otros gastos ya confirmados/pagados</div>
+    <div class="stat-hint">Materiales o gastos</div>
   </div>
   <div class="stat-tile stat-tile--terracotta">
     <div class="stat-label">Cuota <?= $cuotas['cuota_ajustada'] ? 'confirmada (ajustada)' : 'confirmada' ?></div>
