@@ -323,12 +323,35 @@ function recetasAsignadas(PDO $pdo, string $entidadTipo, int $entidadId): array
  */
 function costoRecetasConsolidado(PDO $pdo, string $entidadTipo, int $entidadId): float
 {
+    return consolidadoRecetasEntidad($pdo, $entidadTipo, $entidadId)['total'];
+}
+
+/**
+ * Igual que costoRecetasConsolidado() (mismas recetas asignadas + mismas
+ * decisiones de compra guardadas), pero además del array completo de
+ * listaCompraConsolidada() (con las decisiones de compra ya aplicadas, en
+ * 'total') agrega la clave 'total_estimado': el mismo consolidado pero
+ * calculado SIN ninguna decisión de compra guardada, es decir, usando solo
+ * el modo de compra por defecto de cada ingrediente en el catálogo — el
+ * costo "de línea base" antes de marcar nada como "ya lo tienes" o comprar
+ * el paquete completo. Se usa en cierreFinanciero() para mostrar por
+ * separado "Costo estimado" (antes de esas decisiones) y "Monto lista de
+ * compra" (después, el número que de verdad hay que salir a comprar). Se
+ * reutiliza la misma lista de recetas asignadas para ambos cálculos, así
+ * los dos números siempre parten exactamente del mismo conjunto de
+ * recetas. Con 0 recetas asignadas devuelve los mismos campos en 0/vacío,
+ * sin tocar la base de datos de más.
+ */
+function consolidadoRecetasEntidad(PDO $pdo, string $entidadTipo, int $entidadId): array
+{
     $recetas = recetasAsignadas($pdo, $entidadTipo, $entidadId);
     if (!$recetas) {
-        return 0.0;
+        return ['lineas' => [], 'al_gusto' => [], 'total' => 0.0, 'total_estimado' => 0.0];
     }
     $decisiones = cargarDecisionesCompra($pdo, $entidadTipo, $entidadId);
-    return listaCompraConsolidada($pdo, $recetas, $decisiones)['total'];
+    $consolidado = listaCompraConsolidada($pdo, $recetas, $decisiones);
+    $consolidado['total_estimado'] = listaCompraConsolidada($pdo, $recetas, [])['total'];
+    return $consolidado;
 }
 
 /**
@@ -699,7 +722,9 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         if (!$entidad) {
             return null;
         }
-        $costo = costoRecetasConsolidado($pdo, 'evento', $entidadId);
+        $consolidadoRecetas = consolidadoRecetasEntidad($pdo, 'evento', $entidadId);
+        $costo = $consolidadoRecetas['total'];
+        $costoEstimado = $consolidadoRecetas['total_estimado'];
         $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', $entidadId);
         $stmtGastos = $pdo->prepare(
             "SELECT g.*, cg.nombre AS categoria FROM gastos g
@@ -722,7 +747,9 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
             return null;
         }
         $entidad['estado_nombre'] = null;
-        $costo = costoRecetasConsolidado($pdo, 'practica', $entidadId);
+        $consolidadoRecetas = consolidadoRecetasEntidad($pdo, 'practica', $entidadId);
+        $costo = $consolidadoRecetas['total'];
+        $costoEstimado = $consolidadoRecetas['total_estimado'];
         $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', $entidadId);
         $stmtGastos = $pdo->prepare(
             "SELECT g.*, cg.nombre AS categoria FROM gastos g
@@ -766,6 +793,7 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         'tipo' => $entidadTipo,
         'entidad' => $entidad,
         'costo_recetas' => $costo,
+        'costo_estimado' => $costoEstimado,
         'gastos' => $gastos,
         'gastos_por_categoria' => $catTotales,
         'cuotas' => $cuotas,

@@ -199,6 +199,8 @@ table.table{width:100%;border-collapse:collapse;}
 
 .summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px;}
 .summary-grid-4{grid-template-columns:repeat(4,1fr);}
+.summary-grid-5{grid-template-columns:repeat(5,1fr);}
+@media (max-width:1100px){.summary-grid-5{grid-template-columns:repeat(3,1fr);}}
 @media (max-width:860px){.summary-grid{grid-template-columns:1fr;}}
 
 .bar-list{display:flex;flex-direction:column;gap:10px;}
