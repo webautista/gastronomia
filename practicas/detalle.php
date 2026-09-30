@@ -166,15 +166,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // compartido fuera del repositorio (enlace `public/` en la
                 // raíz del proyecto -> ../shared/public), igual que las
                 // fotos de recetas y los banners de eventos — para que
-                // sobrevivan a los despliegues.
-                $directorioDestino = __DIR__ . '/../public/practicas';
+                // sobrevivan a los despliegues. Carpeta `public/practicas/fotos`
+                // (subcarpeta de `public/practicas`, ya creada por Eyaelkys).
+                $directorioDestino = __DIR__ . '/../public/practicas/fotos';
                 if (!is_dir($directorioDestino)) {
                     mkdir($directorioDestino, 0775, true);
                 }
                 $nombreArchivo = 'practica_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
                 if (move_uploaded_file($_FILES['foto']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
                     $pdo->prepare('INSERT INTO practica_fotos (practica_id, ruta, descripcion) VALUES (?,?,?)')
-                        ->execute([$id, 'public/practicas/' . $nombreArchivo, $descripcionFoto !== '' ? $descripcionFoto : null]);
+                        ->execute([$id, 'public/practicas/fotos/' . $nombreArchivo, $descripcionFoto !== '' ? $descripcionFoto : null]);
                     flash('Foto agregada.');
                 } else {
                     flash('No se pudo guardar la foto en el servidor. Vuelve a intentarlo.', 'error');
