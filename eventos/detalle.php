@@ -291,11 +291,19 @@ unset($rc);
 // El costo que alimenta la tarjeta "Inversión" y la cuota por estudiante
 // NO es la simple suma de los chips de arriba (cada uno calculado receta
 // por receta, sin verlas juntas): es el mismo total consolidado y
-// consciente de las decisiones de compra que ya se muestra en la pestaña
-// Lista de Compra (costoRecetasConsolidado(), includes/helpers.php) — para
-// que la tarjeta de Inversión nunca diga un número distinto al que dice
-// esa pestaña.
-$costoRecetasEvento = costoRecetasConsolidado(db(), 'evento', $id);
+// consciente de las decisiones de compra que se muestra en la pestaña
+// Lista de Compra — para que la tarjeta de Inversión NUNCA diga un número
+// distinto al que dice esa pestaña, se calcula UNA sola vez aquí (antes se
+// llamaba a costoRecetasConsolidado() por separado para la tarjeta y de
+// nuevo a listaCompraConsolidada() para la pestaña "Lista de Compra"; dos
+// llamadas separadas para "lo mismo" es justo la clase de cosa que, ante
+// cualquier diferencia sutil entre ambas llamadas, puede terminar
+// mostrando dos números distintos para lo que se supone es un solo dato —
+// a pedido de Eyaelkys, que notó justo esa discrepancia en Prácticas).
+$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasEvento);
+$decisionesCompra = cargarDecisionesCompra(db(), 'evento', $id);
+$consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
+$costoRecetasEvento = $consolidado['total'];
 
 // Acciones/cortes marcados por línea (ver.php muestra lo mismo), para
 // mostrarlos junto al nombre del ingrediente en la pestaña "Recetas".
@@ -703,11 +711,7 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endforeach; ?>
   </div>
 
-<?php elseif ($tab === 'compras'):
-  $recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasEvento);
-  $decisionesCompra = cargarDecisionesCompra(db(), 'evento', $id);
-  $consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
-?>
+<?php elseif ($tab === 'compras'): ?>
   <div class="toolbar no-print">
     <div class="cell-muted">Ingredientes de todas las recetas de este evento, sumados y organizados para ir al súper.</div>
     <div class="row-actions">

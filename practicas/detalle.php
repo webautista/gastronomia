@@ -254,11 +254,19 @@ unset($rc);
 // El costo que alimenta la tarjeta "Inversión" y la cuota por estudiante
 // NO es la simple suma de los chips de arriba (cada uno calculado receta
 // por receta, sin verlas juntas): es el mismo total consolidado y
-// consciente de las decisiones de compra que ya se muestra en la pestaña
-// Lista de Compra (costoRecetasConsolidado(), includes/helpers.php) — para
-// que la tarjeta de Inversión nunca diga un número distinto al que dice
-// esa pestaña.
-$costoMateriales = costoRecetasConsolidado(db(), 'practica', $id);
+// consciente de las decisiones de compra que se muestra en la pestaña
+// Lista de Compra — para que la tarjeta de Inversión NUNCA diga un número
+// distinto al que dice esa pestaña, se calcula UNA sola vez aquí (antes se
+// llamaba a costoRecetasConsolidado() por separado para la tarjeta y de
+// nuevo a listaCompraConsolidada() para la pestaña "Lista de Compra"; dos
+// llamadas separadas para "lo mismo" es justo la clase de cosa que, ante
+// cualquier diferencia sutil entre ambas llamadas, puede terminar
+// mostrando dos números distintos para lo que se supone es un solo dato —
+// a pedido de Eyaelkys, que notó justo esa discrepancia).
+$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasPractica);
+$decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
+$consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
+$costoMateriales = $consolidado['total'];
 
 // Acciones/cortes marcados por línea (igual que en eventos/detalle.php).
 $accionesPorFila = [];
@@ -279,13 +287,6 @@ if ($idsFilasTodas) {
     foreach ($stmtAcc->fetchAll() as $fa) {
         $accionesPorFila[(int) $fa['receta_ingrediente_id']][] = $fa['nombre'];
     }
-}
-
-$consolidado = null;
-if ($tab === 'compras') {
-    $recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasPractica);
-    $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
-    $consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
 }
 
 // Estudiantes asignados a esta práctica + su cuota (mismo patrón que
