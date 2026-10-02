@@ -68,6 +68,11 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php if (!empty($entidad['materia'])): ?> · <?= e($entidad['materia']) ?><?php endif; ?>
         <?php if (!empty($entidad['maestro_responsable'])): ?> · <?= e($entidad['maestro_responsable']) ?><?php endif; ?>
       <?php endif; ?>
+      <?php if ($datos['cerrado']): ?>
+        · <span class="chip chip-muted" title="Los costos de este cierre están congelados; no cambian aunque se editen recetas, ingredientes o gastos después"><?= icon('lock') ?> Cerrado el <?= fmtDate($datos['cerrado_en']) ?> por <?= e($datos['cerrado_por_nombre']) ?></span>
+      <?php else: ?>
+        · <span class="chip chip-success" title="Los costos se calculan en vivo a partir de las recetas, ingredientes y gastos actuales"><?= icon('unlock') ?> En vivo</span>
+      <?php endif; ?>
     </p>
   </div>
   <div class="no-print">

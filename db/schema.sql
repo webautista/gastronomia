@@ -493,6 +493,13 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 -- Galería de fotos del evento (distinta del banner) — pestaña "Fotos" en el
 -- detalle, mismo criterio que "practicas_fotos" (ver más abajo).
 ('eventos_fotos', 'Fotos del evento', 24),
+-- Cerrar/reabrir el cierre financiero (sección 42: congela el snapshot de
+-- costos del evento/práctica para que ediciones posteriores a recetas o
+-- ingredientes no alteren lo ya compartido con las familias) es una acción
+-- aparte del permiso general de "editar" el evento/práctica, a pedido
+-- explícito de Eyaelkys (mismo "orden" que Estudiantes y pagos/Aplicar
+-- fondo/Fotos para salir agrupado en Usuarios y roles → Roles).
+('eventos_cierre', 'Cerrar/reabrir cierre', 24),
 ('practicas', 'Prácticas', 25),
 -- Lo mismo, pero para el detalle de una Práctica.
 ('practicas_recetas', 'Recetas', 26),
@@ -507,6 +514,9 @@ INSERT IGNORE INTO modulos (clave, nombre, orden) VALUES
 -- código (no hay una acción de "editar" una foto ya subida: se borra y se
 -- vuelve a subir).
 ('practicas_fotos', 'Fotos de trabajos', 29),
+-- Ver "eventos_cierre" arriba — lo mismo, pero para el detalle de una
+-- Práctica.
+('practicas_cierre', 'Cerrar/reabrir cierre', 29),
 -- "gastos" queda en desuso a partir de esta versión (ver "eventos_gastos" y
 -- "practicas_gastos" arriba) — se deja la fila para no romper datos viejos,
 -- pero ningún código ni la matriz de permisos la usan ya.
@@ -1058,6 +1068,36 @@ CREATE TABLE IF NOT EXISTS cuota_historial (
     CONSTRAINT fk_cuotahist_usuario FOREIGN KEY (registrado_por)
         REFERENCES usuarios(id) ON DELETE SET NULL,
     KEY idx_cuotahist_entidad (entidad_tipo, entidad_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Snapshot del cierre financiero de un evento o práctica (sección 42, a
+-- pedido explícito de Eyaelkys: "si terminamos una practica, ese snapshot
+-- de la lista de compras no debe cambiar si hemos tenido cambios a nivel de
+-- los ingredientes luego de realizada la practica"). entidad_tipo/
+-- entidad_id son polimórficos igual que en compra_decisiones/cuota_historial
+-- arriba. Que exista una fila aquí para un evento/práctica significa que su
+-- cierre está "cerrado": datos_json guarda el lado de COSTOS tal como se
+-- veía al momento de cerrar (costo_recetas, costo_estimado, gastos,
+-- gastos_por_categoria, cuotas, cantidad_estudiantes — ver
+-- cerrarCierreFinanciero() en helpers.php), y cierreFinanciero() usa ese
+-- snapshot en vez de recalcular desde recetas/ingredientes/gastos en vivo.
+-- El pago de los estudiantes (recaudado/pendiente) NUNCA se congela: se
+-- sigue calculando en vivo siempre, cerrado o no, para que un estudiante
+-- atrasado pueda ponerse al día. UNIQUE KEY en (entidad_tipo, entidad_id)
+-- porque solo puede existir un snapshot vigente a la vez por evento/
+-- práctica — re-cerrar (botón "Actualizar cierre") reemplaza el snapshot
+-- anterior vía INSERT ... ON DUPLICATE KEY UPDATE, y reabrir borra la fila.
+CREATE TABLE IF NOT EXISTS cierres_financieros (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('evento','practica') NOT NULL,
+    entidad_id INT UNSIGNED NOT NULL,
+    datos_json JSON NOT NULL,
+    cerrado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    cerrado_por INT UNSIGNED NULL,
+    cerrado_por_nombre VARCHAR(150) NOT NULL,
+    CONSTRAINT fk_cierrefinanciero_usuario FOREIGN KEY (cerrado_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    UNIQUE KEY uq_cierrefinanciero_entidad (entidad_tipo, entidad_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

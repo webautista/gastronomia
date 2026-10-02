@@ -39,6 +39,10 @@ $puedeEliminarGasto = can($usuarioActual, 'eventos_gastos', 'eliminar');
 $puedeVerFotosTab = can($usuarioActual, 'eventos_fotos', 'ver');
 $puedeCrearFotoTab = can($usuarioActual, 'eventos_fotos', 'crear');
 $puedeEliminarFotoTab = can($usuarioActual, 'eventos_fotos', 'eliminar');
+// Cerrar/reabrir el cierre financiero (sección 42): permiso aparte del
+// "editar" general del evento — ver nota junto a "eventos_cierre" en
+// db/schema.sql.
+$puedeGestionarCierre = can($usuarioActual, 'eventos_cierre', 'editar');
 
 $id = intOrNull($_GET['id'] ?? null);
 if (!$id) {
@@ -221,10 +225,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash('Foto eliminada.');
             }
         }
+    } elseif ($accion === 'cerrar_cierre') {
+        requirePermission($usuarioActual, 'eventos_cierre', 'editar', $base);
+        cerrarCierreFinanciero($pdo, 'evento', $id, (int) $usuarioActual['id'], $usuarioActual['nombre']);
+        flash('Cierre financiero cerrado. Los costos quedaron congelados; los pagos de estudiantes siguen en vivo.');
+    } elseif ($accion === 'reabrir_cierre') {
+        requirePermission($usuarioActual, 'eventos_cierre', 'editar', $base);
+        reabrirCierreFinanciero($pdo, 'evento', $id);
+        flash('Cierre financiero reabierto: los costos vuelven a calcularse en vivo.');
     }
 
     redirect('detalle.php?id=' . $id . '&tab=' . $tab);
 }
+
+// Estado del cierre financiero (sección 42): si existe un snapshot, el
+// cierre está "cerrado" y lo que se comparte en reportes/cierre.php quedó
+// congelado — pero esta pantalla (Recetas, Lista de Compra, Gastos) sigue
+// mostrando todo en vivo como siempre, para que se pueda seguir trabajando;
+// solo se usa aquí para el botón Cerrar/Reabrir y el aviso de abajo.
+$cierreGuardado = obtenerCierreFinancieroGuardado(db(), 'evento', $id);
 
 /* ---------------- Datos para mostrar ---------------- */
 $stmt = db()->prepare(
@@ -412,10 +431,38 @@ require __DIR__ . '/../includes/layout_top.php';
       <?php endif; ?>
     </div>
   </div>
-  <?php if ($puedeEditarEvento): ?>
-    <a class="btn btn-secondary" href="form.php?id=<?= (int) $evento['id'] ?>"><?= icon('edit') ?> Editar</a>
-  <?php endif; ?>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <?php if ($puedeEditarEvento): ?>
+      <a class="btn btn-secondary" href="form.php?id=<?= (int) $evento['id'] ?>"><?= icon('edit') ?> Editar</a>
+    <?php endif; ?>
+    <?php if ($puedeGestionarCierre): ?>
+      <?php if ($cierreGuardado): ?>
+        <form method="post" data-confirm="¿Actualizar el cierre financiero con los costos actuales? Esto reemplaza el snapshot ya compartido.">
+          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+          <input type="hidden" name="accion" value="cerrar_cierre">
+          <button class="btn btn-secondary" type="submit"><?= icon('check') ?> Actualizar cierre</button>
+        </form>
+        <form method="post" data-confirm="¿Reabrir el cierre financiero? Los costos volverán a calcularse en vivo hasta que se cierre de nuevo.">
+          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+          <input type="hidden" name="accion" value="reabrir_cierre">
+          <button class="btn btn-secondary" type="submit"><?= icon('unlock') ?> Reabrir cierre</button>
+        </form>
+      <?php else: ?>
+        <form method="post" data-confirm="¿Cerrar el cierre financiero de este evento? Los costos (recetas, gastos, cuotas) quedarán congelados tal como están ahora mismo; los pagos de los estudiantes seguirán actualizándose con normalidad.">
+          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+          <input type="hidden" name="accion" value="cerrar_cierre">
+          <button class="btn btn-secondary" type="submit"><?= icon('lock') ?> Cerrar cierre financiero</button>
+        </form>
+      <?php endif; ?>
+    <?php endif; ?>
+  </div>
 </div>
+
+<?php if ($cierreGuardado): ?>
+  <div class="alert" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-secondary);margin-bottom:18px;">
+    <?= icon('lock') ?> Cierre financiero <b>cerrado</b> el <?= fmtDate($cierreGuardado['cerrado_en']) ?> por <b><?= e($cierreGuardado['cerrado_por_nombre']) ?></b>. Los costos que se comparten en el reporte de cierre quedaron congelados: si editas recetas, ingredientes o gastos aquí, esos cambios no se reflejarán en ese reporte hasta que uses "Actualizar cierre". Los pagos de los estudiantes siguen en vivo.
+  </div>
+<?php endif; ?>
 
 <div class="summary-grid">
   <div class="stat-tile stat-tile--wine">

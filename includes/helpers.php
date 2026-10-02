@@ -704,11 +704,127 @@ function estadoCuentaEstudiante(PDO $pdo, int $estudianteId): ?array
 }
 
 /**
+ * Snapshot congelado de un cierre financiero ya cerrado (sección 42): si
+ * existe una fila en cierres_financieros para esta entidad, el cierre está
+ * "cerrado" y estos son los datos de costo que se compartieron en ese
+ * momento — no se recalculan aunque después cambien las recetas o el
+ * catálogo de ingredientes. Null si la entidad nunca se ha cerrado (o fue
+ * reabierta), en cuyo caso cierreFinanciero() calcula todo en vivo.
+ */
+function obtenerCierreFinancieroGuardado(PDO $pdo, string $entidadTipo, int $entidadId): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT datos_json, cerrado_en, cerrado_por_nombre FROM cierres_financieros
+         WHERE entidad_tipo = ? AND entidad_id = ?'
+    );
+    $stmt->execute([$entidadTipo, $entidadId]);
+    $fila = $stmt->fetch();
+    if (!$fila) {
+        return null;
+    }
+    $datos = json_decode($fila['datos_json'], true);
+    if (!is_array($datos)) {
+        return null;
+    }
+    $datos['cerrado_en'] = $fila['cerrado_en'];
+    $datos['cerrado_por_nombre'] = $fila['cerrado_por_nombre'];
+    return $datos;
+}
+
+/**
+ * Congela (o re-congela, si ya estaba cerrado) el lado de costos del cierre
+ * financiero de una entidad: costo de recetas, gastos y cuotas, tal como se
+ * ven en este momento. A partir de aquí reportes/cierre.php deja de
+ * recalcular ese lado aunque se editen recetas, ingredientes o gastos
+ * después. El pago de los estudiantes (recaudado/pendiente) NUNCA se
+ * congela — sigue en vivo siempre, para permitir que un estudiante se ponga
+ * al día aunque la entidad ya esté cerrada.
+ */
+function cerrarCierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId, int $usuarioId, string $usuarioNombre): void
+{
+    $consolidadoRecetas = consolidadoRecetasEntidad($pdo, $entidadTipo, $entidadId);
+    $costo = $consolidadoRecetas['total'];
+    $costoEstimado = $consolidadoRecetas['total_estimado'];
+
+    if ($entidadTipo === 'evento') {
+        $campoEntidad = 'evento_id';
+        $stmt = $pdo->prepare('SELECT cuota_confirmada_manual FROM eventos WHERE id = ?');
+        $stmt->execute([$entidadId]);
+        $cuotaManualValor = $stmt->fetchColumn();
+        $stmtCant = $pdo->prepare('SELECT COUNT(*) FROM evento_estudiante WHERE evento_id = ?');
+    } else {
+        $campoEntidad = 'practica_id';
+        $stmt = $pdo->prepare('SELECT cuota_confirmada_manual FROM practicas WHERE id = ?');
+        $stmt->execute([$entidadId]);
+        $cuotaManualValor = $stmt->fetchColumn();
+        $stmtCant = $pdo->prepare('SELECT COUNT(*) FROM practica_estudiante WHERE practica_id = ?');
+    }
+    $cuotaManual = ($cuotaManualValor !== false && $cuotaManualValor !== null) ? (float) $cuotaManualValor : null;
+    $stmtCant->execute([$entidadId]);
+    $cantidadEstudiantes = (int) $stmtCant->fetchColumn();
+
+    $resumenGastos = resumenGastosVinculo($pdo, $campoEntidad, $entidadId);
+    $stmtGastos = $pdo->prepare(
+        "SELECT g.*, cg.nombre AS categoria FROM gastos g
+         JOIN categorias_gasto cg ON cg.id = g.categoria_id
+         WHERE g.$campoEntidad = ? AND g.eliminado_en IS NULL
+         ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
+    );
+    $stmtGastos->execute([$entidadId]);
+    $gastos = $stmtGastos->fetchAll();
+
+    $catTotales = [];
+    foreach ($gastos as $g) {
+        $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + montoEfectivoGasto($g);
+    }
+
+    $cuotas = calcularCuotas($costo, $resumenGastos, $cantidadEstudiantes, $cuotaManual);
+
+    $datos = [
+        'costo_recetas' => $costo,
+        'costo_estimado' => $costoEstimado,
+        'gastos' => $gastos,
+        'gastos_por_categoria' => $catTotales,
+        'cuotas' => $cuotas,
+        'cantidad_estudiantes' => $cantidadEstudiantes,
+    ];
+
+    $pdo->prepare(
+        'INSERT INTO cierres_financieros (entidad_tipo, entidad_id, datos_json, cerrado_por, cerrado_por_nombre)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+             datos_json = VALUES(datos_json),
+             cerrado_en = CURRENT_TIMESTAMP,
+             cerrado_por = VALUES(cerrado_por),
+             cerrado_por_nombre = VALUES(cerrado_por_nombre)'
+    )->execute([$entidadTipo, $entidadId, json_encode($datos), $usuarioId, $usuarioNombre]);
+}
+
+/**
+ * Reabre un cierre financiero ya cerrado: borra el snapshot congelado, así
+ * que cierreFinanciero() vuelve a calcular todo en vivo desde este momento
+ * (hasta que se cierre de nuevo).
+ */
+function reabrirCierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): void
+{
+    $pdo->prepare('DELETE FROM cierres_financieros WHERE entidad_tipo = ? AND entidad_id = ?')
+        ->execute([$entidadTipo, $entidadId]);
+}
+
+/**
  * Cierre financiero de un evento o práctica: costo real vs. proyectado,
  * cuota sugerida vs. confirmada (con su nota si hay un ajuste manual, ver
  * sección 33), gastos por categoría, y estado de pago de cada estudiante —
  * para reportes/cierre.php. $entidadTipo es 'evento' o 'practica', siempre
  * uno de estos dos literales fijos. Null si la entidad ya no existe.
+ *
+ * Si la entidad ya fue cerrada manualmente (sección 42, ver
+ * cerrarCierreFinanciero()), el lado de costos (costo_recetas,
+ * costo_estimado, gastos, gastos_por_categoria, cuotas) viene del snapshot
+ * congelado en vez de recalcularse — así ediciones posteriores a recetas o
+ * ingredientes no alteran lo que ya se compartió. El pago de los
+ * estudiantes (estudiantes/recaudado) siempre se calcula en vivo, cerrado o
+ * no.
  */
 function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
 {
@@ -722,17 +838,6 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         if (!$entidad) {
             return null;
         }
-        $consolidadoRecetas = consolidadoRecetasEntidad($pdo, 'evento', $entidadId);
-        $costo = $consolidadoRecetas['total'];
-        $costoEstimado = $consolidadoRecetas['total_estimado'];
-        $resumenGastos = resumenGastosVinculo($pdo, 'evento_id', $entidadId);
-        $stmtGastos = $pdo->prepare(
-            "SELECT g.*, cg.nombre AS categoria FROM gastos g
-             JOIN categorias_gasto cg ON cg.id = g.categoria_id
-             WHERE g.evento_id = ? AND g.eliminado_en IS NULL
-             ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
-        );
-        $stmtGastos->execute([$entidadId]);
         $stmtEst = $pdo->prepare(
             'SELECT ee.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
              FROM evento_estudiante ee JOIN estudiantes est ON est.id = ee.estudiante_id
@@ -747,17 +852,6 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
             return null;
         }
         $entidad['estado_nombre'] = null;
-        $consolidadoRecetas = consolidadoRecetasEntidad($pdo, 'practica', $entidadId);
-        $costo = $consolidadoRecetas['total'];
-        $costoEstimado = $consolidadoRecetas['total_estimado'];
-        $resumenGastos = resumenGastosVinculo($pdo, 'practica_id', $entidadId);
-        $stmtGastos = $pdo->prepare(
-            "SELECT g.*, cg.nombre AS categoria FROM gastos g
-             JOIN categorias_gasto cg ON cg.id = g.categoria_id
-             WHERE g.practica_id = ? AND g.eliminado_en IS NULL
-             ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
-        );
-        $stmtGastos->execute([$entidadId]);
         $stmtEst = $pdo->prepare(
             'SELECT pe.monto_pagado, est.id AS estudiante_id, est.nombre AS estudiante_nombre
              FROM practica_estudiante pe JOIN estudiantes est ON est.id = pe.estudiante_id
@@ -766,17 +860,46 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         $stmtEst->execute([$entidadId]);
     }
 
-    $gastos = $stmtGastos->fetchAll();
     $estudiantes = $stmtEst->fetchAll();
 
-    $cuotaManual = $entidad['cuota_confirmada_manual'] !== null ? (float) $entidad['cuota_confirmada_manual'] : null;
-    $cuotas = calcularCuotas($costo, $resumenGastos, count($estudiantes), $cuotaManual);
-    $cuotaConfirmada = $cuotas['confirmada'];
+    $guardado = obtenerCierreFinancieroGuardado($pdo, $entidadTipo, $entidadId);
+    if ($guardado !== null) {
+        $costo = (float) $guardado['costo_recetas'];
+        $costoEstimado = (float) $guardado['costo_estimado'];
+        $gastos = $guardado['gastos'];
+        $catTotales = $guardado['gastos_por_categoria'];
+        $cuotas = $guardado['cuotas'];
+        $cerrado = true;
+        $cerradoEn = $guardado['cerrado_en'];
+        $cerradoPorNombre = $guardado['cerrado_por_nombre'];
+    } else {
+        $consolidadoRecetas = consolidadoRecetasEntidad($pdo, $entidadTipo, $entidadId);
+        $costo = $consolidadoRecetas['total'];
+        $costoEstimado = $consolidadoRecetas['total_estimado'];
+        $campoEntidad = $entidadTipo === 'evento' ? 'evento_id' : 'practica_id';
+        $resumenGastos = resumenGastosVinculo($pdo, $campoEntidad, $entidadId);
+        $stmtGastos = $pdo->prepare(
+            "SELECT g.*, cg.nombre AS categoria FROM gastos g
+             JOIN categorias_gasto cg ON cg.id = g.categoria_id
+             WHERE g.$campoEntidad = ? AND g.eliminado_en IS NULL
+             ORDER BY FIELD(g.estado,'proyectado','confirmado','pagado'), g.fecha DESC"
+        );
+        $stmtGastos->execute([$entidadId]);
+        $gastos = $stmtGastos->fetchAll();
 
-    $catTotales = [];
-    foreach ($gastos as $g) {
-        $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + montoEfectivoGasto($g);
+        $cuotaManual = $entidad['cuota_confirmada_manual'] !== null ? (float) $entidad['cuota_confirmada_manual'] : null;
+        $cuotas = calcularCuotas($costo, $resumenGastos, count($estudiantes), $cuotaManual);
+
+        $catTotales = [];
+        foreach ($gastos as $g) {
+            $catTotales[$g['categoria']] = ($catTotales[$g['categoria']] ?? 0) + montoEfectivoGasto($g);
+        }
+        $cerrado = false;
+        $cerradoEn = null;
+        $cerradoPorNombre = null;
     }
+
+    $cuotaConfirmada = $cuotas['confirmada'];
 
     $filasEstudiantes = [];
     foreach ($estudiantes as $e) {
@@ -800,6 +923,9 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         'estudiantes' => $filasEstudiantes,
         'recaudado' => array_sum(array_column($filasEstudiantes, 'pagado')),
         'cantidad_estudiantes' => count($estudiantes),
+        'cerrado' => $cerrado,
+        'cerrado_en' => $cerradoEn,
+        'cerrado_por_nombre' => $cerradoPorNombre,
     ];
 }
 
