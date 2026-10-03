@@ -2015,6 +2015,318 @@ function sembrarRecetasReposteria5(PDO $pdo): array
 }
 
 /**
+ * Sexta tanda de recetas nuevas (sección 43): Eyaelkys pidió sembrar 4
+ * recetas de un recetario de clase (fotos de un PDF proyectado, módulo
+ * "RA0090 – Cocción en medio ácido") — Ceviche de pescado, Escabeche de
+ * vegetales, Pie de limón frío y Mousse de limón. A diferencia de todas las
+ * tandas anteriores (puro postre/repostería), esta es la primera con
+ * recetas saladas, así que hizo falta una categoría de receta nueva,
+ * "Guarnición" (ver db/schema.sql), para "Escabeche de vegetales": no es ni
+ * el plato fuerte ni un aperitivo. Decisiones confirmadas con Eyaelkys antes
+ * de sembrar:
+ * - "Ceviche de pescado" → categoría Plato fuerte; "Escabeche de vegetales"
+ *   → categoría Guarnición (nueva).
+ * - El pescado blanco del ceviche es Mero (ella lo confirmó; más caro que
+ *   tilapia, que era la otra opción que se le propuso).
+ * - "Crema de leche" (Pie de limón) y "Crema para batir" (Mousse de limón)
+ *   son DOS ingredientes de catálogo distintos para ella (media crema/crema
+ *   de leche normal vs. crema para batir que sí monta en picos) — antes del
+ *   catálogo solo existía "Crema para batir"; "Crema de leche" es nueva.
+ *
+ * Doce ingredientes nuevos entraron al catálogo: Pescado blanco, Naranja
+ * agria, Ají cubanela, Cebolla roja, Cebolla blanca, Pimiento, Calabacín,
+ * Cilantro, Vinagre, Laurel, Galletas y Crema de leche (el resto — Limón
+ * verde, Leche condensada, Crema para batir, Gelatina sin sabor, Zanahoria,
+ * Agua, Azúcar blanca, Sal, Pimienta negra molida — ya existían de tandas
+ * anteriores y se reusan con su costo ya establecido, sin volver a
+ * investigarlos). Precios de referencia:
+ * - Cebolla roja, Cebolla blanca, Ají cubanela, Pimiento: Informe de
+ *   Precios del Ministerio de Agricultura de RD, 20 de mayo de 2026
+ *   (agricultura.gob.do) — precio oficial por libra. La cantidad de
+ *   unidades por libra (cuántas cebollas/ajíes/pimientos entran en una
+ *   libra) es una estimación de peso promedio, no un dato del informe.
+ * - Naranja agria: mismo informe, precio por docena (RD$216.00) convertido
+ *   a por unidad; el rendimiento de jugo por naranja (≈0.4 taza) es una
+ *   estimación, no viene del informe.
+ * - Pescado blanco (Mero), Calabacín, Cilantro, Vinagre, Laurel, Galletas,
+ *   Crema de leche: NO se encontró un precio puntual verificable de un
+ *   supermercado dominicano específico en esta investigación (a diferencia
+ *   de las tandas anteriores, que sí citaban un producto y precio exactos).
+ *   Son estimaciones razonables de mercado — Eyaelkys debe revisarlas y
+ *   ajustarlas desde Ingredientes con el precio real de su proveedor en
+ *   cuanto pueda; cada nota_compra lo deja explícito.
+ *
+ * Otras decisiones tomadas al transcribir, sin preguntarle (ninguna
+ * cambia el costo de forma importante ni es ambigua a nivel de negocio):
+ * - Ninguna de las 4 recetas indicaba cuántas porciones rinde. Se
+ *   estimaron: Ceviche 6, Escabeche 6, Pie de limón 8, Mousse de limón 6
+ *   (igual que "Mousse de chinola", su receta de mousse ya existente) — a
+ *   revisar y ajustar por Eyaelkys si no son las que usa en clase.
+ * - "Sal y pimienta" (ceviche) y "Laurel y pimienta" (escabeche) no traían
+ *   cantidad en la foto: se cargaron como "al gusto" (cantidad 0, no
+ *   entran en el costo), igual que otras líneas "al gusto" de tandas
+ *   anteriores.
+ * - El último paso del ceviche mencionaba seguir "el protocolo del centro"
+ *   de la institución donde se tomó la foto — se cambió a una frase
+ *   genérica de manejo higiénico de pescado crudo, porque ese protocolo
+ *   específico no es de la escuela de Eyaelkys.
+ * - "Ralladura de limón" (pie) tampoco traía cantidad: se cargó "al gusto"
+ *   igual que los casos anteriores, enlazada al mismo catálogo de "Limón
+ *   verde" que el jugo.
+ * - "395 g" de leche condensada (pie y mousse) es el tamaño exacto de una
+ *   lata estándar (La Lechera/Nestlé), así que ambas líneas se cargaron
+ *   como "1 Lata" directamente.
+ * - "10 g" de gelatina sin sabor (mousse) se convirtió a cucharaditas
+ *   usando la equivalencia ya guardada en el catálogo (1 sobre ≈ 7 g ≈ 3
+ *   cucharaditas): 10 g ≈ 4.29 cucharaditas.
+ *
+ * Costo de cada línea calculado a mano (no con costoPorUnidadUso() en
+ * vivo, igual que sembrarRecetasReposteria1()/2()): el detalle de cada
+ * conversión está en el nota_compra del ingrediente nuevo o en el
+ * comentario junto a la línea, cuando la unidad de la receta no coincide
+ * con la unidad de uso del catálogo.
+ */
+function sembrarRecetasCevicheEscabecheYLimon(PDO $pdo): array
+{
+    $mensajes = [];
+
+    $pdo->exec("INSERT IGNORE INTO ingredientes_catalogo
+        (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+        VALUES
+        ('Pescado blanco',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Pescado y marisco'),
+         '🐟',
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         1, 220.00,
+         'Filete de mero (pescado blanco confirmado por Eyaelkys). Estimación de mercado para RD, sin fuente puntual verificada en esta investigación — ajusta el precio real desde Ingredientes en cuanto tengas el de tu pescadería/proveedor.'),
+        ('Naranja agria',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Fruta'),
+         '🍊',
+         (SELECT id FROM unidades_medida WHERE nombre='Taza'),
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         0.4, 18.00,
+         'RD\$216.00/docena (Informe de Precios, Ministerio de Agricultura RD, 20 de mayo de 2026, agricultura.gob.do) = RD\$18.00/unidad ≈ 0.4 taza de jugo por naranja (estimación de rendimiento, no del informe)'),
+        ('Ají cubanela',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🌶️',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         7, 75.00,
+         'RD\$75.00/libra (Informe de Precios, Ministerio de Agricultura RD, 20 de mayo de 2026, agricultura.gob.do) ≈ 7 ajíes/libra (≈65 g c/u, estimación de peso)'),
+        ('Cebolla roja',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🧅',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         3, 50.00,
+         'RD\$50.00/libra, cebolla roja criolla (Informe de Precios, Ministerio de Agricultura RD, 20 de mayo de 2026, agricultura.gob.do) ≈ 3 cebollas medianas/libra (estimación de peso)'),
+        ('Cebolla blanca',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🧅',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         3, 50.00,
+         'RD\$50.00/libra, cebolla amarilla/blanca importada (Informe de Precios, Ministerio de Agricultura RD, 20 de mayo de 2026, agricultura.gob.do) ≈ 3 cebollas medianas/libra (estimación de peso)'),
+        ('Pimiento',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🫑',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         3, 55.00,
+         'RD\$55.00/libra, ají morrón/pimiento (Informe de Precios, Ministerio de Agricultura RD, 20 de mayo de 2026, agricultura.gob.do) ≈ 3 pimientos/libra (estimación de peso)'),
+        ('Calabacín',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🥒',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Libra'),
+         2, 45.00,
+         'Estimación de mercado para RD (≈RD\$45.00/libra) — no aparece en los informes de precios agrícolas revisados en esta investigación, ajusta si tienes el precio real. ≈ 2 calabacines medianos/libra (estimación de peso)'),
+        ('Cilantro',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Vegetal'),
+         '🌿',
+         (SELECT id FROM unidades_medida WHERE nombre='Manojo'),
+         (SELECT id FROM unidades_medida WHERE nombre='Manojo'),
+         1, 25.00,
+         'Estimación de mercado para RD (≈RD\$25.00/manojo), sin fuente puntual verificada — ajusta si tienes el precio real'),
+        ('Vinagre',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Condimento y especia'),
+         '🍶',
+         (SELECT id FROM unidades_medida WHERE nombre='Mililitro'),
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         355, 55.00,
+         'Estimación de mercado para RD, botella de 355 ml / 12 oz ≈ RD\$55.00, sin fuente puntual verificada — ajusta si tienes el precio real de tu proveedor'),
+        ('Laurel',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Condimento y especia'),
+         '🍃',
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         15, 70.00,
+         'Estimación de mercado para RD, paquete de hojas secas ≈15 hojas por RD\$70.00, sin fuente puntual verificada — ajusta si tienes el precio real'),
+        ('Galletas',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Repostería'),
+         '🍪',
+         (SELECT id FROM unidades_medida WHERE nombre='Gramo'),
+         (SELECT id FROM unidades_medida WHERE nombre='Paquete'),
+         200, 75.00,
+         'Galletas tipo María, estimación de mercado para RD, paquete de 200 g ≈ RD\$75.00, sin fuente puntual verificada — ajusta si tienes el precio real'),
+        ('Crema de leche',
+         (SELECT id FROM categorias_ingrediente WHERE nombre='Lácteo y huevo'),
+         '🥛',
+         (SELECT id FROM unidades_medida WHERE nombre='Mililitro'),
+         (SELECT id FROM unidades_medida WHERE nombre='Unidad'),
+         225, 110.00,
+         'Crema de leche/media crema — NO es \"Crema para batir\" (esa ya existía en el catálogo y no monta en picos igual; son dos productos distintos a pedido de Eyaelkys). Estimación de mercado para RD, lata de 225 g ≈ RD\$110.00, sin fuente puntual verificada — ajusta si tienes el precio real')");
+
+    $idGuarnicion = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Guarnición');
+    $idPlatoFuerte = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Plato fuerte');
+    $idPostre = idPorNombre($pdo, 'categorias_receta', 'nombre', 'Postre');
+    if (!$idGuarnicion || !$idPlatoFuerte || !$idPostre) {
+        return $mensajes;
+    }
+
+    $u = fn (string $n) => idPorNombre($pdo, 'unidades_medida', 'nombre', $n);
+    $ing = fn (string $n) => idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $n);
+    $accion = fn (string $n) => idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $n);
+
+    $insLinea = $pdo->prepare(
+        'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+         VALUES (?,?,?,?,?,?,?,?,?,?)'
+    );
+    $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+
+    $crearReceta = function (int $categoriaId, string $nombre, ?string $descripcion, int $porcionesBase, string $preparacion, array $lineas) use (
+        $pdo, $insLinea, $insAccion, $u, $ing, $accion, &$mensajes
+    ) {
+        $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+        $yaExiste->execute([$nombre]);
+        if ((int) $yaExiste->fetchColumn() > 0) {
+            return;
+        }
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?,?)');
+        $stmtR->execute([$nombre, $descripcion, $categoriaId, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+            $insLinea->execute([
+                $recetaId,
+                $catNombre ? $ing($catNombre) : null,
+                $nombreLinea,
+                $cantidad,
+                $u($unidadNombre),
+                $costo,
+                $reemplazo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = $accion($accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $mensajes[] = "Receta \"$nombre\" creada ($porcionesBase porciones base, " . count($lineas) . ' ingredientes).';
+    };
+
+    $crearReceta(
+        $idPlatoFuerte,
+        'Ceviche de pescado',
+        'Ceviche de pescado blanco (mero) marinado en cítricos.',
+        6,
+        "Mantener el pescado refrigerado hasta el momento de prepararlo.\n\n" .
+        "Mezclar el pescado en cubos con el jugo de limón, la naranja agria, la cebolla roja, el ají cubanela y el cilantro.\n\n" .
+        "Sazonar con sal y pimienta al gusto, y refrigerar.\n\n" .
+        'Servir frío, manejando el pescado con las medidas de higiene adecuadas para consumo sin cocción térmica.',
+        [
+            ['Pescado blanco', 'Pescado blanco (mero) en cubos', 1, 'Kilogramo', 485.02, ['Cortado en cubos'], false, false, null],
+            // Costo a mano: RD$68.00/libra de Limón verde ÷ 13 cucharadas/libra = 5.23/cucharada × 16 cucharadas/taza.
+            ['Limón verde', 'Jugo de limón', 1, 'Taza', 83.69, [], false, false, null],
+            ['Naranja agria', 'Naranja agria', 0.5, 'Taza', 45.00, [], false, false, null],
+            ['Cebolla roja', 'Cebolla roja', 1, 'Unidad', 16.67, [], false, false, null],
+            ['Ají cubanela', 'Ají cubanela', 1, 'Unidad', 10.71, [], false, false, null],
+            ['Cilantro', 'Cilantro', 0.5, 'Taza', 20.00, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+
+    $crearReceta(
+        $idGuarnicion,
+        'Escabeche de vegetales',
+        'Vegetales mixtos cocidos brevemente y marinados en vinagre, para acompañar.',
+        6,
+        "Cortar los vegetales (zanahoria, cebolla, pimiento y calabacín) en el tamaño deseado.\n\n" .
+        "Hervir el agua junto con el vinagre, el azúcar, la sal y las especias.\n\n" .
+        "Agregar los vegetales y cocinar brevemente.\n\n" .
+        'Dejar enfriar y conservar refrigerado.',
+        [
+            ['Zanahoria', 'Zanahoria', 2, 'Unidad', 4.17, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 16.67, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Calabacín', 'Calabacín', 1, 'Unidad', 22.50, [], false, false, null],
+            // Costo a mano: RD$55.00/botella 355 ml ÷ 355 ml = 0.1549/ml × 236.588 ml/taza.
+            ['Vinagre', 'Vinagre', 1, 'Taza', 36.66, [], false, false, null],
+            ['Agua', 'Agua', 1, 'Taza', 0, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 2, 'Cucharada', 0.97, [], false, false, null],
+            ['Sal', 'Sal', 1, 'Cucharadita', 0.20, [], false, false, null],
+            ['Laurel', 'Laurel al gusto', 0, 'Unidad', 4.67, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPostre,
+        'Pie de limón frío',
+        'Pie frío de base de galleta con relleno de limón, sin hornear.',
+        8,
+        "Formar la base mezclando las galletas trituradas con la mantequilla derretida, y presionarla en el molde.\n\n" .
+        "Mezclar la leche condensada, la crema de leche y el jugo de limón.\n\n" .
+        "Verter la mezcla sobre la base de galleta.\n\n" .
+        'Refrigerar durante 4 horas y decorar con ralladura de limón antes de servir.',
+        [
+            ['Galletas', 'Galletas trituradas', 250, 'Gramo', 0.38, [], false, false, null],
+            // Costo a mano: RD$70.00/taza de Mantequilla ÷ 226 g/taza (ver establecerDensidadIngredientes()).
+            ['Mantequilla', 'Mantequilla derretida', 120, 'Gramo', 0.31, ['Derretido'], false, false, null],
+            // 395 g = 1 lata estándar (La Lechera/Nestlé); 0.5 lata ya costaba 110.00 en "Mousse de chinola".
+            ['Leche condensada', 'Leche condensada', 1, 'Lata', 220.00, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 250, 'Mililitro', 0.49, [], false, false, null],
+            // Costo a mano: mismo cálculo que "Jugo de limón" de arriba, llevado a mililitro (5.23/cda ÷ 14.787 ml/cda).
+            ['Limón verde', 'Jugo de limón', 120, 'Mililitro', 0.35, [], false, false, null],
+            ['Limón verde', 'Ralladura de limón al gusto', 0, 'Unidad', 5.23, ['Rallado'], true, true, null],
+        ]
+    );
+
+    $crearReceta(
+        $idPostre,
+        'Mousse de limón',
+        'Mousse fría de limón, individual, con gelatina sin sabor.',
+        6,
+        "Hidratar la gelatina sin sabor en el agua y dejar reposar unos minutos.\n\n" .
+        "Disolver la gelatina hidratada suavemente, sin dejar hervir.\n\n" .
+        "Mezclar el jugo de limón con la leche condensada.\n\n" .
+        "Incorporar la gelatina disuelta.\n\n" .
+        "Batir la crema para batir a picos suaves e integrarla con movimientos envolventes.\n\n" .
+        'Distribuir en vasitos, porcionar y refrigerar.',
+        [
+            ['Limón verde', 'Jugo de limón', 200, 'Mililitro', 0.35, [], false, false, null],
+            ['Leche condensada', 'Leche condensada', 1, 'Lata', 220.00, [], false, false, null],
+            // Costo a mano: RD$62.80/taza de Crema para batir (ver sembrarRecetasReposteria3()) ÷ 236.588 ml/taza.
+            ['Crema para batir', 'Crema para batir', 300, 'Mililitro', 0.27, ['Batido'], false, false, null],
+            // 10 g ≈ 4.29 cucharaditas, usando la equivalencia ya guardada en el catálogo (1 sobre ≈ 7 g ≈ 3 cucharaditas).
+            ['Gelatina sin sabor', 'Gelatina sin sabor', 4.29, 'Cucharadita', 16.67, [], false, false, null],
+            ['Agua', 'Agua', 50, 'Mililitro', 0, [], false, false, null],
+        ]
+    );
+
+    return $mensajes;
+}
+
+/**
  * Migra los padres/tutores que hoy viven como texto libre en
  * estudiantes.padre_tutor/telefono_padre_tutor a la tabla "padres" +
  * "padre_estudiante" (pedido de Eyaelkys: "Debemos llevar el nombre y el
@@ -2340,6 +2652,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria3($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria4($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetasReposteria5($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasCevicheEscabecheYLimon($pdo));
         $mensajes = array_merge($mensajes, migrarPadresDesdeTextoLibre($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));

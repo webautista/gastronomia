@@ -82,7 +82,12 @@ CREATE TABLE IF NOT EXISTS categorias_receta (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO categorias_receta (nombre, orden) VALUES
-('Plato fuerte',10),('Postre',20),('Aperitivo',30),('Panadería',40),('Bebida',50);
+('Plato fuerte',10),
+-- Acompañantes que no son ni el plato fuerte ni un aperitivo propio (ej.
+-- escabeche de vegetales, puré, ensalada de acompañamiento) — agregada al
+-- sembrar "Escabeche de vegetales" (sección 43), a pedido de Eyaelkys.
+('Guarnición',15),
+('Postre',20),('Aperitivo',30),('Panadería',40),('Bebida',50);
 
 -- Categorías de gasto
 CREATE TABLE IF NOT EXISTS categorias_gasto (
