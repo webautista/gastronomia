@@ -44,7 +44,31 @@ function currentUser(): ?array
         return null;
     }
     $cache = $usuario;
+    // Última conexión: mientras la sesión siga abierta no se vuelve a pasar
+    // por login, así que se refresca aquí (máximo cada 5 minutos por sesión).
+    if (empty($_SESSION['acceso_marca']) || time() - (int) $_SESSION['acceso_marca'] >= 300) {
+        registrarAccesoUsuario((int) $usuario['id']);
+    }
     return $usuario;
+}
+
+/**
+ * Guarda usuarios.ultimo_acceso = ahora (hora de Santo Domingo, la misma
+ * zona que usa PHP para mostrarlo). Si la columna todavía no existe (se
+ * subió el código antes de correr setup.php), no rompe el login: lo ignora
+ * y no vuelve a intentarlo en esta sesión hasta pasados 5 minutos.
+ */
+function registrarAccesoUsuario(int $usuarioId): void
+{
+    $_SESSION['acceso_marca'] = time();
+    try {
+        // "actualizado_en = actualizado_en" evita que esta escritura cambie
+        // la marca de "última edición" de la cuenta.
+        db()->prepare('UPDATE usuarios SET ultimo_acceso = ?, actualizado_en = actualizado_en WHERE id = ?')
+            ->execute([date('Y-m-d H:i:s'), $usuarioId]);
+    } catch (Throwable $e) {
+        // columna aún no creada: se ignora a propósito
+    }
 }
 
 /** Intenta iniciar sesión. Devuelve true/false. */
@@ -58,6 +82,7 @@ function intentarLogin(string $usuario, string $password): bool
     }
     session_regenerate_id(true);
     $_SESSION['user_id'] = (int) $fila['id'];
+    registrarAccesoUsuario((int) $fila['id']);
     return true;
 }
 

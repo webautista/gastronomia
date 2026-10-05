@@ -2460,6 +2460,28 @@ function agregarUsuarioIdAEstudiantes(PDO $pdo): array
 }
 
 /**
+ * Agrega usuarios.ultimo_acceso (DATETIME NULL): la última vez que ese
+ * usuario inició sesión o navegó por el sistema — se muestra en Usuarios y
+ * roles → lista de usuarios, a pedido de Eyaelkys ("necesito saber la
+ * última conexión de los usuarios"). Se llena desde includes/auth.php
+ * (registrarAccesoUsuario(): al iniciar sesión y, mientras navegan, como
+ * máximo una vez cada 5 minutos por sesión). Va aquí y no en el CREATE TABLE
+ * de db/schema.sql porque "usuarios" ya existe en producción. Queda NULL
+ * hasta el primer acceso posterior a esta migración (no hay forma de
+ * reconstruir accesos anteriores), y la lista lo muestra como "Sin registro".
+ */
+function agregarUltimoAccesoAUsuarios(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'usuarios', 'id') || columnaExiste($pdo, 'usuarios', 'ultimo_acceso')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE usuarios ADD COLUMN ultimo_acceso DATETIME NULL');
+    $mensajes[] = 'Se agregó "ultimo_acceso" a la tabla usuarios (última conexión de cada usuario, visible en Usuarios y roles). Se irá llenando a medida que cada quien vuelva a entrar.';
+    return $mensajes;
+}
+
+/**
  * Mueve las facturas de gastos que quedaron guardadas en
  * assets/uploads/facturas/ (dentro del repositorio, así que un despliegue
  * las borra) hacia private/facturas/ (el enlace `private/` en la raíz del
@@ -2657,6 +2679,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarMetodoFondoAPagosEstudiante($pdo));
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
         $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
+        $mensajes = array_merge($mensajes, agregarUltimoAccesoAUsuarios($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosEventos($pdo));

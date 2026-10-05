@@ -35,6 +35,7 @@ if ($invitacion && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             session_regenerate_id(true);
             $_SESSION['user_id'] = $resultado['usuario_id'];
+            registrarAccesoUsuario((int) $resultado['usuario_id']);
             redirect('panel.php');
         }
     }

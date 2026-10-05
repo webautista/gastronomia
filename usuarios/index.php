@@ -60,6 +60,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('index.php');
 }
 
+/**
+ * Texto de "Última conexión" para la lista: [principal, detalle exacto].
+ * NULL = todavía no hay registro (la columna se llena desde que se corrió
+ * setup.php con la migración de ultimo_acceso; accesos anteriores no se
+ * pueden reconstruir). El registro se refresca cada ~5 minutos mientras
+ * navegan, así que "hace N min" es aproximado a ese margen.
+ */
+function textoUltimoAcceso(?string $dt): array
+{
+    if (!$dt) {
+        return ['Sin registro', null];
+    }
+    $ts = strtotime($dt);
+    if (!$ts) {
+        return ['Sin registro', null];
+    }
+    $exacto = date('d/m/Y h:i A', $ts);
+    $seg = max(0, time() - $ts);
+    if ($seg < 600) {
+        $rel = 'Hace unos minutos';
+    } elseif ($seg < 3600) {
+        $rel = 'Hace ' . (int) floor($seg / 60) . ' min';
+    } elseif ($seg < 86400) {
+        $h = (int) floor($seg / 3600);
+        $rel = 'Hace ' . $h . ($h === 1 ? ' hora' : ' horas');
+    } elseif ($seg < 86400 * 30) {
+        $d = (int) floor($seg / 86400);
+        $rel = $d === 1 ? 'Ayer' : 'Hace ' . $d . ' días';
+    } else {
+        $rel = date('d/m/Y', $ts);
+    }
+    return [$rel, $exacto];
+}
+
 $usuarios = db()->query(
     'SELECT u.*, r.nombre AS rol_nombre FROM usuarios u JOIN roles r ON r.id = u.rol_id ORDER BY u.nombre ASC'
 )->fetchAll();
@@ -86,7 +120,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="card">
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Nombre</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Estado</th><th></th></tr></thead>
+    <thead><tr><th>Nombre</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Última conexión</th><th>Estado</th><th></th></tr></thead>
     <tbody>
       <?php foreach ($usuarios as $u): ?>
         <tr>
@@ -94,6 +128,11 @@ require __DIR__ . '/../includes/layout_top.php';
           <td class="cell-muted mono"><?= e($u['usuario']) ?></td>
           <td class="cell-muted"><?= e($u['email'] ?? '—') ?></td>
           <td class="cell-muted"><?= e($u['rol_nombre']) ?></td>
+          <?php [$accesoTxt, $accesoExacto] = textoUltimoAcceso($u['ultimo_acceso'] ?? null); ?>
+          <td class="cell-muted"<?= $accesoExacto ? ' title="' . e($accesoExacto) . '"' : '' ?>>
+            <?= e($accesoTxt) ?>
+            <?php if ($accesoExacto): ?><div style="font-size:.78rem;color:var(--text-tertiary);"><?= e($accesoExacto) ?></div><?php endif; ?>
+          </td>
           <td><span class="chip <?= $u['activo'] ? 'chip-success' : 'chip-muted' ?>"><?= $u['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
           <td class="row-actions">
             <?php if ($puedeEditar): ?>
