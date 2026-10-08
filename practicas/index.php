@@ -39,6 +39,9 @@ $stmt->execute($params);
 $practicas = $stmt->fetchAll();
 
 $puedeVerGastos = can($usuarioActual, 'practicas_gastos', 'ver');
+// Responsable de la compra (sección 45): lo ve quien puede ver la pestaña
+// Estudiantes o la Lista de Compra de la práctica.
+$puedeVerResponsableCompra = can($usuarioActual, 'practicas_estudiantes', 'ver') || can($usuarioActual, 'practicas_lista_compra', 'ver');
 
 // El costo estimado de materiales se calcula aquí igual que en el detalle
 // (misma lista de compra consolidada), para que el listado muestre el
@@ -110,6 +113,9 @@ require __DIR__ . '/../includes/layout_top.php';
                   <span><?= icon('calendar') ?> <?= fmtDate($p['fecha']) ?></span>
                   <?php if ($p['materia']): ?><span><?= icon('book') ?> <?= e($p['materia']) ?></span><?php endif; ?>
                   <?php if ($p['maestro_responsable']): ?><span><?= icon('users') ?> <?= e($p['maestro_responsable']) ?></span><?php endif; ?>
+                  <?php if ($puedeVerResponsableCompra): $respCompra = obtenerResponsableCompra(db(), 'practica', (int) $p['id']); ?>
+                    <span title="Responsable de hacer la compra"><?= icon('basket') ?> Compra: <?= $respCompra ? '<b>' . e($respCompra['nombre']) . '</b>' : 'sin asignar' ?></span>
+                  <?php endif; ?>
                 </div>
               </div>
             </div>

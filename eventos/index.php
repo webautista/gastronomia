@@ -9,6 +9,9 @@ requirePermission($usuarioActual, 'eventos', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'eventos', 'editar');
 $puedeCrear = can($usuarioActual, 'eventos', 'crear');
 $puedeEliminar = can($usuarioActual, 'eventos', 'eliminar');
+// Responsable de la compra (sección 45): lo ve quien puede ver la pestaña
+// Estudiantes o la Lista de Compra del evento.
+$puedeVerResponsableCompra = can($usuarioActual, 'eventos_estudiantes', 'ver') || can($usuarioActual, 'eventos_lista_compra', 'ver');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
     requirePermission($usuarioActual, 'eventos', 'eliminar', $base);
@@ -104,6 +107,9 @@ require __DIR__ . '/../includes/layout_top.php';
                   <span><?= icon('calendar') ?> <?= fmtFechaEvento($ev['fecha'], !empty($ev['fecha_tentativa'])) ?> <?= chipFechaTentativa(!empty($ev['fecha_tentativa'])) ?></span>
                   <span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span>
                   <span><?= icon('portion') ?> <?= (int) $ev['porciones_totales'] ?> porciones</span>
+                  <?php if ($puedeVerResponsableCompra): $respCompra = obtenerResponsableCompra(db(), 'evento', (int) $ev['id']); ?>
+                    <span title="Responsable de hacer la compra"><?= icon('basket') ?> Compra: <?= $respCompra ? '<b>' . e($respCompra['nombre']) . '</b>' : 'sin asignar' ?></span>
+                  <?php endif; ?>
                 </div>
               </div>
             </div>
