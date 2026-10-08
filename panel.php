@@ -26,6 +26,10 @@ if ($stmtEst->fetchColumn()) {
 
 requirePermission($usuarioActual, 'panel', 'ver', $base);
 $puedeCrearEvento = can($usuarioActual, 'eventos', 'crear');
+// Responsable de la compra (sección 45) en las tarjetas: lo ve quien puede
+// ver la pestaña Estudiantes o la Lista de Compra del evento / la práctica.
+$puedeVerRespCompraEventos = can($usuarioActual, 'eventos_estudiantes', 'ver') || can($usuarioActual, 'eventos_lista_compra', 'ver');
+$puedeVerRespCompraPracticas = can($usuarioActual, 'practicas_estudiantes', 'ver') || can($usuarioActual, 'practicas_lista_compra', 'ver');
 
 $stmt = db()->query(
     'SELECT ev.*, es.nombre AS estado,
@@ -172,6 +176,9 @@ require __DIR__ . '/includes/layout_top.php';
                 <div class="dash-meta">
                   <span><?= icon('calendar') ?> <?= fmtFechaEvento($ev['fecha'], !empty($ev['fecha_tentativa'])) ?> <?= chipFechaTentativa(!empty($ev['fecha_tentativa'])) ?></span>
                   <?php if ($ev['lugar']): ?><span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span><?php endif; ?>
+                  <?php if ($puedeVerRespCompraEventos): $respCompra = obtenerResponsableCompra(db(), 'evento', (int) $ev['id']); ?>
+                    <span title="Responsable de hacer la compra"><?= icon('basket') ?> Compra: <?= $respCompra ? '<b>' . e($respCompra['nombre']) . '</b>' : 'sin asignar' ?></span>
+                  <?php endif; ?>
                 </div>
               </div>
             </div>
@@ -223,6 +230,9 @@ require __DIR__ . '/includes/layout_top.php';
                 <div class="dash-meta">
                   <span><?= icon('calendar') ?> <?= fmtDate($p['fecha']) ?></span>
                   <?php if ($p['materia']): ?><span><?= icon('book') ?> <?= e($p['materia']) ?></span><?php endif; ?>
+                  <?php if ($puedeVerRespCompraPracticas): $respCompra = obtenerResponsableCompra(db(), 'practica', (int) $p['id']); ?>
+                    <span title="Responsable de hacer la compra"><?= icon('basket') ?> Compra: <?= $respCompra ? '<b>' . e($respCompra['nombre']) . '</b>' : 'sin asignar' ?></span>
+                  <?php endif; ?>
                 </div>
               </div>
             </div>
