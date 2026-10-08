@@ -105,7 +105,7 @@ require __DIR__ . '/includes/layout_top.php';
             <div class="part-icon <?= e($part['tipo']) ?>"><?= $part['tipo'] === 'evento' ? icon('calendar') : icon('whisk') ?></div>
             <div>
               <div class="part-title"><?= e($part['nombre']) ?></div>
-              <div class="part-date"><?= fmtDate($part['fecha']) ?></div>
+              <div class="part-date"><?= fmtFechaEvento($part['fecha'], !empty($part['fecha_tentativa'])) ?></div>
             </div>
             <div class="part-progress">
               <div class="meter-row" style="margin-bottom:0;"><span>Pagado</span><span class="mono"><?= money($part['monto_pagado']) ?> / <?= money($part['cuota_confirmada']) ?></span></div>
