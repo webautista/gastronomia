@@ -51,6 +51,10 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $estudiantes = $stmt->fetchAll();
 
+// Estado de acceso de cada estudiante (con acceso / invitación vigente /
+// vencida / sin acceso), igual que en la lista de Padres.
+$estadosAcceso = estadoAccesoPersonas(db(), 'estudiante', $estudiantes);
+
 $pageTitle = 'Estudiantes';
 $activeNav = 'estudiantes';
 require __DIR__ . '/../includes/layout_top.php';
@@ -83,7 +87,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <?php foreach ($estudiantes as $st): ?>
       <div class="dash-card">
         <div class="dash-card-head is-sage">
-          <div class="dash-head-top">
+          <div class="dash-head-top dash-head-wrap">
             <div class="dash-head-id">
               <div class="child-avatar" style="width:40px;height:40px;font-size:.95rem;"><?= e(iniciales($st['nombre'])) ?></div>
               <div>
@@ -95,6 +99,7 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <div class="dash-chips">
               <span class="chip chip-neutral"><?= (int) $st['num_eventos'] ?> evento<?= $st['num_eventos'] == 1 ? '' : 's' ?></span>
+              <?= chipsEstadoAcceso($estadosAcceso[(int) $st['id']]) ?>
             </div>
           </div>
         </div>
@@ -112,6 +117,10 @@ require __DIR__ . '/../includes/layout_top.php';
               <?php endif; ?>
             </span>
           </div>
+          <?php $detalleAcceso = detalleEstadoAcceso($estadosAcceso[(int) $st['id']]); ?>
+          <?php if ($detalleAcceso !== ''): ?>
+            <div class="person-meta"><span><?= icon('clock') ?> <?= e($detalleAcceso) ?></span></div>
+          <?php endif; ?>
           <div class="dash-footer">
             <?php if ($puedeVerFondo): ?>
               <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $st['id'] ?>">Ver ficha</a>

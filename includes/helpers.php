@@ -2086,6 +2086,245 @@ function consumirInvitacionRegistro(PDO $pdo, array $invitacion, string $usuario
     return ['ok' => true, 'usuario_id' => $usuarioId];
 }
 
+/* ------------------------------------------------------------------
+ * Contraseñas (sección 47): cambiar la propia y restablecer con enlace.
+ *
+ * Restablecer: un administrador/encargado genera un enlace de UN solo uso
+ * (tabla restablecer_password, mismo estilo que las invitaciones) y se lo
+ * pasa a la persona por WhatsApp; ella elige su contraseña nueva en
+ * restablecer.php sin que nadie la vea. Generar uno nuevo reemplaza al
+ * anterior sin usar. Como las invitaciones, las fechas se escriben y se
+ * comparan con la hora de PHP (Santo Domingo), no con NOW() de MySQL.
+ * ---------------------------------------------------------------- */
+
+/** Crea el enlace de restablecimiento para un usuario (borra el anterior sin usar). Devuelve el token. */
+function crearRestablecimiento(PDO $pdo, int $usuarioId, int $creadoPor, int $horasValidez = 48): string
+{
+    $pdo->prepare('DELETE FROM restablecer_password WHERE usuario_id = ? AND usado_en IS NULL')->execute([$usuarioId]);
+    $token = bin2hex(random_bytes(32));
+    $pdo->prepare('INSERT INTO restablecer_password (usuario_id, token, creado_en, expira_en, creado_por) VALUES (?,?,?,?,?)')
+        ->execute([$usuarioId, $token, date('Y-m-d H:i:s'), date('Y-m-d H:i:s', time() + $horasValidez * 3600), $creadoPor]);
+    return $token;
+}
+
+/** URL absoluta y compartible del enlace de restablecimiento (restablecer.php vive en la raíz; quien lo genera, una carpeta adentro). */
+function urlRestablecimiento(string $token): string
+{
+    $protocolo = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $raiz = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/\\');
+    return $protocolo . '://' . ($_SERVER['HTTP_HOST'] ?? '') . $raiz . '/restablecer.php?token=' . urlencode($token);
+}
+
+/**
+ * Último enlace de restablecimiento SIN USAR de un usuario (vigente o ya
+ * vencido), con 'vigente' => bool calculado con la hora de PHP; null si no
+ * hay ninguno. Tolera que la tabla todavía no exista (antes de setup.php).
+ */
+function restablecimientoPendiente(PDO $pdo, int $usuarioId): ?array
+{
+    try {
+        $stmt = $pdo->prepare('SELECT * FROM restablecer_password WHERE usuario_id = ? AND usado_en IS NULL ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$usuarioId]);
+        $fila = $stmt->fetch();
+    } catch (PDOException $e) {
+        return null;
+    }
+    if (!$fila) {
+        return null;
+    }
+    $fila['vigente'] = strtotime($fila['expira_en']) > time();
+    return $fila;
+}
+
+/** Enlace de restablecimiento válido (sin usar, no vencido, usuario activo) para $token, con el usuario resuelto; null si no sirve. */
+function obtenerRestablecimientoValido(PDO $pdo, string $token): ?array
+{
+    if ($token === '') {
+        return null;
+    }
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT r.*, u.nombre AS usuario_nombre, u.usuario AS usuario_login
+             FROM restablecer_password r JOIN usuarios u ON u.id = r.usuario_id
+             WHERE r.token = ? AND r.usado_en IS NULL AND u.activo = 1'
+        );
+        $stmt->execute([$token]);
+        $fila = $stmt->fetch();
+    } catch (PDOException $e) {
+        return null;
+    }
+    if (!$fila || strtotime($fila['expira_en']) <= time()) {
+        return null;
+    }
+    return $fila;
+}
+
+/** Valida una contraseña nueva; devuelve la lista de errores (vacía si está bien). */
+function validarPasswordNueva(string $password, string $repetida): array
+{
+    $errores = [];
+    if (strlen($password) < 6) {
+        $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
+    }
+    if ($password !== $repetida) {
+        $errores[] = 'Las contraseñas no coinciden.';
+    }
+    return $errores;
+}
+
+/** Usa el enlace: guarda la contraseña nueva y lo marca como usado (transacción). ['ok'=>bool,'errores'=>[...]]. */
+function consumirRestablecimiento(PDO $pdo, array $restablecimiento, string $password, string $repetida): array
+{
+    $errores = validarPasswordNueva($password, $repetida);
+    if ($errores) {
+        return ['ok' => false, 'errores' => $errores];
+    }
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare('SELECT usado_en FROM restablecer_password WHERE id = ? FOR UPDATE');
+        $stmt->execute([$restablecimiento['id']]);
+        if ($stmt->fetchColumn() !== null) {
+            $pdo->rollBack();
+            return ['ok' => false, 'errores' => ['Este enlace ya se usó. Pide uno nuevo.']];
+        }
+        $pdo->prepare('UPDATE usuarios SET password_hash = ? WHERE id = ?')
+            ->execute([password_hash($password, PASSWORD_DEFAULT), $restablecimiento['usuario_id']]);
+        $pdo->prepare('UPDATE restablecer_password SET usado_en = ? WHERE id = ?')
+            ->execute([date('Y-m-d H:i:s'), $restablecimiento['id']]);
+        $pdo->commit();
+    } catch (Throwable $ex) {
+        $pdo->rollBack();
+        throw $ex;
+    }
+    return ['ok' => true, 'errores' => []];
+}
+
+/** Cambio de contraseña propio: exige la actual. ['ok'=>bool,'errores'=>[...]]; invalida enlaces de restablecimiento pendientes. */
+function cambiarPasswordPropia(PDO $pdo, int $usuarioId, string $actual, string $nueva, string $repetida): array
+{
+    $stmt = $pdo->prepare('SELECT password_hash FROM usuarios WHERE id = ?');
+    $stmt->execute([$usuarioId]);
+    $hash = $stmt->fetchColumn();
+    if (!$hash || !password_verify($actual, $hash)) {
+        return ['ok' => false, 'errores' => ['La contraseña actual no es correcta.']];
+    }
+    $errores = validarPasswordNueva($nueva, $repetida);
+    if ($nueva === $actual && !$errores) {
+        $errores[] = 'La contraseña nueva debe ser distinta de la actual.';
+    }
+    if ($errores) {
+        return ['ok' => false, 'errores' => $errores];
+    }
+    $pdo->prepare('UPDATE usuarios SET password_hash = ? WHERE id = ?')->execute([password_hash($nueva, PASSWORD_DEFAULT), $usuarioId]);
+    try {
+        $pdo->prepare('DELETE FROM restablecer_password WHERE usuario_id = ? AND usado_en IS NULL')->execute([$usuarioId]);
+    } catch (PDOException $e) {
+        // tabla aún no creada: nada que invalidar
+    }
+    return ['ok' => true, 'errores' => []];
+}
+
+/** "en 2 días" / "en 5 h" / "en 20 min" hasta $dt (hora de PHP); "ya venció" si pasó. */
+function tiempoHasta(string $dt): string
+{
+    $seg = strtotime($dt) - time();
+    if ($seg <= 0) {
+        return 'ya venció';
+    }
+    if ($seg < 3600) {
+        return 'en ' . max(1, (int) floor($seg / 60)) . ' min';
+    }
+    if ($seg < 86400) {
+        return 'en ' . (int) floor($seg / 3600) . ' h';
+    }
+    $d = (int) floor($seg / 86400);
+    return 'en ' . $d . ($d === 1 ? ' día' : ' días');
+}
+
+/**
+ * Estado de acceso de una lista de padres o estudiantes (sección 47), para
+ * ver de un vistazo si ya se les contactó y están a la espera. $filas: filas
+ * con al menos 'id' y 'usuario_id'. Por id devuelve:
+ *   estado          'con_acceso' | 'vigente' | 'vencida' | 'sin_invitacion'
+ *   invitacion      última invitación sin usar (o null)
+ *   restablecimiento último enlace de restablecimiento sin usar de su
+ *                    usuario, con 'vigente' (o null; solo si ya tiene cuenta)
+ * "Vigente/vencida" se decide con la hora de PHP. Ojo: una invitación
+ * vigente significa "enlace generado y sin usar" — el sistema no sabe si ya
+ * se lo enviaron por WhatsApp.
+ */
+function estadoAccesoPersonas(PDO $pdo, string $entidadTipo, array $filas): array
+{
+    $res = [];
+    $sinCuenta = [];
+    $conCuenta = [];
+    foreach ($filas as $f) {
+        $id = (int) $f['id'];
+        $res[$id] = ['estado' => !empty($f['usuario_id']) ? 'con_acceso' : 'sin_invitacion', 'invitacion' => null, 'restablecimiento' => null];
+        if (empty($f['usuario_id'])) {
+            $sinCuenta[] = $id;
+        } else {
+            $conCuenta[$id] = (int) $f['usuario_id'];
+        }
+    }
+    if ($sinCuenta) {
+        $in = implode(',', array_fill(0, count($sinCuenta), '?'));
+        $stmt = $pdo->prepare("SELECT * FROM invitaciones WHERE entidad_tipo = ? AND entidad_id IN ($in) AND usado_en IS NULL ORDER BY id ASC");
+        $stmt->execute(array_merge([$entidadTipo], $sinCuenta));
+        foreach ($stmt->fetchAll() as $inv) {
+            $eid = (int) $inv['entidad_id'];
+            $res[$eid]['invitacion'] = $inv;
+            $res[$eid]['estado'] = strtotime($inv['expira_en']) > time() ? 'vigente' : 'vencida';
+        }
+    }
+    if ($conCuenta) {
+        foreach ($conCuenta as $eid => $uid) {
+            $res[$eid]['restablecimiento'] = restablecimientoPendiente($pdo, $uid);
+        }
+    }
+    return $res;
+}
+
+/** Chips (HTML) del estado de acceso devuelto por estadoAccesoPersonas(). */
+function chipsEstadoAcceso(array $est): string
+{
+    switch ($est['estado']) {
+        case 'con_acceso':
+            $html = '<span class="chip chip-success">' . icon('check') . ' Con acceso</span>';
+            $r = $est['restablecimiento'] ?? null;
+            if ($r && $r['vigente']) {
+                $html .= '<span class="chip chip-warning" title="Se generó un enlace para restablecer su contraseña y todavía no lo usa (vence ' . e(tiempoHasta($r['expira_en'])) . ')">' . icon('clock') . ' Restablecimiento pendiente</span>';
+            } elseif ($r) {
+                $html .= '<span class="chip chip-muted" title="El enlace para restablecer su contraseña venció sin usarse">Enlace de restablecimiento vencido</span>';
+            }
+            return $html;
+        case 'vigente':
+            return '<span class="chip chip-warning" title="Enlace de invitación generado y sin usar (vence ' . e(tiempoHasta($est['invitacion']['expira_en'])) . ')">' . icon('clock') . ' Invitación vigente</span>';
+        case 'vencida':
+            return '<span class="chip chip-danger" title="El enlace de invitación venció sin usarse: genera uno nuevo">Invitación vencida</span>';
+        default:
+            return '<span class="chip chip-muted">Sin acceso</span>';
+    }
+}
+
+/** Línea de texto con el detalle del estado de acceso ('' si no hay nada que aclarar). */
+function detalleEstadoAcceso(array $est): string
+{
+    if (in_array($est['estado'], ['vigente', 'vencida'], true) && $est['invitacion']) {
+        $inv = $est['invitacion'];
+        return $est['estado'] === 'vigente'
+            ? 'Invitación generada el ' . fmtDate($inv['creado_en']) . ' · vence el ' . fmtDate($inv['expira_en']) . ' (' . tiempoHasta($inv['expira_en']) . ')'
+            : 'Invitación generada el ' . fmtDate($inv['creado_en']) . ' · venció el ' . fmtDate($inv['expira_en']);
+    }
+    $r = $est['restablecimiento'] ?? null;
+    if ($est['estado'] === 'con_acceso' && $r) {
+        return $r['vigente']
+            ? 'Enlace de restablecimiento generado el ' . fmtDate($r['creado_en']) . ' · vence ' . tiempoHasta($r['expira_en'])
+            : 'Enlace de restablecimiento generado el ' . fmtDate($r['creado_en']) . ' · venció el ' . fmtDate($r['expira_en']);
+    }
+    return '';
+}
+
 /** Iniciales (hasta 2 letras) de un nombre completo, para el avatar circular de panel_padre.php/panel_estudiante.php. */
 function iniciales(string $nombre): string
 {

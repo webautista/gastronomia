@@ -61,6 +61,10 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $padres = $stmt->fetchAll();
 
+// Estado de acceso de cada padre/tutor: con acceso, invitación vigente (ya se
+// le generó el enlace y se espera que lo use), invitación vencida o sin acceso.
+$estadosAcceso = estadoAccesoPersonas(db(), 'padre', $padres);
+
 $pageTitle = 'Padres';
 $activeNav = 'padres';
 require __DIR__ . '/../includes/layout_top.php';
@@ -93,7 +97,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <?php foreach ($padres as $pa): ?>
       <div class="dash-card">
         <div class="dash-card-head is-wine-sage">
-          <div class="dash-head-top">
+          <div class="dash-head-top dash-head-wrap">
             <div class="dash-head-id">
               <div class="child-avatar" style="width:40px;height:40px;font-size:.95rem;"><?= e(iniciales($pa['nombre'])) ?></div>
               <div>
@@ -104,11 +108,7 @@ require __DIR__ . '/../includes/layout_top.php';
               </div>
             </div>
             <div class="dash-chips">
-              <?php if ($pa['usuario_id']): ?>
-                <span class="chip chip-success"><?= icon('check') ?> Con acceso</span>
-              <?php else: ?>
-                <span class="chip chip-muted">Sin acceso</span>
-              <?php endif; ?>
+              <?= chipsEstadoAcceso($estadosAcceso[(int) $pa['id']]) ?>
             </div>
           </div>
         </div>
@@ -117,6 +117,10 @@ require __DIR__ . '/../includes/layout_top.php';
             <span><?= icon('phone') ?> <?= $pa['telefono'] ? e($pa['telefono']) : 'Sin teléfono' ?></span>
             <span><?= icon('mail') ?> <?= $pa['email'] ? e($pa['email']) : 'Sin email' ?></span>
           </div>
+          <?php $detalleAcceso = detalleEstadoAcceso($estadosAcceso[(int) $pa['id']]); ?>
+          <?php if ($detalleAcceso !== ''): ?>
+            <div class="person-meta"><span><?= icon('clock') ?> <?= e($detalleAcceso) ?></span></div>
+          <?php endif; ?>
           <div class="dash-footer">
             <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $pa['id'] ?>">Ver detalle</a>
             <div class="row-actions">

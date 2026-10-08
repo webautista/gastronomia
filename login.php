@@ -10,6 +10,8 @@ if (currentUser()) {
 
 $error = null;
 $usuarioForm = '';
+// Mensaje de éxito tras restablecer la contraseña (restablecer.php).
+$aviso = flashGet();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
@@ -68,6 +70,10 @@ $cssVersion = @filemtime(__DIR__ . '/assets/css/app.css') ?: '1';
       <p>Inicia sesión para continuar</p>
     </div>
 
+    <?php if ($aviso): ?>
+      <div class="alert alert-<?= $aviso['tipo'] === 'error' ? 'error' : 'success' ?>" style="margin-bottom:16px;"><?= e($aviso['mensaje']) ?></div>
+    <?php endif; ?>
+
     <?php if ($error): ?>
       <div class="alert alert-error" style="margin-bottom:16px;"><?= e($error) ?></div>
     <?php endif; ?>
@@ -85,7 +91,8 @@ $cssVersion = @filemtime(__DIR__ . '/assets/css/app.css') ?: '1';
       <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;margin-top:6px;">Iniciar sesión</button>
     </form>
 
-    <a class="login-back" href="./index.php">← Volver al inicio</a>
+    <p class="login-back" style="margin-top:16px;">¿Olvidaste tu contraseña? Pide al taller un enlace para restablecerla.</p>
+    <a class="login-back" href="./index.php" style="margin-top:8px;">← Volver al inicio</a>
   </div>
 </body>
 </html>

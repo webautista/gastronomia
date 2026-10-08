@@ -87,7 +87,10 @@ $cssVersion = @filemtime(__DIR__ . '/../assets/css/app.css') ?: '1';
         <div class="user-foot-name"><?= e($usuarioActual['nombre'] ?? '') ?></div>
         <div class="user-foot-rol"><?= e($usuarioActual['rol_nombre'] ?? '') ?></div>
       </div>
-      <a class="icon-btn" href="<?= e($base) ?>/logout.php" title="Cerrar sesión"><?= icon('logout') ?></a>
+      <span class="user-foot-actions">
+        <a class="icon-btn icon-btn-neutral" href="<?= e($base) ?>/cuenta.php" title="Cambiar mi contraseña"><?= icon('lock') ?></a>
+        <a class="icon-btn" href="<?= e($base) ?>/logout.php" title="Cerrar sesión"><?= icon('logout') ?></a>
+      </span>
     </div>
   </aside>
 

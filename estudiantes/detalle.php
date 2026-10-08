@@ -86,6 +86,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         redirect('detalle.php?id=' . $id);
+    } elseif ($accion === 'generar_restablecimiento') {
+        // Enlace para que el estudiante (que ya tiene cuenta) elija una
+        // contraseña nueva sin que nadie la vea — ver restablecer.php.
+        requirePermission($usuarioActual, 'estudiantes', 'editar', $base);
+        $usuarioDeEst = false;
+        if (!empty($estudiante['usuario_id'])) {
+            $stmt = db()->prepare('SELECT activo FROM usuarios WHERE id = ?');
+            $stmt->execute([(int) $estudiante['usuario_id']]);
+            $usuarioDeEst = $stmt->fetch();
+        }
+        if (!$usuarioDeEst) {
+            flash('Este estudiante todavía no tiene cuenta de acceso: genera primero una invitación.', 'error');
+        } elseif (!$usuarioDeEst['activo']) {
+            flash('Su usuario está inactivo: actívalo primero desde Usuarios y roles.', 'error');
+        } else {
+            try {
+                crearRestablecimiento(db(), (int) $estudiante['usuario_id'], (int) $usuarioActual['id']);
+                flash('Enlace de restablecimiento generado. Cópialo y compártelo con el estudiante.');
+            } catch (PDOException $ex) {
+                flash('No se pudo generar el enlace: falta ejecutar setup.php una vez para crear la tabla de restablecimientos.', 'error');
+            }
+        }
+        redirect('detalle.php?id=' . $id);
     } elseif ($accion === 'generar_invitacion') {
         requirePermission($usuarioActual, 'estudiantes', 'editar', $base);
         if ($estudiante['usuario_id']) {
@@ -101,14 +124,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $saldoFondo = saldoFondoEstudiante(db(), $id);
 $historial = historialFondoEstudiante(db(), $id);
 
-$invitacionActiva = null;
-if (!$estudiante['usuario_id']) {
-    $stmt = db()->prepare(
-        "SELECT * FROM invitaciones WHERE entidad_tipo = 'estudiante' AND entidad_id = ? AND usado_en IS NULL AND expira_en > NOW()
-         ORDER BY id DESC LIMIT 1"
-    );
-    $stmt->execute([$id]);
-    $invitacionActiva = $stmt->fetch() ?: null;
+// Estado de la cuenta con hora de PHP (igual que las listas): vigente / vencida / sin invitación.
+$estadoAcceso = estadoAccesoPersonas(db(), 'estudiante', [$estudiante])[$id];
+$invitacionActiva = $estadoAcceso['estado'] === 'vigente' ? $estadoAcceso['invitacion'] : null;
+$restPend = !empty($estudiante['usuario_id']) ? $estadoAcceso['restablecimiento'] : null;
+$usuarioVinculado = null;
+if (!empty($estudiante['usuario_id'])) {
+    $stmt = db()->prepare('SELECT usuario, activo FROM usuarios WHERE id = ?');
+    $stmt->execute([(int) $estudiante['usuario_id']]);
+    $usuarioVinculado = $stmt->fetch() ?: null;
 }
 
 $pageTitle = $estudiante['nombre'];
@@ -131,9 +155,45 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="card card-pad" style="margin-bottom:16px;">
   <h2 class="section-title" style="margin-top:0;">Cuenta de acceso</h2>
   <?php if (!empty($estudiante['usuario_id'])): ?>
-    <p><span class="chip chip-success"><?= icon('check') ?> Con acceso</span></p>
+    <p>
+      <span class="chip chip-success"><?= icon('check') ?> Con acceso</span>
+      <?php if ($usuarioVinculado): ?>&nbsp; Usuario: <b class="mono"><?= e($usuarioVinculado['usuario']) ?></b><?php endif; ?>
+      <?php if ($usuarioVinculado && !$usuarioVinculado['activo']): ?> <span class="chip chip-muted">Inactivo</span><?php endif; ?>
+    </p>
+
+    <?php if ($restPend && $restPend['vigente']): ?>
+      <div class="field" style="margin-top:10px;max-width:520px;">
+        <label>Enlace para restablecer la contraseña (vence <?= e(tiempoHasta($restPend['expira_en'])) ?> · el <?= fmtDate($restPend['expira_en']) ?>)</label>
+        <input type="text" class="mono" readonly onclick="this.select()" value="<?= e(urlRestablecimiento($restPend['token'])) ?>">
+        <small class="cell-muted">Cópialo y envíalo por WhatsApp, correo, etc. Es de un solo uso: la persona elige su contraseña nueva y nadie más la ve.</small>
+      </div>
+    <?php elseif ($restPend): ?>
+      <p class="cell-muted" style="margin-top:8px;">El último enlace de restablecimiento (generado el <?= fmtDate($restPend['creado_en']) ?>) venció sin usarse.</p>
+    <?php endif; ?>
+
+    <?php if ($puedeGestionarCuenta && $usuarioVinculado && $usuarioVinculado['activo']): ?>
+      <form method="post" style="margin-top:10px;">
+        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+        <input type="hidden" name="accion" value="generar_restablecimiento">
+        <button class="btn btn-secondary" type="submit">
+          <?= icon('lock') ?> <?= $restPend && $restPend['vigente'] ? 'Generar un enlace nuevo de restablecimiento' : 'Generar enlace para restablecer contraseña' ?>
+        </button>
+      </form>
+    <?php endif; ?>
   <?php else: ?>
     <p class="cell-muted">Todavía no tiene cuenta de acceso al sistema.</p>
+
+    <?php if ($estadoAcceso['estado'] === 'vencida'): ?>
+      <p style="margin-top:8px;">
+        <span class="chip chip-danger">Invitación vencida</span>
+        <span class="cell-muted"><?= e(detalleEstadoAcceso($estadoAcceso)) ?>. Genera un enlace nuevo.</span>
+      </p>
+    <?php elseif ($estadoAcceso['estado'] === 'vigente'): ?>
+      <p style="margin-top:8px;">
+        <span class="chip chip-warning"><?= icon('clock') ?> Invitación vigente</span>
+        <span class="cell-muted"><?= e(detalleEstadoAcceso($estadoAcceso)) ?>. Si ya la contactaste, está a la espera de que la use.</span>
+      </p>
+    <?php endif; ?>
 
     <?php if ($invitacionActiva): ?>
       <div class="field" style="margin-top:10px;max-width:520px;">

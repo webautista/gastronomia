@@ -71,6 +71,8 @@ button{font-family:inherit;}
 .nav-item.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600;}
 .sidebar-foot{padding:16px 22px;border-top:1px solid var(--border);font-size:.72rem;color:var(--text-tertiary);}
 .user-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.user-foot-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.icon-btn.icon-btn-neutral:hover{background:var(--accent-soft);color:var(--accent);border-color:transparent;}
 .user-foot-name{font-size:.84rem;font-weight:600;color:var(--text);}
 .user-foot-rol{font-size:.72rem;color:var(--text-tertiary);}
 .overlay{position:fixed;inset:0;background:rgba(15,20,15,.4);z-index:50;display:none;}
@@ -433,6 +435,9 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .dash-meta span{display:inline-flex;align-items:center;gap:4px;}
 .dash-meta svg{width:12px;height:12px;}
 .dash-chips{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
+/* Tarjetas de Padres/Estudiantes: los chips de estado de acceso pueden ser anchos ("Restablecimiento pendiente"), así que van en fila debajo del nombre en vez de aplastarlo. */
+.dash-head-wrap{flex-wrap:wrap;}
+.dash-head-wrap .dash-chips{flex-direction:row;flex-wrap:wrap;align-items:flex-start;flex-shrink:1;}
 .dash-chips .chip-muted{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.5);color:#fff;}
 
 .dash-body{padding:16px 20px 18px;display:flex;flex-direction:column;gap:14px;flex:1;}

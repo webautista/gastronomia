@@ -693,6 +693,24 @@ CREATE TABLE IF NOT EXISTS invitaciones (
     CONSTRAINT fk_invitaciones_usuario FOREIGN KEY (creado_por) REFERENCES usuarios(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Enlaces para restablecer la contraseña de un usuario (sección 47): un
+-- administrador/encargado genera el enlace y se lo pasa a la persona, que
+-- elige su contraseña nueva en restablecer.php. De un solo uso y con
+-- vencimiento, igual que las invitaciones; se borran junto con el usuario.
+CREATE TABLE IF NOT EXISTS restablecer_password (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    usuario_id INT UNSIGNED NOT NULL,
+    token VARCHAR(64) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expira_en DATETIME NOT NULL,
+    usado_en DATETIME NULL,
+    creado_por INT UNSIGNED NULL,
+    UNIQUE KEY uq_restablecer_token (token),
+    INDEX idx_restablecer_usuario (usuario_id),
+    CONSTRAINT fk_restablecer_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+    CONSTRAINT fk_restablecer_creado_por FOREIGN KEY (creado_por) REFERENCES usuarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------------
 -- Recetas (catálogo maestro)
 -- ---------------------------------------------------------------------
