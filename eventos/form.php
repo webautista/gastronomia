@@ -20,7 +20,7 @@ $estadoPorDefecto = $estadoPorDefecto ?? ($estados[0]['id'] ?? null);
 
 $evento = [
     'nombre' => '', 'fecha' => date('Y-m-d'), 'lugar' => '', 'banner' => null,
-    'estado_id' => $estadoPorDefecto, 'cuota_publica' => 0,
+    'estado_id' => $estadoPorDefecto, 'cuota_publica' => 0, 'fecha_tentativa' => 0,
 ];
 $errores = [];
 
@@ -42,12 +42,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $evento['lugar']       = trim($_POST['lugar'] ?? '');
     $evento['estado_id']   = intOrNull($_POST['estado_id'] ?? null);
     $evento['cuota_publica'] = !empty($_POST['cuota_publica']) ? 1 : 0;
+    $evento['fecha_tentativa'] = !empty($_POST['fecha_tentativa']) ? 1 : 0;
 
     if ($evento['nombre'] === '') {
         $errores[] = 'El nombre del evento es obligatorio.';
     }
     if (!$evento['fecha'] || !strtotime($evento['fecha'])) {
         $errores[] = 'La fecha no es válida.';
+    } elseif ($evento['fecha_tentativa']) {
+        // Fecha tentativa: solo importa el mes, así que se guarda el último
+        // día de ese mes — el evento sigue contando como "próximo" durante
+        // todo el mes y se ordena después de los de fecha exacta del mismo
+        // mes. (Si luego se desmarca "tentativa", hay que poner el día real.)
+        $evento['fecha'] = date('Y-m-t', strtotime($evento['fecha']));
     }
     if (!in_array($evento['estado_id'], array_column($estados, 'id'), true)) {
         $errores[] = 'Estado no válido.';
@@ -108,13 +115,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$errores) {
         if ($id) {
-            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, lugar=?, banner=?, estado_id=?, cuota_publica=? WHERE id=?');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica'], $id]);
+            $stmt = db()->prepare('UPDATE eventos SET nombre=?, fecha=?, fecha_tentativa=?, lugar=?, banner=?, estado_id=?, cuota_publica=? WHERE id=?');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['fecha_tentativa'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica'], $id]);
             flash('Evento actualizado.');
             redirect('detalle.php?id=' . $id);
         } else {
-            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, lugar, banner, estado_id, cuota_publica) VALUES (?,?,?,?,?,?)');
-            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica']]);
+            $stmt = db()->prepare('INSERT INTO eventos (nombre, fecha, fecha_tentativa, lugar, banner, estado_id, cuota_publica) VALUES (?,?,?,?,?,?,?)');
+            $stmt->execute([$evento['nombre'], $evento['fecha'], $evento['fecha_tentativa'], $evento['lugar'], $bannerFinal, $evento['estado_id'], $evento['cuota_publica']]);
             $nuevoId = (int) db()->lastInsertId();
             flash('Evento creado.');
             redirect('detalle.php?id=' . $nuevoId);
@@ -151,6 +158,23 @@ require __DIR__ . '/../includes/layout_top.php';
       <div class="field">
         <label for="lugar">Lugar</label>
         <input type="text" id="lugar" name="lugar" placeholder="Ej. Salón principal" value="<?= e($evento['lugar']) ?>">
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="toggle-card">
+        <div class="toggle-card-text">
+          <span class="toggle-card-icon"><?= icon('calendar') ?></span>
+          <div>
+            <div class="toggle-card-title">Fecha tentativa</div>
+            <div class="toggle-card-desc">Si todavía no está definido el día, actívalo: en todo el sistema (y en la Home) solo se mostrará el mes y el año del evento, con la etiqueta "Tentativa". Elige cualquier día de ese mes en la fecha de arriba.</div>
+          </div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="fecha_tentativa" name="fecha_tentativa" value="1" <?= !empty($evento['fecha_tentativa']) ? 'checked' : '' ?>>
+          <span class="switch-track"></span>
+          <span class="switch-thumb"></span>
+        </label>
       </div>
     </div>
 

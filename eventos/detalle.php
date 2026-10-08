@@ -95,6 +95,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
         if ($estudianteId) {
             $pdo->prepare('DELETE FROM evento_estudiante WHERE evento_id=? AND estudiante_id=?')->execute([$id, $estudianteId]);
+            // El responsable de la compra siempre es alguien de los asignados.
+            if (liberarResponsableCompraSiEs($pdo, 'evento', $id, $estudianteId)) {
+                flash('Quitaste al responsable de la compra de este evento: asigna a otro estudiante.', 'error');
+            }
+        }
+    } elseif ($accion === 'asignar_responsable_compra') {
+        // Quién va a hacer la compra (sección 45): se cambia desde la barra
+        // de arriba; mismo permiso que gestionar la Lista de Compra.
+        requirePermission($usuarioActual, 'eventos_lista_compra', 'editar', $base);
+        $estudianteId = intOrNull($_POST['estudiante_id'] ?? null);
+        if (asignarResponsableCompra($pdo, 'evento', $id, $estudianteId)) {
+            flash($estudianteId ? 'Responsable de la compra actualizado.' : 'Se quitó el responsable de la compra.');
+        } else {
+            flash('No se pudo asignar: el estudiante debe estar asignado a este evento (y la base de datos debe estar actualizada con setup.php).', 'error');
         }
     } elseif ($accion === 'asignar_estudiantes') {
         requirePermission($usuarioActual, 'eventos_estudiantes', 'crear', $base);
@@ -254,6 +268,7 @@ $stmt = db()->prepare(
 );
 $stmt->execute([$id]);
 $estudiantesEvento = $stmt->fetchAll();
+$responsableCompra = obtenerResponsableCompra(db(), 'evento', $id);
 
 $stmt = db()->prepare(
     'SELECT er.porciones_necesarias, r.*, cr.nombre AS categoria FROM evento_receta er
@@ -419,7 +434,7 @@ require __DIR__ . '/../includes/layout_top.php';
   <div>
     <h1 class="page-title"><?= e($evento['nombre']) ?></h1>
     <div class="event-meta" style="margin-top:6px;">
-      <span><?= icon('calendar') ?> <?= fmtDate($evento['fecha']) ?></span>
+      <span><?= icon('calendar') ?> <?= fmtFechaEvento($evento['fecha'], !empty($evento['fecha_tentativa'])) ?> <?= chipFechaTentativa(!empty($evento['fecha_tentativa'])) ?></span>
       <span><?= icon('pin') ?> <?= e($evento['lugar']) ?></span>
       <span class="chip <?= chipEstadoClase($evento['estado']) ?>"><?= e($evento['estado']) ?></span>
       <?php if ($puedeVerGastos): ?>
@@ -461,6 +476,37 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php if ($cierreGuardado): ?>
   <div class="alert" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-secondary);margin-bottom:18px;">
     <?= icon('lock') ?> Cierre financiero <b>cerrado</b> el <?= fmtDate($cierreGuardado['cerrado_en']) ?> por <b><?= e($cierreGuardado['cerrado_por_nombre']) ?></b>. Los costos que se comparten en el reporte de cierre quedaron congelados: si editas recetas, ingredientes o gastos aquí, esos cambios no se reflejarán en ese reporte hasta que uses "Actualizar cierre". Los pagos de los estudiantes siguen en vivo.
+  </div>
+<?php endif; ?>
+
+<?php if ($puedeVerEstudiantesTab || $puedeVerCompras): ?>
+  <div class="card card-pad no-print" style="margin-bottom:18px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;">
+    <span class="section-icon is-gold"><?= icon('basket') ?></span>
+    <div style="flex:1;min-width:200px;">
+      <div class="stat-label" style="margin:0;">Responsable de la compra</div>
+      <?php if ($responsableCompra): ?>
+        <div style="font-weight:600;"><?= e($responsableCompra['nombre']) ?><?php if (!empty($responsableCompra['grupo'])): ?> <span class="cell-muted" style="font-weight:400;">· <?= e($responsableCompra['grupo']) ?></span><?php endif; ?></div>
+      <?php else: ?>
+        <div class="cell-muted">Sin asignar</div>
+      <?php endif; ?>
+    </div>
+    <?php if ($puedeEditarCompras): ?>
+      <?php if ($estudiantesEvento): ?>
+        <form method="post" style="display:flex;gap:8px;align-items:center;">
+          <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+          <input type="hidden" name="accion" value="asignar_responsable_compra">
+          <label class="cell-muted" for="responsable_compra" style="font-size:.85rem;">Asignar a</label>
+          <select id="responsable_compra" name="estudiante_id" onchange="this.form.submit()">
+            <option value="">— Sin asignar —</option>
+            <?php foreach ($estudiantesEvento as $a): ?>
+              <option value="<?= (int) $a['id'] ?>"<?= $responsableCompra && (int) $responsableCompra['id'] === (int) $a['id'] ? ' selected' : '' ?>><?= e($a['nombre']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </form>
+      <?php else: ?>
+        <span class="cell-muted" style="font-size:.85rem;">Asigna estudiantes al evento para elegir al responsable.</span>
+      <?php endif; ?>
+    <?php endif; ?>
   </div>
 <?php endif; ?>
 
@@ -604,6 +650,9 @@ require __DIR__ . '/../includes/layout_top.php';
               </div>
             </div>
             <div class="dash-chips">
+              <?php if ($responsableCompra && (int) $responsableCompra['id'] === (int) $a['id']): ?>
+                <span class="chip chip-muted" title="Responsable de hacer la compra"><?= icon('basket') ?> Compra</span>
+              <?php endif; ?>
               <?php if ($alDia): ?>
                 <span class="chip chip-muted"><?= icon('check') ?> Al día</span>
               <?php else: ?>
@@ -770,6 +819,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="stat-label"><?= icon('basket') ?> Costo estimado de la lista de compra</div>
     <div class="stat-value"><?= money($consolidado['total'] ?? 0) ?></div>
     <div class="stat-hint"><?= count($consolidado['lineas']) ?> ingrediente<?= count($consolidado['lineas']) === 1 ? '' : 's' ?> a comprar<?= $consolidado['al_gusto'] ? ' · ' . count($consolidado['al_gusto']) . ' al gusto' : '' ?></div>
+    <div class="stat-hint" style="margin-top:4px;">Responsable de la compra: <b><?= $responsableCompra ? e($responsableCompra['nombre']) : 'sin asignar' ?></b></div>
   </div>
   <div class="card">
     <div class="table-wrap">

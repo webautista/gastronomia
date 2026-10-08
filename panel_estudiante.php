@@ -144,7 +144,7 @@ require __DIR__ . '/includes/layout_top.php';
       <span style="display:inline-flex;align-items:center;gap:8px;">
         <?= $part['tipo'] === 'evento' ? icon('calendar') : icon('whisk') ?>
         <b><?= e($part['nombre']) ?></b>
-        <span class="cell-muted" style="font-size:.85rem;"><?= fmtDate($part['fecha']) ?></span>
+        <span class="cell-muted" style="font-size:.85rem;"><?= fmtFechaEvento($part['fecha'], !empty($part['fecha_tentativa'])) ?></span>
       </span>
     </summary>
 

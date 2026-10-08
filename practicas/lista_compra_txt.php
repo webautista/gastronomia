@@ -26,7 +26,8 @@ $recetas = $stmt->fetchAll();
 $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
 $consolidado = listaCompraConsolidada(db(), $recetas, $decisionesCompra);
 $titulo = 'Lista de compra — ' . $practica['nombre'] . ' (' . fmtDate($practica['fecha']) . ')';
-$texto = renderListaCompraTexto($titulo, $consolidado);
+$responsableCompra = obtenerResponsableCompra(db(), 'practica', $id);
+$texto = renderListaCompraTexto($titulo, $consolidado, $responsableCompra['nombre'] ?? null);
 
 $nombreArchivo = 'lista-compra-' . preg_replace('/[^a-z0-9]+/i', '-', $practica['nombre']) . '.txt';
 

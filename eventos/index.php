@@ -101,7 +101,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <div>
                 <div class="dash-title"><a href="detalle.php?id=<?= (int) $ev['id'] ?>"><?= e($ev['nombre']) ?></a></div>
                 <div class="dash-meta">
-                  <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
+                  <span><?= icon('calendar') ?> <?= fmtFechaEvento($ev['fecha'], !empty($ev['fecha_tentativa'])) ?> <?= chipFechaTentativa(!empty($ev['fecha_tentativa'])) ?></span>
                   <span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span>
                   <span><?= icon('portion') ?> <?= (int) $ev['porciones_totales'] ?> porciones</span>
                 </div>

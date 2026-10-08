@@ -2482,6 +2482,58 @@ function agregarUltimoAccesoAUsuarios(PDO $pdo): array
 }
 
 /**
+ * Agrega eventos.responsable_compra_id y practicas.responsable_compra_id
+ * (INT UNSIGNED NULL, FK a estudiantes con ON DELETE SET NULL): el estudiante
+ * encargado de ir a hacer la compra de ese evento/práctica, a pedido de
+ * Eyaelkys ("asignar a nivel de la práctica y del evento el responsable de
+ * realizar la compra [...] siempre será un estudiante de los incluidos [...]
+ * se asigna 1"). Se elige con un dropdown en el detalle (ver
+ * obtenerResponsableCompra()/asignarResponsableCompra() en
+ * includes/helpers.php). Que sea alguien de los asignados lo garantiza la
+ * aplicación (no una FK compuesta, porque ON DELETE SET NULL sobre una FK
+ * compuesta también intentaría anular evento_id/practica_id, que son NOT
+ * NULL): al guardar se valida y, si se quita al estudiante del evento o la
+ * práctica, el responsable se libera. Va aquí y no en el CREATE TABLE de
+ * db/schema.sql porque ambas tablas ya existen en producción. Cada tabla se
+ * migra por separado y es segura de correr varias veces.
+ */
+function agregarResponsableCompra(PDO $pdo): array
+{
+    $mensajes = [];
+    foreach (['eventos' => 'evento', 'practicas' => 'práctica'] as $tabla => $nombre) {
+        if (!columnaExiste($pdo, $tabla, 'id') || columnaExiste($pdo, $tabla, 'responsable_compra_id')) {
+            continue;
+        }
+        $pdo->exec("ALTER TABLE $tabla ADD COLUMN responsable_compra_id INT UNSIGNED NULL");
+        $pdo->exec("ALTER TABLE $tabla ADD CONSTRAINT fk_{$tabla}_responsable_compra FOREIGN KEY (responsable_compra_id) REFERENCES estudiantes(id) ON DELETE SET NULL");
+        $mensajes[] = "Se agregó \"responsable_compra_id\" a la tabla $tabla (el estudiante encargado de hacer la compra de cada $nombre, se elige en su detalle).";
+    }
+    return $mensajes;
+}
+
+/**
+ * Agrega eventos.fecha_tentativa (TINYINT(1) NOT NULL DEFAULT 0), a pedido
+ * de Eyaelkys: "en la fecha del evento, quiero poder decir que la fecha sea
+ * tentativa; en caso de tentativa que salga solo el mes". Con 1, todo el
+ * sistema muestra únicamente el mes y el año del evento (ver
+ * fmtFechaEvento() en includes/helpers.php) y eventos/form.php guarda como
+ * fecha el último día de ese mes (así el evento sigue siendo "próximo"
+ * durante todo el mes y ningún filtro por fecha necesita cambiar). Los
+ * eventos que ya existían quedan con fecha exacta (0). Va aquí y no en el
+ * CREATE TABLE de db/schema.sql porque "eventos" ya existe en producción.
+ */
+function agregarFechaTentativaAEventos(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'eventos', 'id') || columnaExiste($pdo, 'eventos', 'fecha_tentativa')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE eventos ADD COLUMN fecha_tentativa TINYINT(1) NOT NULL DEFAULT 0 AFTER fecha');
+    $mensajes[] = 'Columna "fecha_tentativa" agregada a la tabla eventos (si está activa, el evento muestra solo el mes y el año; los eventos existentes quedaron con fecha exacta).';
+    return $mensajes;
+}
+
+/**
  * Mueve las facturas de gastos que quedaron guardadas en
  * assets/uploads/facturas/ (dentro del repositorio, así que un despliegue
  * las borra) hacia private/facturas/ (el enlace `private/` en la raíz del
@@ -2680,6 +2732,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarMetodoAFondoMovimientos($pdo));
         $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
         $mensajes = array_merge($mensajes, agregarUltimoAccesoAUsuarios($pdo));
+        $mensajes = array_merge($mensajes, agregarResponsableCompra($pdo));
+        $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosEventos($pdo));

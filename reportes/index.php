@@ -85,12 +85,12 @@ if ($tab === 'cartera') {
     $listaEstudiantes = $stmt->fetchAll();
 } else {
     $eventosLista = db()->query(
-        "SELECT ev.id, ev.nombre, ev.fecha, es.nombre AS estado FROM eventos ev JOIN estados_evento es ON es.id = ev.estado_id"
+        "SELECT ev.*, es.nombre AS estado FROM eventos ev JOIN estados_evento es ON es.id = ev.estado_id"
     )->fetchAll();
     $practicasLista = db()->query('SELECT id, nombre, fecha FROM practicas')->fetchAll();
     $listaCierre = [];
     foreach ($eventosLista as $e) {
-        $listaCierre[] = ['tipo' => 'evento', 'id' => (int) $e['id'], 'nombre' => $e['nombre'], 'fecha' => $e['fecha'], 'estado' => $e['estado']];
+        $listaCierre[] = ['tipo' => 'evento', 'id' => (int) $e['id'], 'nombre' => $e['nombre'], 'fecha' => $e['fecha'], 'fecha_tentativa' => !empty($e['fecha_tentativa']), 'estado' => $e['estado']];
     }
     foreach ($practicasLista as $p) {
         $listaCierre[] = ['tipo' => 'practica', 'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'fecha' => $p['fecha'], 'estado' => null];
@@ -189,7 +189,7 @@ require __DIR__ . '/../includes/layout_top.php';
                 <span class="chip chip-muted" style="margin-left:6px;font-size:.7rem;"><?= $f['entidad_tipo'] === 'evento' ? 'Evento' : 'Práctica' ?></span>
                 <?php if ($f['entidad_estado']): ?><span class="chip chip-muted" style="font-size:.7rem;"><?= e($f['entidad_estado']) ?></span><?php endif; ?>
               </td>
-              <td class="cell-muted"><?= fmtDate($f['entidad_fecha']) ?></td>
+              <td class="cell-muted"><?= fmtFechaEvento($f['entidad_fecha'], $f['entidad_fecha_tentativa'] ?? false) ?></td>
               <td class="mono"><?= money($f['cuota']) ?></td>
               <td class="mono"><?= money($f['pagado']) ?></td>
               <td class="mono"><span class="chip chip-warning"><?= money($f['pendiente']) ?></span></td>
@@ -297,7 +297,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <span class="chip chip-muted" style="margin-left:6px;font-size:.7rem;"><?= $f['tipo'] === 'evento' ? 'Evento' : 'Práctica' ?></span>
               <?php if ($f['estado']): ?><span class="chip chip-muted" style="font-size:.7rem;"><?= e($f['estado']) ?></span><?php endif; ?>
             </td>
-            <td class="cell-muted"><?= fmtDate($f['fecha']) ?></td>
+            <td class="cell-muted"><?= fmtFechaEvento($f['fecha'], $f['fecha_tentativa'] ?? false) ?></td>
             <td><a href="cierre.php?tipo=<?= $f['tipo'] ?>&id=<?= $f['id'] ?>">Ver cierre →</a></td>
           </tr>
         <?php endforeach; ?>

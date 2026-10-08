@@ -136,7 +136,7 @@ require __DIR__ . '/includes/layout_top.php';
   <div class="stat-tile stat-tile--gold">
     <div class="stat-label">Próximo evento</div>
     <div class="stat-value" style="font-size:1.05rem;"><?= $proximo ? e($proximo['nombre']) : '—' ?></div>
-    <div class="stat-hint"><?= $proximo ? fmtDate($proximo['fecha']) : 'Sin eventos programados' ?></div>
+    <div class="stat-hint"><?= $proximo ? fmtFechaEvento($proximo['fecha'], !empty($proximo['fecha_tentativa'])) : 'Sin eventos programados' ?></div>
   </div>
   <div class="stat-tile stat-tile--sage">
     <div class="stat-label">Estudiantes registrados</div>
@@ -170,7 +170,7 @@ require __DIR__ . '/includes/layout_top.php';
               <div>
                 <div class="dash-title"><?= e($ev['nombre']) ?></div>
                 <div class="dash-meta">
-                  <span><?= icon('calendar') ?> <?= fmtDate($ev['fecha']) ?></span>
+                  <span><?= icon('calendar') ?> <?= fmtFechaEvento($ev['fecha'], !empty($ev['fecha_tentativa'])) ?> <?= chipFechaTentativa(!empty($ev['fecha_tentativa'])) ?></span>
                   <?php if ($ev['lugar']): ?><span><?= icon('pin') ?> <?= e($ev['lugar']) ?></span><?php endif; ?>
                 </div>
               </div>

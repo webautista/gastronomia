@@ -60,7 +60,7 @@ require __DIR__ . '/../includes/layout_top.php';
     <h1>Cierre financiero</h1>
     <p>
       <?php if ($puedeLinkear): ?><a href="<?= e($hrefEntidad) ?>"><?= e($entidad['nombre']) ?></a><?php else: ?><?= e($entidad['nombre']) ?><?php endif; ?>
-      · <?= fmtDate($entidad['fecha']) ?>
+      · <?= fmtFechaEvento($entidad['fecha'], $tipo === 'evento' && !empty($entidad['fecha_tentativa'])) ?>
       <?php if ($tipo === 'evento'): ?>
         <?php if (!empty($entidad['lugar'])): ?> · <?= e($entidad['lugar']) ?><?php endif; ?>
         · <span class="chip chip-muted"><?= e($entidad['estado_nombre']) ?></span>

@@ -98,6 +98,38 @@ function fmtDate(?string $iso): string
     return (int) date('j', $ts) . ' de ' . $meses[(int) date('n', $ts)] . ' de ' . date('Y', $ts);
 }
 
+/**
+ * Fecha de un evento para mostrar. Si la fecha es tentativa
+ * (eventos.fecha_tentativa = 1) solo se muestra el mes (y el año, para no
+ * confundir un mes de este año con el del próximo): "octubre de 2026" en
+ * vez de "31 de octubre de 2026". Prácticas y demás fechas siguen usando
+ * fmtDate().
+ */
+function fmtFechaEvento(?string $iso, $tentativa = false): string
+{
+    if (!$iso || !$tentativa) {
+        return fmtDate($iso);
+    }
+    $ts = strtotime($iso);
+    if ($ts === false) {
+        return fmtDate($iso);
+    }
+    $meses = [
+        1 => 'enero', 2 => 'febrero', 3 => 'marzo', 4 => 'abril',
+        5 => 'mayo', 6 => 'junio', 7 => 'julio', 8 => 'agosto',
+        9 => 'septiembre', 10 => 'octubre', 11 => 'noviembre', 12 => 'diciembre',
+    ];
+    return $meses[(int) date('n', $ts)] . ' de ' . date('Y', $ts);
+}
+
+/** Chip "Tentativa" para junto a la fecha de un evento con fecha tentativa ('' si no lo es). */
+function chipFechaTentativa($tentativa): string
+{
+    return $tentativa
+        ? '<span class="chip chip-muted" style="font-size:.7rem;" title="La fecha exacta aún no está definida: solo se sabe el mes">Tentativa</span>'
+        : '';
+}
+
 /** Cantidad de un ingrediente escalada según las porciones que se necesitan preparar. */
 function calcularCantidad(float $cantidadBase, int $porcionesBase, int $porcionesNecesarias): float
 {
@@ -589,7 +621,7 @@ function reporteCartera(PDO $pdo): array
             if ($pendiente > 0.005) {
                 $filas[] = [
                     'entidad_tipo' => 'evento', 'entidad_id' => (int) $ev['id'],
-                    'entidad_nombre' => $ev['nombre'], 'entidad_fecha' => $ev['fecha'], 'entidad_estado' => $ev['estado_nombre'],
+                    'entidad_nombre' => $ev['nombre'], 'entidad_fecha' => $ev['fecha'], 'entidad_fecha_tentativa' => !empty($ev['fecha_tentativa']), 'entidad_estado' => $ev['estado_nombre'],
                     'estudiante_id' => (int) $fila['estudiante_id'], 'estudiante_nombre' => $fila['estudiante_nombre'],
                     'cuota' => $cuotaConfirmada, 'pagado' => (float) $fila['monto_pagado'], 'pendiente' => $pendiente,
                 ];
@@ -1775,16 +1807,98 @@ function cargarDecisionesCompra(PDO $pdo, string $entidadTipo, int $entidadId): 
 }
 
 /**
+ * Tablas involucradas en el "responsable de la compra" (sección 45) según
+ * sea un evento o una práctica: [tabla principal, tabla de estudiantes
+ * asignados, columna que apunta a la principal en esa tabla].
+ */
+function tablasResponsableCompra(string $entidadTipo): array
+{
+    return $entidadTipo === 'practica'
+        ? ['practicas', 'practica_estudiante', 'practica_id']
+        : ['eventos', 'evento_estudiante', 'evento_id'];
+}
+
+/**
+ * Estudiante que quedó como responsable de ir a hacer la compra de un
+ * evento o práctica (id, nombre y grupo), o null si no hay ninguno. Si la
+ * columna responsable_compra_id todavía no existe (se subió el código antes
+ * de correr setup.php), devuelve null en vez de romper la página.
+ */
+function obtenerResponsableCompra(PDO $pdo, string $entidadTipo, int $entidadId): ?array
+{
+    [$tabla] = tablasResponsableCompra($entidadTipo);
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT est.id, est.nombre, ge.nombre AS grupo
+             FROM $tabla t
+             JOIN estudiantes est ON est.id = t.responsable_compra_id
+             LEFT JOIN grupos_estudiante ge ON ge.id = est.grupo_id
+             WHERE t.id = ?"
+        );
+        $stmt->execute([$entidadId]);
+        $fila = $stmt->fetch();
+    } catch (PDOException $e) {
+        return null;
+    }
+    return $fila ?: null;
+}
+
+/**
+ * Asigna (o quita, con null) al responsable de la compra. Solo acepta a un
+ * estudiante que ya esté asignado a ese evento/práctica — devuelve false si
+ * no lo está o si la columna aún no existe.
+ */
+function asignarResponsableCompra(PDO $pdo, string $entidadTipo, int $entidadId, ?int $estudianteId): bool
+{
+    [$tabla, $tablaEst, $col] = tablasResponsableCompra($entidadTipo);
+    try {
+        if ($estudianteId !== null) {
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM $tablaEst WHERE $col = ? AND estudiante_id = ?");
+            $stmt->execute([$entidadId, $estudianteId]);
+            if ((int) $stmt->fetchColumn() === 0) {
+                return false;
+            }
+        }
+        $pdo->prepare("UPDATE $tabla SET responsable_compra_id = ?, actualizado_en = actualizado_en WHERE id = ?")
+            ->execute([$estudianteId, $entidadId]);
+    } catch (PDOException $e) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Si el estudiante que se está quitando del evento/práctica era el
+ * responsable de la compra, lo deja sin asignar (el responsable siempre
+ * tiene que ser alguien de los asignados). Devuelve true si lo liberó.
+ */
+function liberarResponsableCompraSiEs(PDO $pdo, string $entidadTipo, int $entidadId, int $estudianteId): bool
+{
+    [$tabla] = tablasResponsableCompra($entidadTipo);
+    try {
+        $stmt = $pdo->prepare("UPDATE $tabla SET responsable_compra_id = NULL, actualizado_en = actualizado_en WHERE id = ? AND responsable_compra_id = ?");
+        $stmt->execute([$entidadId, $estudianteId]);
+        return $stmt->rowCount() > 0;
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
+/**
  * Versión en texto plano de una lista de compra consolidada (ver
  * listaCompraConsolidada()), lista para descargar como archivo .txt — para
  * que los estudiantes puedan llevarla al súper sin necesitar abrir el
- * sistema desde el navegador.
+ * sistema desde el navegador. $responsable (opcional): nombre del
+ * estudiante encargado de hacer la compra, se imprime bajo el título.
  */
-function renderListaCompraTexto(string $titulo, array $consolidado): string
+function renderListaCompraTexto(string $titulo, array $consolidado, ?string $responsable = null): string
 {
     $lineas = [];
     $lineas[] = $titulo;
     $lineas[] = str_repeat('=', mb_strlen($titulo));
+    if ($responsable !== null && $responsable !== '') {
+        $lineas[] = 'Responsable de la compra: ' . $responsable;
+    }
     $lineas[] = '';
 
     if (!$consolidado['lineas'] && !$consolidado['al_gusto']) {
@@ -2010,7 +2124,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
     $filas = [];
 
     $stmt = $pdo->prepare(
-        'SELECT ev.id, ev.nombre, ev.fecha, ev.cuota_confirmada_manual, ee.monto_pagado
+        'SELECT ev.*, ee.monto_pagado
          FROM evento_estudiante ee JOIN eventos ev ON ev.id = ee.evento_id
          WHERE ee.estudiante_id = ? ORDER BY ev.fecha ASC'
     );
@@ -2030,6 +2144,7 @@ function participacionesEstudiante(PDO $pdo, int $estudianteId): array
             'id' => (int) $ev['id'],
             'nombre' => $ev['nombre'],
             'fecha' => $ev['fecha'],
+            'fecha_tentativa' => !empty($ev['fecha_tentativa']),
             'cuota_confirmada' => $cuotas['confirmada'],
             'monto_pagado' => $montoPagado,
             'pendiente' => max(0.0, $cuotas['confirmada'] - $montoPagado),
