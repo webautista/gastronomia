@@ -41,13 +41,13 @@ $stmt = db()->query(
 );
 $eventos = $stmt->fetchAll();
 
-// El "gastado" (presupuesto usado) y la cuota ya no se leen de columnas
-// fijas (presupuesto/cuota, en desuso): se calculan igual que en el
-// detalle del evento, para que este panel nunca muestre un número
-// distinto al que se vería al entrar al evento. "Gastado" cuenta solo lo
-// confirmado/pagado — un gasto todavía proyectado nunca cuenta como
-// presupuesto usado (el bug reportado: una partida proyectada de
-// RD$3,000 aparecía como "usada" sin haberse confirmado).
+// La cuota ya no se lee de columnas fijas (presupuesto/cuota, en desuso): se
+// calcula igual que en el detalle del evento, para que este panel nunca
+// muestre un número distinto al que se vería al entrar al evento. El
+// "Usado" de las tarjetas, en cambio, cuenta SOLO gastos ya pagados: un
+// gasto proyectado o confirmado todavía es planificación (el confirmado
+// alimenta la cuota, pero no es dinero gastado), así que no aparece como
+// usado hasta que se paga.
 // La barra de la tabla ya no mide el gasto (eso puede seguir en cero
 // mientras no se compre nada, aunque los estudiantes ya hayan pagado, y
 // entonces parecía que no había entrado dinero) — mide lo recaudado
@@ -58,7 +58,7 @@ foreach ($eventos as &$ev) {
     $resumenGastos = resumenGastosVinculo(db(), 'evento_id', (int) $ev['id']);
     $cuotaManual = $ev['cuota_confirmada_manual'] !== null ? (float) $ev['cuota_confirmada_manual'] : null;
     $cuotas = calcularCuotas($costoRecetas, $resumenGastos, (int) $ev['num_estudiantes'], $cuotaManual);
-    $ev['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
+    $ev['gastado'] = $resumenGastos['pagado'];
     $ev['presupuesto_total'] = $cuotas['total_proyeccion'];
     $ev['total_confirmado'] = $cuotas['meta_recaudo'];
     $ev['cuota_confirmada'] = $cuotas['confirmada'];
@@ -105,7 +105,7 @@ foreach ($practicas as &$p) {
     $resumenGastos = resumenGastosVinculo(db(), 'practica_id', (int) $p['id']);
     $cuotaManual = $p['cuota_confirmada_manual'] !== null ? (float) $p['cuota_confirmada_manual'] : null;
     $cuotas = calcularCuotas($costoMateriales, $resumenGastos, (int) $p['num_estudiantes'], $cuotaManual);
-    $p['gastado'] = $resumenGastos['material_usado'] + $resumenGastos['otros_usado'];
+    $p['gastado'] = $resumenGastos['pagado'];
     $p['presupuesto_total'] = $cuotas['total_proyeccion'];
     $p['total_confirmado'] = $cuotas['meta_recaudo'];
     $p['cuota_confirmada'] = $cuotas['confirmada'];
@@ -190,7 +190,7 @@ require __DIR__ . '/includes/layout_top.php';
         <div class="dash-body">
           <div class="dash-stats">
             <div class="dash-stat"><div class="dash-stat-label">Proyectado</div><div class="dash-stat-value"><?= money($ev['presupuesto_total']) ?></div></div>
-            <div class="dash-stat"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($ev['gastado']) ?></div></div>
+            <div class="dash-stat" title="Solo gastos ya pagados; los confirmados siguen siendo planificación"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($ev['gastado']) ?></div></div>
             <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($ev['cuota_confirmada']) ?></div></div>
             <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $ev['num_pagados'] ?>/<?= (int) $ev['num_estudiantes'] ?></div></div>
           </div>
@@ -241,7 +241,7 @@ require __DIR__ . '/includes/layout_top.php';
         <div class="dash-body">
           <div class="dash-stats">
             <div class="dash-stat"><div class="dash-stat-label">Proyectado</div><div class="dash-stat-value"><?= money($p['presupuesto_total']) ?></div></div>
-            <div class="dash-stat"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($p['gastado']) ?></div></div>
+            <div class="dash-stat" title="Solo gastos ya pagados; los confirmados siguen siendo planificación"><div class="dash-stat-label">Usado</div><div class="dash-stat-value"><?= money($p['gastado']) ?></div></div>
             <div class="dash-stat is-gold"><div class="dash-stat-label">Cuota confirmada</div><div class="dash-stat-value"><?= money($p['cuota_confirmada']) ?></div></div>
             <div class="dash-stat is-sage"><div class="dash-stat-label">Estudiantes al día</div><div class="dash-stat-value"><?= (int) $p['num_pagados'] ?>/<?= (int) $p['num_estudiantes'] ?></div></div>
           </div>

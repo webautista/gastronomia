@@ -413,7 +413,11 @@ function montoEfectivoGasto(array $gasto): float
  * es_material_receta) × proyectado vs. usado (confirmado o pagado — un
  * gasto solo proyectado NUNCA cuenta como "usado", es la corrección al bug
  * reportado de "presupuesto usado" mostrando dinero que todavía no se ha
- * confirmado). $columna es 'evento_id' o 'practica_id' — siempre uno de
+ * confirmado). OJO: "usado" aquí es lo que cuenta para la cuota (confirmado
+ * o pagado). Lo que de verdad ya se pagó va aparte en 'pagado' (solo gastos
+ * en estado 'pagado', materiales y otros juntos) — es lo que muestra como
+ * "Usado" el Panel general, porque un gasto confirmado todavía es
+ * planificación, no dinero gastado. $columna es 'evento_id' o 'practica_id' — siempre uno de
  * estos dos literales fijos, nunca entrada del usuario, así que es seguro
  * interpolarla directo en el SQL.
  */
@@ -425,13 +429,16 @@ function resumenGastosVinculo(PDO $pdo, string $columna, int $id): array
     );
     $stmt->execute([$id]);
 
-    $out = ['material_proyectado' => 0.0, 'material_usado' => 0.0, 'otros_proyectado' => 0.0, 'otros_usado' => 0.0];
+    $out = ['material_proyectado' => 0.0, 'material_usado' => 0.0, 'otros_proyectado' => 0.0, 'otros_usado' => 0.0, 'pagado' => 0.0];
     foreach ($stmt->fetchAll() as $g) {
         $material = !empty($g['es_material_receta']);
         if ($g['estado'] === 'proyectado') {
             $out[$material ? 'material_proyectado' : 'otros_proyectado'] += (float) $g['monto'];
         } else {
             $out[$material ? 'material_usado' : 'otros_usado'] += montoEfectivoGasto($g);
+            if ($g['estado'] === 'pagado') {
+                $out['pagado'] += montoEfectivoGasto($g);
+            }
         }
     }
     return $out;
