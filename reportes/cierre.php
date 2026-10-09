@@ -117,6 +117,29 @@ require __DIR__ . '/../includes/layout_top.php';
   </div>
 </div>
 
+<?php
+// Lo recaudado, separado por cómo llegó el dinero (fondo / efectivo /
+// transferencia). "Sin especificar" solo aparece si hay pagos antiguos sin método.
+$porMetodo = $datos['recaudado_por_metodo'];
+$tilesMetodo = [
+    ['fondo', 'Aplicado desde el Fondo', 'stat-tile--gold', 'Descontado del fondo de cada estudiante'],
+    ['efectivo', 'Recibido en efectivo', 'stat-tile--sage', 'Pagos en efectivo'],
+    ['transferencia', 'Recibido vía transferencia', 'stat-tile--wine', 'Pagos por transferencia bancaria'],
+];
+if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especificar']['pagos'] > 0) {
+    $tilesMetodo[] = ['sin_especificar', 'Sin método especificado', '', 'Pagos antiguos sin indicar cómo se pagó'];
+}
+?>
+<div class="summary-grid<?= count($tilesMetodo) === 4 ? ' summary-grid-4' : '' ?>">
+  <?php foreach ($tilesMetodo as [$clave, $titulo, $claseTile, $pista]): ?>
+    <div class="stat-tile <?= e($claseTile) ?>">
+      <div class="stat-label"><?= e($titulo) ?></div>
+      <div class="stat-value"><?= money($porMetodo[$clave]['monto']) ?></div>
+      <div class="stat-hint"><?php if ($porMetodo[$clave]['pagos'] > 0): ?><?= (int) $porMetodo[$clave]['pagos'] ?> pago<?= $porMetodo[$clave]['pagos'] === 1 ? '' : 's' ?> · <?php endif; ?><?= e($pista) ?></div>
+    </div>
+  <?php endforeach; ?>
+</div>
+
 <div class="summary-grid" style="grid-template-columns:1fr 1fr;">
   <div class="card card-pad">
     <div class="section-title-row"><span class="section-icon is-gold"><?= icon('receipt') ?></span><h2 class="section-title">Gastos por categoría</h2></div>

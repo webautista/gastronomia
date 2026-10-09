@@ -944,6 +944,8 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         ];
     }
 
+    $recaudado = array_sum(array_column($filasEstudiantes, 'pagado'));
+
     return [
         'tipo' => $entidadTipo,
         'entidad' => $entidad,
@@ -953,12 +955,46 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
         'gastos_por_categoria' => $catTotales,
         'cuotas' => $cuotas,
         'estudiantes' => $filasEstudiantes,
-        'recaudado' => array_sum(array_column($filasEstudiantes, 'pagado')),
+        'recaudado' => $recaudado,
+        'recaudado_por_metodo' => recaudadoPorMetodo($pdo, $entidadTipo, $entidadId, $recaudado),
         'cantidad_estudiantes' => count($estudiantes),
         'cerrado' => $cerrado,
         'cerrado_en' => $cerradoEn,
         'cerrado_por_nombre' => $cerradoPorNombre,
     ];
+}
+
+/**
+ * Lo recaudado de un evento/práctica separado por cómo llegó (cierre
+ * financiero): 'fondo' (aplicado desde el fondo del estudiante), 'efectivo',
+ * 'transferencia' y 'sin_especificar' (pagos antiguos sin método). Cada
+ * método trae 'monto' y 'pagos' (cantidad de pagos). Se suma pagos_estudiante
+ * en vivo (los pagos no se congelan con el cierre, igual que "Recaudado");
+ * si por datos antiguos el total cacheado ($recaudadoTotal, la suma de
+ * monto_pagado) no coincide con el historial, la diferencia se muestra como
+ * 'sin_especificar' para que las líneas siempre cuadren con el total.
+ */
+function recaudadoPorMetodo(PDO $pdo, string $entidadTipo, int $entidadId, float $recaudadoTotal): array
+{
+    $res = [];
+    foreach (['fondo', 'efectivo', 'transferencia', 'sin_especificar'] as $m) {
+        $res[$m] = ['monto' => 0.0, 'pagos' => 0];
+    }
+    $stmt = $pdo->prepare(
+        'SELECT metodo, COALESCE(SUM(monto), 0) AS total, COUNT(*) AS pagos
+         FROM pagos_estudiante WHERE entidad_tipo = ? AND entidad_id = ? GROUP BY metodo'
+    );
+    $stmt->execute([$entidadTipo, $entidadId]);
+    foreach ($stmt->fetchAll() as $f) {
+        $clave = isset($res[$f['metodo']]) ? $f['metodo'] : 'sin_especificar';
+        $res[$clave]['monto'] += (float) $f['total'];
+        $res[$clave]['pagos'] += (int) $f['pagos'];
+    }
+    $diferencia = $recaudadoTotal - array_sum(array_column($res, 'monto'));
+    if (abs($diferencia) > 0.005) {
+        $res['sin_especificar']['monto'] += $diferencia;
+    }
+    return $res;
 }
 
 /**
