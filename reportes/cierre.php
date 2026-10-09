@@ -44,6 +44,9 @@ $cuotas = $datos['cuotas'];
 $hrefEntidad = ($tipo === 'evento' ? $base . '/eventos/' : $base . '/practicas/') . 'detalle.php?id=' . $id;
 $puedeLinkear = $tipo === 'evento' ? $puedeVerEventos : $puedeVerPracticas;
 
+// Estudiante responsable de ir a hacer la compra (o null si no se asignó).
+$respCompra = obtenerResponsableCompra(db(), $tipo, $id);
+
 $catTotales = $datos['gastos_por_categoria'];
 $maxCat = max(1, ...(array_values($catTotales) ?: [1]));
 $paletaCategorias = ['var(--copper)', 'var(--accent)', 'var(--success)', 'var(--accent-strong)'];
@@ -68,6 +71,7 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php if (!empty($entidad['materia'])): ?> · <?= e($entidad['materia']) ?><?php endif; ?>
         <?php if (!empty($entidad['maestro_responsable'])): ?> · <?= e($entidad['maestro_responsable']) ?><?php endif; ?>
       <?php endif; ?>
+      · <span title="Estudiante responsable de hacer la compra"><?= icon('basket') ?> Responsable de compras: <?= $respCompra ? '<b>' . e($respCompra['nombre']) . '</b>' . (!empty($respCompra['grupo']) ? ' (' . e($respCompra['grupo']) . ')' : '') : '<span class="cell-muted">sin asignar</span>' ?></span>
       <?php if ($datos['cerrado']): ?>
         · <span class="chip chip-muted" title="Los costos de este cierre están congelados; no cambian aunque se editen recetas, ingredientes o gastos después"><?= icon('lock') ?> Cerrado el <?= fmtDate($datos['cerrado_en']) ?> por <?= e($datos['cerrado_por_nombre']) ?></span>
       <?php else: ?>
