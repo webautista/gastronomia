@@ -85,7 +85,13 @@ require __DIR__ . '/../includes/layout_top.php';
   <a class="tab <?= $conEstudiantes ? 'active' : '' ?>" href="<?= e($hrefVista) ?>&detalle=1"><?= icon('users') ?> Vista interna, con estudiantes</a>
 </div>
 
-<div class="summary-grid summary-grid-5">
+<?php
+// "Costo real" solo se muestra cuando difiere del monto de la lista de compra
+// (hay gastos adicionales, o los materiales costaron más de lo proyectado);
+// si es lo mismo, repetir la cifra no aporta nada.
+$mostrarCostoReal = abs($cuotas['total_confirmado'] - $datos['costo_recetas']) > 0.005;
+?>
+<div class="summary-grid <?= $mostrarCostoReal ? 'summary-grid-5' : 'summary-grid-4' ?>">
   <div class="stat-tile stat-tile--wine">
     <div class="stat-label">Costo estimado</div>
     <div class="stat-value"><?= money($datos['costo_estimado']) ?></div>
@@ -96,11 +102,13 @@ require __DIR__ . '/../includes/layout_top.php';
     <div class="stat-value"><?= money($datos['costo_recetas']) ?></div>
     <div class="stat-hint">Inversión en la lista de compra de materiales faltantes.</div>
   </div>
+  <?php if ($mostrarCostoReal): ?>
   <div class="stat-tile">
     <div class="stat-label">Costo real</div>
     <div class="stat-value"><?= money($cuotas['total_confirmado']) ?></div>
-    <div class="stat-hint">Materiales o gastos</div>
+    <div class="stat-hint">Incluye materiales y otros gastos</div>
   </div>
+  <?php endif; ?>
   <div class="stat-tile stat-tile--terracotta">
     <div class="stat-label">Cuota <?= $cuotas['cuota_ajustada'] ? 'confirmada (ajustada)' : 'confirmada' ?></div>
     <div class="stat-value"><?= money($cuotas['confirmada']) ?></div>
@@ -205,20 +213,36 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
 </div>
 
 <?php if ($conEstudiantes): ?>
+<?php
+// Etiqueta y color del método de pago de cada estudiante (vista interna).
+$chipsMetodo = [
+    'fondo' => ['Fondo', 'chip-neutral'],
+    'efectivo' => ['Efectivo', 'chip-success'],
+    'transferencia' => ['Transferencia', 'chip-neutral'],
+    'sin_especificar' => ['Sin especificar', 'chip-muted'],
+];
+?>
 <div class="card">
   <div class="page-head" style="margin-bottom:0;padding:16px 16px 0;"><h2 class="section-title" style="margin:0;">Estudiantes</h2></div>
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Estudiante</th><th>Pagado</th><th>Pendiente</th></tr></thead>
+    <thead><tr><th>Estudiante</th><th>Pagado</th><th>Método de pago</th><th>Pendiente</th></tr></thead>
     <tbody>
       <?php if (!$datos['estudiantes']): ?>
-        <tr><td colspan="3" class="cell-muted" style="text-align:center;padding:24px;">No hay estudiantes asignados.</td></tr>
+        <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:24px;">No hay estudiantes asignados.</td></tr>
       <?php endif; ?>
       <?php foreach ($datos['estudiantes'] as $e): ?>
         <?php $alDia = $e['pendiente'] <= 0.005; ?>
         <tr>
           <td><?= e($e['estudiante_nombre']) ?></td>
           <td class="mono"><?= money($e['pagado']) ?></td>
+          <td>
+            <?php if (!$e['por_metodo']): ?>
+              <span class="cell-muted">—</span>
+            <?php else: foreach ($e['por_metodo'] as $metodo => $montoMetodo): ?>
+              <span class="chip <?= $chipsMetodo[$metodo][1] ?>" style="margin:0 4px 4px 0;"><?= e($chipsMetodo[$metodo][0]) ?> · <span class="mono"><?= money($montoMetodo) ?></span></span>
+            <?php endforeach; endif; ?>
+          </td>
           <td>
             <?php if ($alDia): ?>
               <span class="chip chip-success"><?= icon('check') ?> Al día</span>
@@ -231,7 +255,7 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
     </tbody>
     <?php if ($datos['estudiantes']): ?>
     <tfoot>
-      <tr><td style="text-align:right;"><b>Total</b></td><td class="mono"><b><?= money($datos['recaudado']) ?></b></td><td class="mono"><b><?= money(array_sum(array_column($datos['estudiantes'], 'pendiente'))) ?></b></td></tr>
+      <tr><td style="text-align:right;"><b>Total</b></td><td class="mono"><b><?= money($datos['recaudado']) ?></b></td><td></td><td class="mono"><b><?= money(array_sum(array_column($datos['estudiantes'], 'pendiente'))) ?></b></td></tr>
     </tfoot>
     <?php endif; ?>
   </table>

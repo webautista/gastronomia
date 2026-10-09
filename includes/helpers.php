@@ -933,14 +933,24 @@ function cierreFinanciero(PDO $pdo, string $entidadTipo, int $entidadId): ?array
 
     $cuotaConfirmada = $cuotas['confirmada'];
 
+    $metodosPorEstudiante = recaudadoPorMetodoYEstudiante($pdo, $entidadTipo, $entidadId);
+
     $filasEstudiantes = [];
     foreach ($estudiantes as $e) {
         $pagado = (float) $e['monto_pagado'];
+        $porMetodoEst = $metodosPorEstudiante[(int) $e['estudiante_id']] ?? [];
+        // Igual que en recaudadoPorMetodo(): lo que el historial no explica
+        // (datos antiguos) se muestra como "sin especificar".
+        $diferencia = $pagado - array_sum($porMetodoEst);
+        if (abs($diferencia) > 0.005 && $pagado > 0.005) {
+            $porMetodoEst['sin_especificar'] = ($porMetodoEst['sin_especificar'] ?? 0.0) + $diferencia;
+        }
         $filasEstudiantes[] = [
             'estudiante_id' => (int) $e['estudiante_id'],
             'estudiante_nombre' => $e['estudiante_nombre'],
             'pagado' => $pagado,
             'pendiente' => max(0.0, $cuotaConfirmada - $pagado),
+            'por_metodo' => $porMetodoEst,
         ];
     }
 
@@ -993,6 +1003,28 @@ function recaudadoPorMetodo(PDO $pdo, string $entidadTipo, int $entidadId, float
     $diferencia = $recaudadoTotal - array_sum(array_column($res, 'monto'));
     if (abs($diferencia) > 0.005) {
         $res['sin_especificar']['monto'] += $diferencia;
+    }
+    return $res;
+}
+
+/**
+ * Lo pagado por cada estudiante de un evento/práctica, separado por método
+ * (vista interna del cierre financiero): [estudiante_id => [metodo => monto]]
+ * con solo los métodos que tienen monto. Los métodos desconocidos cuentan
+ * como 'sin_especificar'.
+ */
+function recaudadoPorMetodoYEstudiante(PDO $pdo, string $entidadTipo, int $entidadId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT estudiante_id, metodo, COALESCE(SUM(monto), 0) AS total
+         FROM pagos_estudiante WHERE entidad_tipo = ? AND entidad_id = ? GROUP BY estudiante_id, metodo'
+    );
+    $stmt->execute([$entidadTipo, $entidadId]);
+    $res = [];
+    foreach ($stmt->fetchAll() as $f) {
+        $clave = in_array($f['metodo'], ['fondo', 'efectivo', 'transferencia'], true) ? $f['metodo'] : 'sin_especificar';
+        $eid = (int) $f['estudiante_id'];
+        $res[$eid][$clave] = ($res[$eid][$clave] ?? 0.0) + (float) $f['total'];
     }
     return $res;
 }
