@@ -199,6 +199,53 @@ function practicaUsaPrueba(array $receta, ?string $baseCalculo = null): bool
     return $baseCalculo !== 'real' && porcionesPruebaReceta($receta) > 0;
 }
 
+/**
+ * ¿Ya existe recetas.porciones_prueba? Antes de correr setup.php en un
+ * servidor con el código nuevo, las pantallas que guardan recetas siguen
+ * funcionando sin esa columna (se resuelve una vez por petición).
+ */
+function recetasTienePorcionesPrueba(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW COLUMNS FROM recetas LIKE 'porciones_prueba'")->fetch();
+        } catch (PDOException $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/**
+ * Preparación de una receta lista para imprimir en HTML: el texto se escapa
+ * y se respetan los saltos de línea (el CSS .prep-text usa pre-line), pero
+ * toda línea que empiece con "⚠" (notas sanitarias, ej. "⚠ Cocinar el huevo
+ * a más de 70 °C") se dibuja como un cuadro destacado.
+ */
+function renderPreparacionHtml(string $texto): string
+{
+    $html = '';
+    $buffer = [];
+    $volcar = function () use (&$html, &$buffer) {
+        if ($buffer) {
+            $html .= '<div class="prep-parrafo">' . e(implode("\n", $buffer)) . '</div>';
+            $buffer = [];
+        }
+    };
+    foreach (preg_split('/\R/u', $texto) ?: [$texto] as $linea) {
+        if (preg_match('/^\s*⚠/u', $linea)) {
+            $volcar();
+            $limpio = trim(preg_replace('/^\s*⚠\x{FE0F}?\s*/u', '', $linea));
+            $html .= '<div class="prep-aviso"><span class="prep-aviso-icono" aria-hidden="true">⚠</span><span>' . e($limpio) . '</span></div>';
+        } else {
+            $buffer[] = $linea;
+        }
+    }
+    $volcar();
+    return $html;
+}
+
 /** Texto "base N porciones" / "base N pruebas" según el contexto. */
 function etiquetaPorcionesReferencia(array $receta, string $entidadTipo): string
 {
