@@ -107,6 +107,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$id, $rid, $porcionesDefecto]);
             }
         }
+    } elseif ($accion === 'cambiar_base_calculo') {
+        // Con qué porciones de la receta se calcula en ESTA práctica: las de
+        // prueba (degustaciones para la clase) o las reales (platos completos).
+        // Al cambiar, "porciones a preparar" vuelve a la tanda completa de la
+        // nueva base (17 pruebas / 4 reales, por ejemplo); se puede ajustar después.
+        requirePermission($usuarioActual, 'practicas_recetas', 'editar', $base);
+        $recetaId = intOrNull($_POST['receta_id'] ?? null);
+        $nuevaBase = ($_POST['base_calculo'] ?? '') === 'real' ? 'real' : 'prueba';
+        if ($recetaId && practicaRecetaTieneBaseCalculo($pdo)) {
+            $stmtRc = $pdo->prepare('SELECT * FROM recetas WHERE id = ?');
+            $stmtRc->execute([$recetaId]);
+            $recetaCambio = $stmtRc->fetch();
+            if ($recetaCambio) {
+                $porcionesTanda = max(1, porcionesReferencia($recetaCambio, 'practica', $nuevaBase));
+                $pdo->prepare('UPDATE practica_receta SET base_calculo=?, porciones_necesarias=? WHERE practica_id=? AND receta_id=?')
+                    ->execute([$nuevaBase, $porcionesTanda, $id, $recetaId]);
+            }
+        }
     } elseif ($accion === 'actualizar_porciones') {
         requirePermission($usuarioActual, 'practicas_recetas', 'editar', $base);
         $recetaId = intOrNull($_POST['receta_id'] ?? null);
@@ -251,7 +269,7 @@ $cierreGuardado = obtenerCierreFinancieroGuardado(db(), 'practica', $id);
 
 /* ---------------- Datos para mostrar ---------------- */
 $stmt = db()->prepare(
-    'SELECT pr.porciones_necesarias, r.*, cr.nombre AS categoria FROM practica_receta pr
+    'SELECT pr.porciones_necesarias' . sqlColBaseCalculoPractica(db()) . ', r.*, cr.nombre AS categoria FROM practica_receta pr
      JOIN recetas r ON r.id = pr.receta_id
      JOIN categorias_receta cr ON cr.id = r.categoria_id
      WHERE pr.practica_id = ? ORDER BY r.nombre ASC'
@@ -300,7 +318,7 @@ unset($rc);
 // cualquier diferencia sutil entre ambas llamadas, puede terminar
 // mostrando dos números distintos para lo que se supone es un solo dato —
 // a pedido de Eyaelkys, que notó justo esa discrepancia).
-$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => 'practica'], $recetasPractica);
+$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => 'practica', 'base_calculo' => $rc['base_calculo'] ?? null], $recetasPractica);
 $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
 $consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
 $costoMateriales = $consolidado['total'];
@@ -563,7 +581,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <div class="dash-title"><?= e($rc['nombre']) ?></div>
               <div class="dash-meta">
                 <span><?= e($rc['categoria']) ?></span>
-                <span><?= e(etiquetaPorcionesReferencia($rc, 'practica')) ?><?= porcionesPruebaReceta($rc) > 0 ? ' · rinde ' . (int) $rc['porciones_base'] . ' ' . ((int) $rc['porciones_base'] === 1 ? 'plato' : 'platos') : '' ?></span>
+                <span><?= e(etiquetaPorcionesReferencia($rc, 'practica')) ?><?= practicaUsaPrueba($rc) ? ' · rinde ' . (int) $rc['porciones_base'] . ' ' . ((int) $rc['porciones_base'] === 1 ? 'plato' : 'platos') : '' ?></span>
               </div>
             </div>
           </div>
@@ -576,6 +594,21 @@ require __DIR__ . '/../includes/layout_top.php';
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
           <button class="icon-btn" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
           <?php if ($puedeEditarRecetaTab): ?>
+            <?php if (porcionesPruebaReceta($rc) > 0 && practicaRecetaTieneBaseCalculo(db())): ?>
+              <form method="post" style="display:flex;align-items:center;gap:8px;">
+                <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                <input type="hidden" name="accion" value="cambiar_base_calculo">
+                <input type="hidden" name="receta_id" value="<?= (int) $rc['id'] ?>">
+                <div class="portion-control">
+                  <span>Calcular con</span>
+                  <select name="base_calculo" onchange="this.form.submit()" title="Con qué porciones de la receta se calcula en esta práctica">
+                    <option value="prueba" <?= practicaUsaPrueba($rc) ? 'selected' : '' ?>>Porciones de prueba (<?= porcionesPruebaReceta($rc) ?>)</option>
+                    <option value="real" <?= !practicaUsaPrueba($rc) ? 'selected' : '' ?>>Porciones reales (<?= (int) $rc['porciones_base'] ?>)</option>
+                  </select>
+                </div>
+                <noscript><button class="btn btn-secondary btn-sm" type="submit">Aplicar</button></noscript>
+              </form>
+            <?php endif; ?>
             <form method="post" style="display:flex;align-items:center;gap:14px;">
               <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
               <input type="hidden" name="accion" value="actualizar_porciones">
@@ -587,7 +620,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <button class="btn btn-secondary btn-sm" type="submit">Actualizar</button>
             </form>
           <?php else: ?>
-            <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>
+            <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> <?= practicaUsaPrueba($rc) ? 'porciones de prueba' : 'porciones' ?> a preparar</div>
           <?php endif; ?>
         </div>
         <?php if ($puedeEliminarRecetaTab): ?>

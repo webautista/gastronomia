@@ -2536,6 +2536,27 @@ function agregarPorcionesPruebaARecetas(PDO $pdo): array
 }
 
 /**
+ * Agrega practica_receta.base_calculo (VARCHAR(10) NOT NULL DEFAULT
+ * 'prueba'), a pedido de Eyaelkys: en cada práctica se elige, receta por
+ * receta, si se calcula y trabaja con las porciones de prueba (degustaciones
+ * para la clase) o con las porciones reales (platos completos). 'prueba' es
+ * el valor por defecto y equivale al comportamiento de siempre (si la receta
+ * no tiene porciones de prueba, se usan las reales sin importar este valor).
+ * Va aquí y no en el CREATE TABLE de db/schema.sql porque "practica_receta"
+ * ya existe en producción.
+ */
+function agregarBaseCalculoAPracticaReceta(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'practica_receta', 'practica_id') || columnaExiste($pdo, 'practica_receta', 'base_calculo')) {
+        return $mensajes;
+    }
+    $pdo->exec("ALTER TABLE practica_receta ADD COLUMN base_calculo VARCHAR(10) NOT NULL DEFAULT 'prueba'");
+    $mensajes[] = 'Columna "base_calculo" agregada a la tabla practica_receta (en cada práctica se elige si cada receta se calcula con porciones de prueba o reales; las prácticas existentes quedaron como siempre).';
+    return $mensajes;
+}
+
+/**
  * Agrega eventos.fecha_tentativa (TINYINT(1) NOT NULL DEFAULT 0), a pedido
  * de Eyaelkys: "en la fecha del evento, quiero poder decir que la fecha sea
  * tentativa; en caso de tentativa que salga solo el mes". Con 1, todo el
@@ -2758,6 +2779,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarUltimoAccesoAUsuarios($pdo));
         $mensajes = array_merge($mensajes, agregarResponsableCompra($pdo));
         $mensajes = array_merge($mensajes, agregarPorcionesPruebaARecetas($pdo));
+        $mensajes = array_merge($mensajes, agregarBaseCalculoAPracticaReceta($pdo));
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));

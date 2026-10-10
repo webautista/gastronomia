@@ -156,11 +156,12 @@ function porcionesPruebaReceta(array $receta): int
  * evento —o si no hay porciones de prueba— las porciones base (reales).
  * Es el divisor de calcularCantidad() al escalar a "porciones a preparar".
  */
-function porcionesReferencia(array $receta, string $entidadTipo): int
+function porcionesReferencia(array $receta, string $entidadTipo, ?string $baseCalculo = null): int
 {
     if ($entidadTipo === 'practica') {
+        $baseCalculo = $baseCalculo ?? (string) ($receta['base_calculo'] ?? 'prueba');
         $prueba = porcionesPruebaReceta($receta);
-        if ($prueba > 0) {
+        if ($baseCalculo !== 'real' && $prueba > 0) {
             return $prueba;
         }
     }
@@ -168,16 +169,16 @@ function porcionesReferencia(array $receta, string $entidadTipo): int
 }
 
 /**
- * ¿Ya existe recetas.porciones_prueba? Antes de correr setup.php en un
- * servidor con el código nuevo, las pantallas que guardan recetas siguen
- * funcionando sin esa columna (se resuelve una vez por petición).
+ * ¿Ya existe practica_receta.base_calculo? ('prueba' | 'real': con cuáles
+ * porciones de la receta se calcula esa receta dentro de esa práctica.)
+ * Tolerante a que setup.php todavía no se haya corrido.
  */
-function recetasTienePorcionesPrueba(PDO $pdo): bool
+function practicaRecetaTieneBaseCalculo(PDO $pdo): bool
 {
     static $existe = null;
     if ($existe === null) {
         try {
-            $existe = (bool) $pdo->query("SHOW COLUMNS FROM recetas LIKE 'porciones_prueba'")->fetch();
+            $existe = (bool) $pdo->query("SHOW COLUMNS FROM practica_receta LIKE 'base_calculo'")->fetch();
         } catch (PDOException $e) {
             $existe = false;
         }
@@ -185,41 +186,28 @@ function recetasTienePorcionesPrueba(PDO $pdo): bool
     return $existe;
 }
 
-/**
- * Preparación de una receta lista para imprimir en HTML: el texto se escapa
- * y se respetan los saltos de línea (el CSS .prep-text usa pre-line), pero
- * toda línea que empiece con "⚠" (notas sanitarias, ej. "⚠ Cocinar el huevo
- * a más de 70 °C") se dibuja como un cuadro destacado.
- */
-function renderPreparacionHtml(string $texto): string
+/** Fragmento SQL ", pr.base_calculo" (o vacío si la columna aún no existe). */
+function sqlColBaseCalculoPractica(PDO $pdo, string $alias = 'pr'): string
 {
-    $html = '';
-    $buffer = [];
-    $volcar = function () use (&$html, &$buffer) {
-        if ($buffer) {
-            $html .= '<div class="prep-parrafo">' . e(implode("\n", $buffer)) . '</div>';
-            $buffer = [];
-        }
-    };
-    foreach (preg_split('/\R/u', $texto) as $linea) {
-        if (preg_match('/^\s*⚠/u', $linea)) {
-            $volcar();
-            $limpio = trim(preg_replace('/^\s*⚠\x{FE0F}?\s*/u', '', $linea));
-            $html .= '<div class="prep-aviso"><span class="prep-aviso-icono" aria-hidden="true">⚠</span><span>' . e($limpio) . '</span></div>';
-        } else {
-            $buffer[] = $linea;
-        }
-    }
-    $volcar();
-    return $html;
+    return practicaRecetaTieneBaseCalculo($pdo) ? ', ' . $alias . '.base_calculo' : '';
+}
+
+/** ¿Esta fila de práctica está calculando con porciones de prueba? */
+function practicaUsaPrueba(array $receta, ?string $baseCalculo = null): bool
+{
+    $baseCalculo = $baseCalculo ?? (string) ($receta['base_calculo'] ?? 'prueba');
+    return $baseCalculo !== 'real' && porcionesPruebaReceta($receta) > 0;
 }
 
 /** Texto "base N porciones" / "base N pruebas" según el contexto. */
 function etiquetaPorcionesReferencia(array $receta, string $entidadTipo): string
 {
     $n = porcionesReferencia($receta, $entidadTipo);
-    $esPrueba = $entidadTipo === 'practica' && porcionesPruebaReceta($receta) > 0;
-    return 'base ' . $n . ($esPrueba ? ($n === 1 ? ' prueba' : ' pruebas') : ($n === 1 ? ' porción' : ' porciones'));
+    if ($entidadTipo === 'practica' && practicaUsaPrueba($receta)) {
+        return 'base ' . $n . ($n === 1 ? ' prueba' : ' pruebas');
+    }
+    $reales = $entidadTipo === 'practica' && porcionesPruebaReceta($receta) > 0 ? ' reales' : '';
+    return 'base ' . $n . ($n === 1 ? ' porción' : ' porciones') . $reales;
 }
 
 /** Redirige y termina la ejecución. */
@@ -409,7 +397,7 @@ function costoTotalReceta(PDO $pdo, int $recetaId, ?int $porcionesDeseadas = nul
 function recetasAsignadas(PDO $pdo, string $entidadTipo, int $entidadId): array
 {
     if ($entidadTipo === 'practica') {
-        $stmt = $pdo->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
+        $stmt = $pdo->prepare('SELECT pr.receta_id, pr.porciones_necesarias' . sqlColBaseCalculoPractica($pdo) . ' FROM practica_receta pr WHERE pr.practica_id = ?');
     } else {
         $stmt = $pdo->prepare('SELECT receta_id, porciones_necesarias FROM evento_receta WHERE evento_id = ?');
     }
@@ -1654,7 +1642,7 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
         }
         // En prácticas las cantidades se refieren a las porciones de prueba
         // (si la receta las tiene); en eventos, a las porciones reales.
-        $porcionesBase = porcionesReferencia($receta, (string) ($rp['entidad_tipo'] ?? 'evento'));
+        $porcionesBase = porcionesReferencia($receta, (string) ($rp['entidad_tipo'] ?? 'evento'), isset($rp['base_calculo']) ? (string) $rp['base_calculo'] : null);
         $nombreReceta = $receta['nombre'];
 
         $stmtIng = $pdo->prepare(
@@ -2603,7 +2591,7 @@ function recetasConDetalleParaConsulta(PDO $pdo, string $entidadTipo, int $entid
 {
     if ($entidadTipo === 'practica') {
         $stmt = $pdo->prepare(
-            'SELECT pr.porciones_necesarias, r.*, cr.nombre AS categoria FROM practica_receta pr
+            'SELECT pr.porciones_necesarias' . sqlColBaseCalculoPractica($pdo) . ', r.*, cr.nombre AS categoria FROM practica_receta pr
              JOIN recetas r ON r.id = pr.receta_id
              JOIN categorias_receta cr ON cr.id = r.categoria_id
              WHERE pr.practica_id = ? ORDER BY r.nombre ASC'

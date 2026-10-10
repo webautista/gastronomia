@@ -19,9 +19,7 @@ if (!$practica) {
     redirect('index.php');
 }
 
-$stmt = db()->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
-$stmt->execute([$id]);
-$recetas = array_map(fn($r) => $r + ['entidad_tipo' => 'practica'], $stmt->fetchAll());
+$recetas = recetasAsignadas(db(), 'practica', $id);
 
 $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
 $consolidado = listaCompraConsolidada(db(), $recetas, $decisionesCompra);

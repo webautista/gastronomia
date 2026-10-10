@@ -39,7 +39,7 @@ foreach ($participaciones as &$part) {
     $part['acciones_por_fila'] = $detalle['acciones_por_fila'];
 
     $recetasParaLista = array_map(
-        fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => $part['tipo']],
+        fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => $part['tipo'], 'base_calculo' => $rc['base_calculo'] ?? null],
         $part['recetas']
     );
     $decisionesCompra = cargarDecisionesCompra(db(), $part['tipo'], $part['id']);
