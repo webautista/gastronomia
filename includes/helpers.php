@@ -139,6 +139,89 @@ function calcularCantidad(float $cantidadBase, int $porcionesBase, int $porcione
     return $cantidadBase * ($porcionesNecesarias / $porcionesBase);
 }
 
+/**
+ * Porciones "de prueba" de una receta (cuántas degustaciones rinde la misma
+ * tanda con la que están escritas las cantidades), o 0 si no se definieron.
+ * Se usa en las prácticas de clase, donde la receta se prepara para que todos
+ * los estudiantes la prueben; en los eventos se usan las porciones reales.
+ */
+function porcionesPruebaReceta(array $receta): int
+{
+    return max(0, (int) ($receta['porciones_prueba'] ?? 0));
+}
+
+/**
+ * Porciones a las que están referidas las cantidades de la receta según el
+ * contexto: en una práctica, las de prueba (si la receta las tiene); en un
+ * evento —o si no hay porciones de prueba— las porciones base (reales).
+ * Es el divisor de calcularCantidad() al escalar a "porciones a preparar".
+ */
+function porcionesReferencia(array $receta, string $entidadTipo): int
+{
+    if ($entidadTipo === 'practica') {
+        $prueba = porcionesPruebaReceta($receta);
+        if ($prueba > 0) {
+            return $prueba;
+        }
+    }
+    return max(1, (int) ($receta['porciones_base'] ?? 1));
+}
+
+/**
+ * ¿Ya existe recetas.porciones_prueba? Antes de correr setup.php en un
+ * servidor con el código nuevo, las pantallas que guardan recetas siguen
+ * funcionando sin esa columna (se resuelve una vez por petición).
+ */
+function recetasTienePorcionesPrueba(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW COLUMNS FROM recetas LIKE 'porciones_prueba'")->fetch();
+        } catch (PDOException $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/**
+ * Preparación de una receta lista para imprimir en HTML: el texto se escapa
+ * y se respetan los saltos de línea (el CSS .prep-text usa pre-line), pero
+ * toda línea que empiece con "⚠" (notas sanitarias, ej. "⚠ Cocinar el huevo
+ * a más de 70 °C") se dibuja como un cuadro destacado.
+ */
+function renderPreparacionHtml(string $texto): string
+{
+    $html = '';
+    $buffer = [];
+    $volcar = function () use (&$html, &$buffer) {
+        if ($buffer) {
+            $html .= '<div class="prep-parrafo">' . e(implode("\n", $buffer)) . '</div>';
+            $buffer = [];
+        }
+    };
+    foreach (preg_split('/\R/u', $texto) as $linea) {
+        if (preg_match('/^\s*⚠/u', $linea)) {
+            $volcar();
+            $limpio = trim(preg_replace('/^\s*⚠\x{FE0F}?\s*/u', '', $linea));
+            $html .= '<div class="prep-aviso"><span class="prep-aviso-icono" aria-hidden="true">⚠</span><span>' . e($limpio) . '</span></div>';
+        } else {
+            $buffer[] = $linea;
+        }
+    }
+    $volcar();
+    return $html;
+}
+
+/** Texto "base N porciones" / "base N pruebas" según el contexto. */
+function etiquetaPorcionesReferencia(array $receta, string $entidadTipo): string
+{
+    $n = porcionesReferencia($receta, $entidadTipo);
+    $esPrueba = $entidadTipo === 'practica' && porcionesPruebaReceta($receta) > 0;
+    return 'base ' . $n . ($esPrueba ? ($n === 1 ? ' prueba' : ' pruebas') : ($n === 1 ? ' porción' : ' porciones'));
+}
+
 /** Redirige y termina la ejecución. */
 function redirect(string $url): void
 {
@@ -331,7 +414,12 @@ function recetasAsignadas(PDO $pdo, string $entidadTipo, int $entidadId): array
         $stmt = $pdo->prepare('SELECT receta_id, porciones_necesarias FROM evento_receta WHERE evento_id = ?');
     }
     $stmt->execute([$entidadId]);
-    return $stmt->fetchAll();
+    $filas = $stmt->fetchAll();
+    foreach ($filas as &$f) {
+        $f['entidad_tipo'] = $entidadTipo === 'practica' ? 'practica' : 'evento';
+    }
+    unset($f);
+    return $filas;
 }
 
 /**
@@ -1485,7 +1573,8 @@ function convertirCostoPorUnidad(float $costoPorUnidadOrigen, ?array $unidadOrig
  * tengo" y esa línea no suma nada al total (pero 'monto_porcion' conserva
  * el costo por porción original, solo para referencia en pantalla).
  *
- * $recetasConPorciones: array de ['receta_id' => int, 'porciones_necesarias' => int]
+ * $recetasConPorciones: array de ['receta_id' => int, 'porciones_necesarias' => int,
+ * 'entidad_tipo' => 'evento'|'practica' (opcional; 'evento' si falta)]
  * — se reordena internamente por receta_id antes de procesar nada (ver el
  * primer 'usort' dentro de la función), así que no importa en qué orden lo
  * arme quien llama: cuando dos recetas comparten un ingrediente escrito en
@@ -1557,13 +1646,15 @@ function listaCompraConsolidada(PDO $pdo, array $recetasConPorciones, array $dec
         if ($recetaId <= 0) {
             continue;
         }
-        $stmt = $pdo->prepare('SELECT nombre, porciones_base FROM recetas WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT * FROM recetas WHERE id = ?');
         $stmt->execute([$recetaId]);
         $receta = $stmt->fetch();
         if (!$receta) {
             continue;
         }
-        $porcionesBase = max(1, (int) $receta['porciones_base']);
+        // En prácticas las cantidades se refieren a las porciones de prueba
+        // (si la receta las tiene); en eventos, a las porciones reales.
+        $porcionesBase = porcionesReferencia($receta, (string) ($rp['entidad_tipo'] ?? 'evento'));
         $nombreReceta = $receta['nombre'];
 
         $stmtIng = $pdo->prepare(
@@ -2530,7 +2621,9 @@ function recetasConDetalleParaConsulta(PDO $pdo, string $entidadTipo, int $entid
 
     $idsFilasTodas = [];
     foreach ($recetas as &$rc) {
-        $porcionesBase = max(1, (int) $rc['porciones_base']);
+        $porcionesBase = porcionesReferencia($rc, $entidadTipo);
+        $rc['porciones_referencia'] = $porcionesBase;
+        $rc['entidad_tipo'] = $entidadTipo === 'practica' ? 'practica' : 'evento';
         $stmtIng = $pdo->prepare(
             'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
              JOIN unidades_medida um ON um.id = i.unidad_id

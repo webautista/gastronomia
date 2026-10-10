@@ -95,13 +95,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($accion === 'asignar_recetas') {
         requirePermission($usuarioActual, 'practicas_recetas', 'crear', $base);
         $ids = array_map('intval', $_POST['receta_ids'] ?? []);
-        $stmtPorciones = $pdo->prepare('SELECT porciones_base FROM recetas WHERE id = ?');
+        // Por defecto, una práctica prepara la tanda completa: las porciones
+        // de prueba de la receta (si las tiene) o, si no, sus porciones base.
+        $stmtPorciones = $pdo->prepare('SELECT * FROM recetas WHERE id = ?');
         $stmt = $pdo->prepare('INSERT IGNORE INTO practica_receta (practica_id, receta_id, porciones_necesarias) VALUES (?,?,?)');
         foreach ($ids as $rid) {
             if ($rid > 0) {
                 $stmtPorciones->execute([$rid]);
-                $porcionesBase = max(1, (int) $stmtPorciones->fetchColumn());
-                $stmt->execute([$id, $rid, $porcionesBase]);
+                $recetaAsignada = $stmtPorciones->fetch() ?: [];
+                $porcionesDefecto = max(1, porcionesReferencia($recetaAsignada, 'practica'));
+                $stmt->execute([$id, $rid, $porcionesDefecto]);
             }
         }
     } elseif ($accion === 'actualizar_porciones') {
@@ -264,7 +267,8 @@ if ($puedeVerFotosTab) {
 }
 
 foreach ($recetasPractica as &$rc) {
-    $porcionesBase = max(1, (int) $rc['porciones_base']);
+    $porcionesBase = porcionesReferencia($rc, 'practica');
+    $rc['entidad_tipo'] = 'practica';
     $stmtIng = db()->prepare(
         'SELECT i.*, um.abreviatura AS unidad, um.es_entera AS unidad_entera FROM ingredientes i
          JOIN unidades_medida um ON um.id = i.unidad_id
@@ -296,7 +300,7 @@ unset($rc);
 // cualquier diferencia sutil entre ambas llamadas, puede terminar
 // mostrando dos números distintos para lo que se supone es un solo dato —
 // a pedido de Eyaelkys, que notó justo esa discrepancia).
-$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']], $recetasPractica);
+$recetasParaLista = array_map(fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => 'practica'], $recetasPractica);
 $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
 $consolidado = listaCompraConsolidada(db(), $recetasParaLista, $decisionesCompra);
 $costoMateriales = $consolidado['total'];
@@ -545,7 +549,7 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php $variantesCabecera = ['', 'is-practica', 'is-sage', 'is-wine-sage']; ?>
   <div data-role="lista-recetas-practica">
   <?php foreach ($recetasPractica as $rc):
-    $porcionesBase = max(1, (int) $rc['porciones_base']);
+    $porcionesBase = porcionesReferencia($rc, 'practica');
     $ingredientesReceta = $rc['ingredientes'];
     $costoTotal = $rc['costo_total'];
     $varianteCabecera = $variantesCabecera[(int) $rc['categoria_id'] % 4];
@@ -559,7 +563,7 @@ require __DIR__ . '/../includes/layout_top.php';
               <div class="dash-title"><?= e($rc['nombre']) ?></div>
               <div class="dash-meta">
                 <span><?= e($rc['categoria']) ?></span>
-                <span>base <?= $porcionesBase ?> porciones</span>
+                <span><?= e(etiquetaPorcionesReferencia($rc, 'practica')) ?><?= porcionesPruebaReceta($rc) > 0 ? ' · rinde ' . (int) $rc['porciones_base'] . ' ' . ((int) $rc['porciones_base'] === 1 ? 'plato' : 'platos') : '' ?></span>
               </div>
             </div>
           </div>

@@ -39,7 +39,7 @@ foreach ($participaciones as &$part) {
     $part['acciones_por_fila'] = $detalle['acciones_por_fila'];
 
     $recetasParaLista = array_map(
-        fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias']],
+        fn($rc) => ['receta_id' => $rc['id'], 'porciones_necesarias' => $rc['porciones_necesarias'], 'entidad_tipo' => $part['tipo']],
         $part['recetas']
     );
     $decisionesCompra = cargarDecisionesCompra(db(), $part['tipo'], $part['id']);
@@ -188,7 +188,7 @@ require __DIR__ . '/includes/layout_top.php';
     <?php endif; ?>
     <div data-role="<?= e($contenedorId) ?>">
       <?php foreach ($part['recetas'] as $rc):
-        $porcionesBase = max(1, (int) $rc['porciones_base']);
+        $porcionesBase = (int) $rc['porciones_referencia'];
       ?>
         <div class="recipe-card" data-recipe-card data-porciones-base="<?= $porcionesBase ?>">
           <div class="recipe-card-head">
@@ -196,7 +196,7 @@ require __DIR__ . '/includes/layout_top.php';
               <button class="icon-btn no-print" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
               <div>
                 <h4><?= e($rc['nombre']) ?></h4>
-                <div class="cell-muted"><?= e($rc['categoria']) ?> · base <?= $porcionesBase ?> porciones · <span class="mono" data-role="costo-total-badge"><?= money($rc['costo_total']) ?></span></div>
+                <div class="cell-muted"><?= e($rc['categoria']) ?> · <?= e(etiquetaPorcionesReferencia($rc, $rc['entidad_tipo'])) ?> · <span class="mono" data-role="costo-total-badge"><?= money($rc['costo_total']) ?></span></div>
               </div>
             </div>
             <div class="stat-hint"><?= (int) $rc['porciones_necesarias'] ?> porciones a preparar</div>

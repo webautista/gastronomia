@@ -21,7 +21,7 @@ if (!$practica) {
 
 $stmt = db()->prepare('SELECT receta_id, porciones_necesarias FROM practica_receta WHERE practica_id = ?');
 $stmt->execute([$id]);
-$recetas = $stmt->fetchAll();
+$recetas = array_map(fn($r) => $r + ['entidad_tipo' => 'practica'], $stmt->fetchAll());
 
 $decisionesCompra = cargarDecisionesCompra(db(), 'practica', $id);
 $consolidado = listaCompraConsolidada(db(), $recetas, $decisionesCompra);

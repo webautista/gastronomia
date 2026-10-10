@@ -70,7 +70,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <div class="page-head">
   <div>
     <h1><?= e($receta['nombre']) ?></h1>
-    <p><?= e($receta['categoria']) ?> · base <?= $porcionesBase ?> porciones</p>
+    <p><?= e($receta['categoria']) ?> · rinde <?= $porcionesBase ?> <?= $porcionesBase === 1 ? 'porción' : 'porciones' ?><?= porcionesPruebaReceta($receta) > 0 ? ' · ' . porcionesPruebaReceta($receta) . ' de prueba' : '' ?></p>
     <?php if (trim((string) ($receta['descripcion'] ?? '')) !== ''): ?>
       <p style="max-width:640px;"><?= nl2br(e($receta['descripcion'])) ?></p>
     <?php endif; ?>
@@ -124,7 +124,7 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php if (trim((string) ($receta['preparacion'] ?? '')) !== ''): ?>
   <div class="card card-pad" style="margin-top:16px;">
     <h2 class="section-title"><?= icon('book') ?> Preparación</h2>
-    <div class="prep-text"><?= e($receta['preparacion']) ?></div>
+    <div class="prep-text"><?= renderPreparacionHtml((string) $receta['preparacion']) ?></div>
   </div>
 <?php endif; ?>
 

@@ -281,6 +281,9 @@ table.table{width:100%;border-collapse:collapse;}
 .prep-details summary::-webkit-details-marker{display:none;}
 .prep-details[open] summary{margin-bottom:8px;}
 .prep-text{font-size:.86rem;line-height:1.6;color:var(--text-secondary);white-space:pre-line;}
+.prep-parrafo{white-space:pre-line;}
+.prep-aviso{display:flex;gap:10px;align-items:flex-start;margin:10px 0;padding:10px 12px;border-radius:var(--radius-md);background:var(--warning-soft);border-left:4px solid var(--warning);color:var(--text);font-weight:500;white-space:normal;}
+.prep-aviso-icono{color:var(--warning);font-size:1rem;line-height:1.4;flex:none;}
 .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--accent);outline-offset:1px;}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 @media (max-width:480px){.field-row{grid-template-columns:1fr;}}

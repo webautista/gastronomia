@@ -2512,6 +2512,30 @@ function agregarResponsableCompra(PDO $pdo): array
 }
 
 /**
+ * Agrega recetas.porciones_prueba (INT UNSIGNED NULL), a pedido de
+ * Eyaelkys: las recetas que diseña el maestro para la clase están pensadas
+ * para que los 17 estudiantes las prueben, así que cada receta necesita dos
+ * números: "porciones" (lo que rinde realmente un plato, para eventos y como
+ * referencia futura) y "porciones de prueba" (cuántas degustaciones salen de
+ * la misma tanda). Las cantidades de los ingredientes siguen siendo las de
+ * una tanda; en prácticas se escala contra las porciones de prueba y en
+ * eventos contra las porciones reales (ver porcionesReferencia() en
+ * includes/helpers.php). NULL = la receta no tiene porciones de prueba y se
+ * comporta exactamente como antes. Va aquí y no en el CREATE TABLE de
+ * db/schema.sql porque "recetas" ya existe en producción.
+ */
+function agregarPorcionesPruebaARecetas(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'recetas', 'id') || columnaExiste($pdo, 'recetas', 'porciones_prueba')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE recetas ADD COLUMN porciones_prueba INT UNSIGNED NULL AFTER porciones_base');
+    $mensajes[] = 'Columna "porciones_prueba" agregada a la tabla recetas (cuántas degustaciones rinde la tanda de la receta; vacío = igual que antes, las recetas existentes no cambian).';
+    return $mensajes;
+}
+
+/**
  * Agrega eventos.fecha_tentativa (TINYINT(1) NOT NULL DEFAULT 0), a pedido
  * de Eyaelkys: "en la fecha del evento, quiero poder decir que la fecha sea
  * tentativa; en caso de tentativa que salga solo el mes". Con 1, todo el
@@ -2733,6 +2757,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarUsuarioIdAEstudiantes($pdo));
         $mensajes = array_merge($mensajes, agregarUltimoAccesoAUsuarios($pdo));
         $mensajes = array_merge($mensajes, agregarResponsableCompra($pdo));
+        $mensajes = array_merge($mensajes, agregarPorcionesPruebaARecetas($pdo));
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));

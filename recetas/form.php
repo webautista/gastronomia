@@ -8,7 +8,7 @@ $usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
 requirePermission($usuarioActual, 'recetas', $id ? 'editar' : 'crear', $base);
 
-$receta = ['nombre' => '', 'descripcion' => '', 'categoria_id' => '', 'porciones_base' => '', 'preparacion' => '', 'foto' => null];
+$receta = ['nombre' => '', 'descripcion' => '', 'categoria_id' => '', 'porciones_base' => '', 'porciones_prueba' => null, 'preparacion' => '', 'foto' => null];
 $ingredientes = [['ingrediente_id' => '', 'nombre' => '', 'cantidad' => '', 'unidad_id' => '', 'costo_unitario' => '', 'reemplazo' => '', 'al_gusto' => 0, 'opcional' => 0, 'acciones' => []]];
 $errores = [];
 
@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $receta['descripcion']    = trim($_POST['descripcion'] ?? '');
     $receta['categoria_id']   = intOrNull($_POST['categoria_id'] ?? null);
     $receta['porciones_base'] = intOrNull($_POST['porciones_base'] ?? null);
+    $receta['porciones_prueba'] = intOrNull($_POST['porciones_prueba'] ?? null);
     $receta['preparacion']    = trim($_POST['preparacion'] ?? '');
 
     $ingNombres        = $_POST['ing_nombre'] ?? [];
@@ -190,7 +191,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'El nombre de la receta es obligatorio.';
     }
     if (!$receta['porciones_base'] || $receta['porciones_base'] < 1) {
-        $errores[] = 'Las porciones base deben ser un número mayor a 0.';
+        $errores[] = 'Las porciones reales deben ser un número mayor a 0.';
+    }
+    if ($receta['porciones_prueba'] !== null && $receta['porciones_prueba'] < 1) {
+        $receta['porciones_prueba'] = null;
     }
     if (!in_array($receta['categoria_id'], array_column($categorias, 'id'), true)) {
         $errores[] = 'Categoría no válida.';
@@ -256,11 +260,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id) {
                 $stmt = $pdo->prepare('UPDATE recetas SET nombre=?, descripcion=?, categoria_id=?, porciones_base=?, preparacion=?, foto=? WHERE id=?');
                 $stmt->execute([$receta['nombre'], $descripcionFinal, $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal, $id]);
+                if (recetasTienePorcionesPrueba($pdo)) {
+                    $pdo->prepare('UPDATE recetas SET porciones_prueba=? WHERE id=?')->execute([$receta['porciones_prueba'], $id]);
+                }
                 $pdo->prepare('DELETE FROM ingredientes WHERE receta_id = ?')->execute([$id]);
             } else {
                 $stmt = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion, foto) VALUES (?,?,?,?,?,?)');
                 $stmt->execute([$receta['nombre'], $descripcionFinal, $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal]);
                 $id = (int) $pdo->lastInsertId();
+                if (recetasTienePorcionesPrueba($pdo)) {
+                    $pdo->prepare('UPDATE recetas SET porciones_prueba=? WHERE id=?')->execute([$receta['porciones_prueba'], $id]);
+                }
             }
 
             // Una consulta preparada por fila de ingrediente es inevitable (cada
@@ -344,10 +354,20 @@ require __DIR__ . '/../includes/layout_top.php';
         <?php endif; ?>
       </div>
       <div class="field">
-        <label for="porciones_base">Porciones base</label>
+        <label for="porciones_base">Porciones reales</label>
         <input type="number" id="porciones_base" name="porciones_base" min="1" required value="<?= e((string) $receta['porciones_base']) ?>">
+        <div class="hint">Cuántos platos servibles rinde la receta con las cantidades escritas aquí. Es la base para los eventos.</div>
       </div>
     </div>
+    <?php if (recetasTienePorcionesPrueba(db())): ?>
+    <div class="field-row">
+      <div class="field">
+        <label for="porciones_prueba">Porciones de prueba <span class="cell-muted">(opcional)</span></label>
+        <input type="number" id="porciones_prueba" name="porciones_prueba" min="1" value="<?= e((string) ($receta['porciones_prueba'] ?? '')) ?>">
+        <div class="hint">Cuántas degustaciones salen de esas mismas cantidades (ej. 17 para que toda la clase la pruebe). Las prácticas se calculan con este número; si lo dejas vacío, usan las porciones reales.</div>
+      </div>
+    </div>
+    <?php endif; ?>
 
     <div class="field">
       <label>Foto de referencia</label>
@@ -369,7 +389,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
     <div class="field">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <label style="margin:0;">Ingredientes (por las porciones base indicadas)</label>
+        <label style="margin:0;">Ingredientes (cantidades de una tanda: las porciones reales y de prueba indicadas)</label>
         <button type="button" class="btn btn-success btn-sm" id="btnNuevoIngrediente" data-abrir-modal-ingrediente><?= icon('plus') ?> Nuevo ingrediente</button>
       </div>
       <div class="ing-row ing-row-labels">

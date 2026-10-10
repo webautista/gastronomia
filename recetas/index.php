@@ -52,6 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'dupli
         $stmtNueva = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion, foto) VALUES (?,?,?,?,?,NULL)');
         $stmtNueva->execute([$original['nombre'] . ' (copia)', $original['descripcion'], $original['categoria_id'], $original['porciones_base'], $original['preparacion']]);
         $nuevoId = (int) $pdo->lastInsertId();
+        if (array_key_exists('porciones_prueba', $original)) {
+            $pdo->prepare('UPDATE recetas SET porciones_prueba=? WHERE id=?')->execute([$original['porciones_prueba'], $nuevoId]);
+        }
 
         $stmtIngOrig = $pdo->prepare('SELECT * FROM ingredientes WHERE receta_id = ? ORDER BY orden ASC, id ASC');
         $stmtIngOrig->execute([$idOrig]);
@@ -200,7 +203,7 @@ require __DIR__ . '/../includes/layout_top.php';
                 <div class="dash-title"><a href="ver.php?id=<?= (int) $rc['id'] ?>"><?= e($rc['nombre']) ?></a></div>
                 <div class="dash-meta">
                   <span><?= icon('book') ?> <?= e($rc['categoria']) ?></span>
-                  <span><?= icon('portion') ?> Base: <?= (int) $rc['porciones_base'] ?> porciones</span>
+                  <span><?= icon('portion') ?> Rinde <?= (int) $rc['porciones_base'] ?> porciones<?= porcionesPruebaReceta($rc) > 0 ? ' · ' . porcionesPruebaReceta($rc) . ' de prueba' : '' ?></span>
                   <span><?= (int) $rc['num_ingredientes'] ?> ingredientes</span>
                 </div>
               </div>
@@ -220,7 +223,7 @@ require __DIR__ . '/../includes/layout_top.php';
           <?php if (trim((string) ($rc['preparacion'] ?? '')) !== ''): ?>
             <details class="prep-details">
               <summary><?= icon('book') ?> Ver preparación</summary>
-              <div class="prep-text"><?= e($rc['preparacion']) ?></div>
+              <div class="prep-text"><?= renderPreparacionHtml((string) $rc['preparacion']) ?></div>
             </details>
           <?php endif; ?>
           <div class="dash-footer">
