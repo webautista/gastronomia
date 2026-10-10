@@ -2536,6 +2536,38 @@ function agregarPorcionesPruebaARecetas(PDO $pdo): array
 }
 
 /**
+ * Agrega recetas.icono (VARCHAR(16) NULL): el emoji que se muestra antes del
+ * nombre de la receta en tarjetas y títulos (ej. "🍎 Cheesecake de manzana"),
+ * a pedido de Eyaelkys. Al crearse la columna se rellena UNA vez, para las
+ * recetas existentes, con el ícono que sugiere iconoSugeridoReceta()
+ * (includes/helpers.php) según el nombre y la categoría; las recetas cuyo
+ * nombre ya empieza con un emoji escrito a mano se dejan sin ícono propio
+ * (para no repetirlo). Después de eso, cada receta conserva el que se
+ * elija en su formulario (vacío = se sugiere uno al guardar). Va aquí y no
+ * en el CREATE TABLE de db/schema.sql porque "recetas" ya existe en producción.
+ */
+function agregarIconoARecetas(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'recetas', 'id') || columnaExiste($pdo, 'recetas', 'icono')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE recetas ADD COLUMN icono VARCHAR(16) NULL AFTER nombre');
+    $filas = $pdo->query('SELECT r.id, r.nombre, cr.nombre AS categoria FROM recetas r LEFT JOIN categorias_receta cr ON cr.id = r.categoria_id')->fetchAll();
+    $upd = $pdo->prepare('UPDATE recetas SET icono = ? WHERE id = ?');
+    $n = 0;
+    foreach ($filas as $f) {
+        if (empiezaConEmoji((string) $f['nombre'])) {
+            continue;
+        }
+        $upd->execute([iconoSugeridoReceta((string) $f['nombre'], (string) ($f['categoria'] ?? '')), (int) $f['id']]);
+        $n++;
+    }
+    $mensajes[] = "Columna \"icono\" agregada a la tabla recetas y se asignó un ícono sugerido a $n recetas (puedes cambiarlo desde el formulario de cada receta).";
+    return $mensajes;
+}
+
+/**
  * Agrega practica_receta.base_calculo (VARCHAR(10) NOT NULL DEFAULT
  * 'prueba'), a pedido de Eyaelkys: en cada práctica se elige, receta por
  * receta, si se calcula y trabaja con las porciones de prueba (degustaciones
@@ -2553,6 +2585,2441 @@ function agregarBaseCalculoAPracticaReceta(PDO $pdo): array
     }
     $pdo->exec("ALTER TABLE practica_receta ADD COLUMN base_calculo VARCHAR(10) NOT NULL DEFAULT 'prueba'");
     $mensajes[] = 'Columna "base_calculo" agregada a la tabla practica_receta (en cada práctica se elige si cada receta se calcula con porciones de prueba o reales; las prácticas existentes quedaron como siempre).';
+    return $mensajes;
+}
+
+/**
+ * Soporte común de la carga de las 80 recetas (tandas 1 a 4, más abajo):
+ * crea (si faltan) las categorías "Sopa y crema" y "Salsa y conserva" y las
+ * unidades Hoja, Tira, Lonja, Tubo y Rodaja (cantidades enteras, como
+ * Diente o Rebanada). Todo con INSERT IGNORE: correrlo varias veces no
+ * duplica nada.
+ */
+function prepararCargaRecetas80(PDO $pdo): void
+{
+    foreach (['Sopa y crema', 'Salsa y conserva'] as $nombreCat) {
+        if (!idPorNombre($pdo, 'categorias_receta', 'nombre', $nombreCat)) {
+            $orden = (int) $pdo->query('SELECT COALESCE(MAX(orden), 0) + 10 FROM categorias_receta')->fetchColumn();
+            $pdo->prepare('INSERT IGNORE INTO categorias_receta (nombre, orden) VALUES (?, ?)')->execute([$nombreCat, $orden]);
+        }
+    }
+    $tieneEntera = columnaExiste($pdo, 'unidades_medida', 'es_entera');
+    $unidades = [['Hoja', 'hoja', 190], ['Tira', 'tira', 200], ['Lonja', 'lonja', 210], ['Tubo', 'tubo', 220], ['Rodaja', 'rodaja', 230]];
+    foreach ($unidades as [$nombre, $abrev, $orden]) {
+        if (idPorNombre($pdo, 'unidades_medida', 'nombre', $nombre)) {
+            continue;
+        }
+        if ($tieneEntera) {
+            $pdo->prepare('INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden, es_entera) VALUES (?, ?, ?, 1)')->execute([$nombre, $abrev, $orden]);
+        } else {
+            $pdo->prepare('INSERT IGNORE INTO unidades_medida (nombre, abreviatura, orden) VALUES (?, ?, ?)')->execute([$nombre, $abrev, $orden]);
+        }
+    }
+}
+
+/**
+ * Inserta ingredientes nuevos en el catálogo (INSERT IGNORE por nombre: si
+ * Eyaelkys ya tiene uno con ese nombre, no se toca). Cada fila:
+ * [nombre, categoría, ícono, unidad de uso, unidad de compra, contenido por
+ * compra, precio de compra, nota].
+ */
+function sembrarIngredientesNuevos80(PDO $pdo, array $filas): void
+{
+    $stmt = $pdo->prepare(
+        'INSERT IGNORE INTO ingredientes_catalogo
+            (nombre, categoria_id, icono, unidad_id, unidad_compra_id, contenido_por_compra, precio_compra, nota_compra)
+         VALUES (?, (SELECT id FROM categorias_ingrediente WHERE nombre = ?), ?,
+                 (SELECT id FROM unidades_medida WHERE nombre = ?),
+                 (SELECT id FROM unidades_medida WHERE nombre = ?), ?, ?, ?)'
+    );
+    foreach ($filas as $f) {
+        $stmt->execute($f);
+    }
+}
+
+/**
+ * Completa peso_unidad_g / densidad_g_ml de ingredientes del catálogo SOLO
+ * donde están vacíos (NULL), para que la lista de compra pueda convertir,
+ * por ejemplo, "1 cebolla" a libras. No pisa valores que ya existan.
+ * Cada fila: [nombre, densidad g/ml o null, peso por unidad en g o null].
+ */
+function completarPesoDensidad80(PDO $pdo, array $filas): void
+{
+    $tieneDens = columnaExiste($pdo, 'ingredientes_catalogo', 'densidad_g_ml');
+    $tienePeso = columnaExiste($pdo, 'ingredientes_catalogo', 'peso_unidad_g');
+    foreach ($filas as [$nombre, $dens, $peso]) {
+        if ($tieneDens && $dens !== null) {
+            $pdo->prepare('UPDATE ingredientes_catalogo SET densidad_g_ml = ? WHERE nombre = ? AND densidad_g_ml IS NULL')->execute([$dens, $nombre]);
+        }
+        if ($tienePeso && $peso !== null) {
+            $pdo->prepare('UPDATE ingredientes_catalogo SET peso_unidad_g = ? WHERE nombre = ? AND peso_unidad_g IS NULL')->execute([$peso, $nombre]);
+        }
+    }
+}
+
+/**
+ * Crea una receta de la carga de las 80 recetas, con sus ingredientes, solo
+ * si no existe ya una con ese nombre. Devuelve el mensaje para mostrar en
+ * setup.php, o null si la receta ya existía. Si algo falla en una receta,
+ * se deshace solo esa receta y se informa, sin detener el resto de
+ * setup.php. Cada línea: [catálogo|null, nombre, cantidad, unidad, costo
+ * por unidad, acciones, al gusto, opcional, reemplazo].
+ */
+function crearRecetaCarga80(PDO $pdo, string $categoria, string $nombre, string $descripcion, int $porcionesBase, string $preparacion, array $lineas): ?string
+{
+    $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
+    $yaExiste->execute([$nombre]);
+    if ((int) $yaExiste->fetchColumn() > 0) {
+        return null;
+    }
+    $categoriaId = idPorNombre($pdo, 'categorias_receta', 'nombre', $categoria);
+    if (!$categoriaId) {
+        return "No se creó la receta \"$nombre\": falta la categoría \"$categoria\".";
+    }
+    try {
+        $pdo->beginTransaction();
+        $stmtR = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion) VALUES (?,?,?,?,?)');
+        $stmtR->execute([$nombre, $descripcion, $categoriaId, $porcionesBase, $preparacion]);
+        $recetaId = (int) $pdo->lastInsertId();
+        if (columnaExiste($pdo, 'recetas', 'porciones_prueba')) {
+            $pdo->prepare('UPDATE recetas SET porciones_prueba = 17 WHERE id = ?')->execute([$recetaId]);
+        }
+        if (columnaExiste($pdo, 'recetas', 'icono')) {
+            $pdo->prepare('UPDATE recetas SET icono = ? WHERE id = ?')->execute([iconoSugeridoReceta($nombre, $categoria), $recetaId]);
+        }
+        $insLinea = $pdo->prepare(
+            'INSERT INTO ingredientes (receta_id, ingrediente_id, nombre, cantidad, unidad_id, costo_unitario, reemplazo, al_gusto, opcional, orden)
+             VALUES (?,?,?,?,?,?,?,?,?,?)'
+        );
+        $insAccion = $pdo->prepare('INSERT INTO ingrediente_accion (receta_ingrediente_id, accion_id) VALUES (?,?)');
+        $orden = 1;
+        foreach ($lineas as [$catNombre, $nombreLinea, $cantidad, $unidadNombre, $costo, $acciones, $alGusto, $opcional, $reemplazo]) {
+            $unidadId = idPorNombre($pdo, 'unidades_medida', 'nombre', $unidadNombre);
+            if (!$unidadId) {
+                throw new RuntimeException("falta la unidad \"$unidadNombre\"");
+            }
+            $insLinea->execute([
+                $recetaId,
+                recetaCarga80IdCatalogo($pdo, $catNombre),
+                $nombreLinea,
+                $cantidad,
+                $unidadId,
+                $costo,
+                $reemplazo,
+                $alGusto ? 1 : 0,
+                $opcional ? 1 : 0,
+                $orden,
+            ]);
+            $lineaId = (int) $pdo->lastInsertId();
+            foreach ($acciones as $accNombre) {
+                $accId = idPorNombre($pdo, 'acciones_ingrediente', 'nombre', $accNombre);
+                if ($accId) {
+                    $insAccion->execute([$lineaId, $accId]);
+                }
+            }
+            $orden++;
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        return "No se pudo crear la receta \"$nombre\": " . $e->getMessage();
+    }
+    return "Receta \"$nombre\" creada ($porcionesBase porciones reales, 17 de prueba, " . count($lineas) . ' ingredientes).';
+}
+
+/** Id del ingrediente del catálogo por nombre (null si no hay catálogo o no existe). */
+function recetaCarga80IdCatalogo(PDO $pdo, ?string $nombre): ?int
+{
+    return $nombre === null ? null : idPorNombre($pdo, 'ingredientes_catalogo', 'nombre', $nombre);
+}
+
+/**
+ * Carga de las 80 recetas de elaboración gastronómica (PDF de Eyaelkys) —
+ * tanda 1 de 4: recetas 1 a 20. Cada receta se crea solo si su nombre no
+ * existe todavía (idempotente), con sus ingredientes enlazados al catálogo,
+ * porciones reales estimadas (porciones_base), 17 porciones de prueba
+ * (las degustaciones que rinde el lote del PDF) y un ícono sugerido.
+ *
+ * Supuestos de esta tanda (a revisar por Eyaelkys):
+ * - Las cantidades son las del PDF (lote de 17 degustaciones). Las porciones
+ *   reales (porciones_base) son una estimación mía de platos completos.
+ * - Ingredientes que no estaban en el catálogo se crean con precio de
+ *   referencia (estimación de mercado RD, marcada en su nota de compra).
+ * - Rangos: se costea con el número mayor (ej. 180–220 g de harina → 220 g)
+ *   y la preparación conserva el rango.
+ * - Las advertencias sanitarias de la preparación van como líneas "⚠".
+ * - 1 cebolla/tomate/zanahoria/papa por unidad: peso medio asumido (cebolla 150 g, tomate 130 g, zanahoria 80 g, papa 200 g).
+ * - Pulpa de maracuyá: ≈165 ml de pulpa por libra de chinola.
+ * - Caldo ≈ RD$40/litro (estimación; el costo real depende de si es casero).
+ * - Jugo de piña: ≈700 ml de jugo por piña entera.
+ * - Garbanzos/habichuelas cocidos: costeados al 40 % de su peso en seco (rinden ≈2.5×); se compran secos.
+ * - "Hongos" = champiñones.
+ * - Salsa de tomate en ml/g: lata de 227 g ≈ 227 ml.
+ * - 4 filetes de 180 g = 720 g de filete de res (lomito).
+ */
+function sembrarRecetas80Tanda1(PDO $pdo): array
+{
+    $mensajes = [];
+    prepararCargaRecetas80($pdo);
+    sembrarIngredientesNuevos80($pdo, [
+        ['Pulpa de tamarindo', 'Fruta', '🌰', 'Libra', 'Libra', 1, 140.00, 'Pulpa de tamarindo. Estimación de mercado RD (≈RD$140/libra). Ajusta si tienes el precio real.'],
+        ['Caldo (pollo o vegetales)', 'Enlatado y conserva', '🍲', 'Litro', 'Litro', 1, 40.00, 'Caldo preparado o hecho con cubitos/base: estimación ≈RD$40/litro. Ajusta si tienes el costo real.'],
+        ['Jengibre fresco', 'Vegetal', '🫚', 'Libra', 'Libra', 1, 150.00, 'Estimación de mercado RD (≈RD$150/libra). Ajusta si tienes el precio real.'],
+        ['Cebollitas pequeñas (perla)', 'Vegetal', '🧅', 'Libra', 'Libra', 1, 70.00, 'Cebollitas para encurtir. Estimación de mercado RD (≈RD$70/libra). Ajusta si tienes el precio real.'],
+        ['Remolacha', 'Vegetal', '🫜', 'Libra', 'Libra', 1, 40.00, 'Estimación de mercado RD (≈RD$40/libra). Ajusta si tienes el precio real.'],
+        ['Chalota', 'Vegetal', '🧅', 'Unidad', 'Unidad', 1, 15.00, 'Chalota (echalote). Estimación de mercado RD (≈RD$15 c/u). Ajusta si tienes el precio real.'],
+        ['Champiñones', 'Vegetal', '🍄', 'Libra', 'Libra', 1, 140.00, 'Champiñones frescos. Estimación de mercado RD (≈RD$140/libra). Ajusta si tienes el precio real.'],
+        ['Apio', 'Vegetal', '🥬', 'Rama', 'Manojo', 8, 40.00, 'Estimación de mercado RD: manojo de ≈8 ramas por RD$40.00. Ajusta si tienes el precio real.'],
+        ['Arroz arborio', 'Grano y cereal', '🍚', 'Libra', 'Libra', 1, 180.00, 'Arroz para risotto. Estimación de mercado RD, sin fuente puntual verificada. Ajusta si tienes el precio real.'],
+        ['Berenjena', 'Vegetal', '🍆', 'Libra', 'Libra', 1, 55.00, 'Estimación de mercado RD (≈RD$55/libra). 1 berenjena mediana ≈ 300 g. Ajusta si tienes el precio real.'],
+        ['Filete de res (lomito)', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 450.00, 'Lomito/filete de res. Estimación de mercado RD (≈RD$450/libra). Ajusta si tienes el precio real.'],
+    ]);
+    // Peso/densidad de referencia SOLO si el catálogo no los tenía (para convertir unidades en la lista de compra).
+    completarPesoDensidad80($pdo, [
+        ['Apio', null, 50],
+        ['Berenjena', null, 300],
+        ['Calabacín', null, 227],
+        ['Cebolla blanca', null, 150],
+        ['Cilantro', null, 50],
+        ['Levadura', null, 11],
+        ['Miel de abeja', 1.42, null],
+        ['Papa', null, 200],
+        ['Pechuga de pollo', null, 200],
+        ['Perejil', null, 50],
+        ['Queso rallado', 0.4, null],
+        ['Sal', 1.2, null],
+        ['Tomate', null, 130],
+        ['Zanahoria', null, 80],
+    ]);
+
+    // 1. Camarones en salsa de tamarindo
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Camarones en salsa de tamarindo',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Limpiar camarones y refrigerar.',
+            'Sofreír ajo y cebolla.',
+            'Diluir el tamarindo en agua y colar; añadir y reducir 5 minutos.',
+            '⚠ Incorporar camarones y cocinar hasta que estén opacos y bien cocidos.',
+        ]),
+        [
+            ['Camarón', 'Camarones', 500, 'Gramo', 0.62, [], false, false, null],
+            ['Pulpa de tamarindo', 'Pulpa de tamarindo', 100, 'Gramo', 0.31, [], false, false, null],
+            ['Agua', 'Agua', 100, 'Mililitro', 0.00, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla pequeña', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 2. Pollo en salsa de maracuyá
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pollo en salsa de maracuyá',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sazonar y dorar el pollo.',
+            'Reservar.',
+            'Sofreír cebolla, agregar pulpa, caldo y miel.',
+            '⚠ Regresar el pollo y cocinar hasta alcanzar 74 °C en el centro.',
+            'Ajustar acidez.',
+        ]),
+        [
+            ['Pechuga de pollo', 'Pechuga de pollo', 600, 'Gramo', 0.38, [], false, false, null],
+            ['Chinola', 'Pulpa de chinola (maracuyá) colada', 150, 'Mililitro', 0.47, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 100, 'Mililitro', 0.04, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Miel de abeja', 'Miel', 15, 'Gramo', 0.55, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 3. Pescado en salsa de naranja agria
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pescado en salsa de naranja agria',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sazonar el pescado.',
+            'Sofreír ajo y pimiento; agregar jugo y caldo.',
+            '⚠ Colocar el pescado en la salsa y cocinar suavemente hasta que esté completamente cocido.',
+        ]),
+        [
+            ['Filete de pescado', 'Filetes de pescado', 600, 'Gramo', 0.33, [], false, false, null],
+            ['Naranja agria', 'Jugo de naranja agria', 120, 'Mililitro', 0.19, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 80, 'Mililitro', 0.04, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 4. Zanahorias encurtidas con jengibre
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Zanahorias encurtidas con jengibre',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Cortar zanahorias finas.',
+            'Hervir agua, vinagre, azúcar, sal y jengibre.',
+            'Verter sobre zanahorias en recipiente limpio.',
+            '⚠ Enfriar rápidamente y refrigerar.',
+            '⚠ Producto refrigerado, no conserva estable.',
+        ]),
+        [
+            ['Zanahoria', 'Zanahorias', 0.4, 'Kilogramo', 68.34, [], false, false, null],
+            ['Vinagre', 'Vinagre', 0.2, 'Litro', 154.93, [], false, false, null],
+            ['Agua', 'Agua', 200, 'Mililitro', 0.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 20, 'Gramo', 0.08, [], false, false, null],
+            ['Jengibre fresco', 'Jengibre fresco', 10, 'Gramo', 0.33, [], false, false, null],
+            ['Sal', 'Sal', 8, 'Gramo', 0.03, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 5. Cerdo en salsa agridulce de piña
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Cerdo en salsa agridulce de piña',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cortar el cerdo y dorarlo.',
+            'Saltear pimiento y piña; incorporar jugo, vinagre y azúcar.',
+            '⚠ Regresar cerdo y terminar cocción hasta temperatura interna segura.',
+            'Reducir salsa.',
+        ]),
+        [
+            ['Carne de cerdo', 'Lomo de cerdo', 600, 'Gramo', 0.33, [], false, false, null],
+            ['Piña', 'Piña', 0.18, 'Kilogramo', 136.36, [], false, false, null],
+            ['Piña', 'Jugo de piña', 80, 'Mililitro', 0.13, [], false, false, null],
+            ['Vinagre', 'Vinagre', 30, 'Mililitro', 0.15, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 25, 'Gramo', 0.08, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 6. Chutney de mango
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Chutney de mango',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        10,
+        implode("\n\n", [
+            'Picar mango y cebolla.',
+            'Cocer todos los ingredientes a fuego suave 25–35 minutos, removiendo hasta espesar.',
+            'Enfriar y refrigerar.',
+            '⚠ No almacenar a temperatura ambiente.',
+        ]),
+        [
+            ['Mango', 'Mango', 0.5, 'Kilogramo', 136.00, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Vinagre', 'Vinagre', 0.12, 'Litro', 154.93, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 90, 'Gramo', 0.08, [], false, false, null],
+            ['Jengibre fresco', 'Jengibre fresco', 10, 'Gramo', 0.33, [], false, false, null],
+            ['Canela en polvo', 'Canela (1 pizca)', 0, 'Cucharadita', 3.80, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 7. Cebollitas encurtidas con remolacha
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Cebollitas encurtidas con remolacha',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Cortar cebolla y remolacha.',
+            'Hervir agua, vinagre, sal y azúcar.',
+            'Cubrir vegetales, enfriar y refrigerar al menos 12 horas.',
+            '⚠ Mantener refrigerado.',
+        ]),
+        [
+            ['Cebollitas pequeñas (perla)', 'Cebollitas pequeñas', 0.35, 'Kilogramo', 154.32, [], false, false, null],
+            ['Remolacha', 'Remolacha cocida', 0.1, 'Kilogramo', 88.18, ['Cocido'], false, false, null],
+            ['Vinagre', 'Vinagre', 0.18, 'Litro', 154.93, [], false, false, null],
+            ['Agua', 'Agua', 180, 'Mililitro', 0.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 25, 'Gramo', 0.08, [], false, false, null],
+            ['Sal', 'Sal', 8, 'Gramo', 0.03, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 8. Pescado con reducción de limón
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pescado con reducción de limón',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cocinar pescado a la plancha.',
+            'Reducir caldo con chalota y limón; retirar del fuego y montar con mantequilla.',
+            'Servir sobre el pescado cocido.',
+        ]),
+        [
+            ['Pescado blanco', 'Pescado blanco', 600, 'Gramo', 0.49, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 100, 'Mililitro', 0.35, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 150, 'Mililitro', 0.04, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 25, 'Gramo', 0.31, [], false, false, null],
+            ['Chalota', 'Chalota', 1, 'Unidad', 15.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 9. Asopao de camarones
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Asopao de camarones',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        5,
+        implode("\n\n", [
+            'Preparar sofrito con cebolla, ají y tomate.',
+            'Agregar arroz y caldo caliente; hervir suave hasta que el arroz esté tierno.',
+            '⚠ Añadir camarones al final y cocer completamente.',
+            'Terminar con cilantro.',
+        ]),
+        [
+            ['Camarón', 'Camarones', 450, 'Gramo', 0.62, [], false, false, null],
+            ['Arroz', 'Arroz', 250, 'Gramo', 0.10, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 1500, 'Mililitro', 0.04, [], false, false, null],
+            ['Tomate', 'Tomate', 0.15, 'Kilogramo', 103.62, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Ají cubanela', 'Ají', 1, 'Unidad', 10.71, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Cilantro', 'Cilantro', 0, 'Manojo', 25.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 10. Crema de hongos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Sopa y crema',
+        'Crema de hongos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Saltear cebolla y hongos.',
+            'Añadir caldo y cocer 15 minutos.',
+            'Licuar con cuidado, incorporar crema, calentar sin hervir fuerte y rectificar.',
+        ]),
+        [
+            ['Champiñones', 'Champiñones', 450, 'Gramo', 0.31, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo de vegetales', 700, 'Mililitro', 0.04, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 150, 'Mililitro', 0.49, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 25, 'Gramo', 0.31, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 11. Pescado al vapor con hierbas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pescado al vapor con hierbas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sazonar pescado con ajo, limón y hierbas.',
+            '⚠ Colocar en vaporera sobre agua hirviendo, tapar y cocinar hasta que se desmenuce fácilmente y esté completamente cocido.',
+        ]),
+        [
+            ['Filete de pescado', 'Pescado', 600, 'Gramo', 0.33, [], false, false, null],
+            ['Limón verde', 'Limón', 1, 'Unidad', 5.23, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Perejil', 'Perejil', 20, 'Gramo', 0.50, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 10, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 12. Ñoquis de papa
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Ñoquis de papa',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Hervir papas y hacer puré seco.',
+            'Mezclar con huevo, sal y harina necesaria (180–220 g) sin amasar en exceso.',
+            'Formar cilindros, cortar y hervir por tandas hasta que floten y estén cocidos.',
+        ]),
+        [
+            ['Papa', 'Papas', 0.7, 'Kilogramo', 83.78, [], false, false, null],
+            ['Harina de trigo', 'Harina de trigo (180–220 g, según la humedad de la papa)', 0.22, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Queso rallado', 'Queso rallado', 30, 'Gramo', 0.56, ['Rallado'], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 13. Sopa minestrone
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Sopa y crema',
+        'Sopa minestrone',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sofreír cebolla y apio.',
+            'Añadir verduras, tomate y caldo; hervir 15 minutos.',
+            'Agregar pasta y habichuelas, terminar cocción y sazonar.',
+        ]),
+        [
+            ['Zanahoria', 'Zanahoria', 0.15, 'Kilogramo', 68.34, [], false, false, null],
+            ['Calabacín', 'Calabacín', 150, 'Gramo', 0.10, [], false, false, null],
+            ['Apio', 'Apio', 100, 'Gramo', 0.10, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Tomate', 'Tomate', 0.2, 'Kilogramo', 103.62, [], false, false, null],
+            ['Habichuelas blancas (secas)', 'Habichuelas blancas cocidas', 0.15, 'Kilogramo', 44.60, ['Cocido'], false, false, null],
+            ['Pasta (coditos) Princesa', 'Pasta (coditos)', 100, 'Gramo', 0.11, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 1200, 'Mililitro', 0.04, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 14. Pechuga de pollo escalfada
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pechuga de pollo escalfada',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Calentar caldo con vegetales hasta hervor suave.',
+            '⚠ Sumergir pollo, mantener cocción suave sin hervor violento y verificar 74 °C internos antes de servir.',
+        ]),
+        [
+            ['Pechuga de pollo', 'Pechuga', 650, 'Gramo', 0.38, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 1200, 'Mililitro', 0.04, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Zanahoria', 'Zanahoria', 1, 'Unidad', 5.47, [], false, false, null],
+            ['Hojas de laurel', 'Laurel', 1, 'Hoja', 0.36, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 15. Risotto de hongos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Risotto de hongos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sofreír cebolla y hongos.',
+            'Añadir arroz, nacarar e incorporar caldo poco a poco removiendo 18–22 minutos.',
+            'Terminar con mantequilla y queso.',
+        ]),
+        [
+            ['Arroz arborio', 'Arroz arborio', 320, 'Gramo', 0.40, [], false, false, null],
+            ['Champiñones', 'Hongos (champiñones)', 250, 'Gramo', 0.31, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo caliente', 1000, 'Mililitro', 0.04, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 35, 'Gramo', 0.31, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 60, 'Gramo', 1.63, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 16. Crema de espinacas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Sopa y crema',
+        'Crema de espinacas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sofreír cebolla, agregar papa y caldo; cocer hasta ablandar.',
+            'Incorporar espinacas 3 minutos, licuar, añadir leche y calentar.',
+        ]),
+        [
+            ['Espinaca', 'Espinacas', 350, 'Gramo', 0.24, [], false, false, null],
+            ['Papa', 'Papa mediana', 1, 'Unidad', 16.76, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 700, 'Mililitro', 0.04, [], false, false, null],
+            ['Leche entera', 'Leche', 0.12, 'Litro', 74.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 17. Lasaña de berenjena
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Lasaña de berenjena',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Asar láminas de berenjena.',
+            '⚠ Cocinar carne con cebolla y salsa hasta cocción completa.',
+            'Alternar capas con queso y hornear a 190 °C 25–30 minutos.',
+        ]),
+        [
+            ['Berenjena', 'Berenjenas', 2, 'Unidad', 36.38, [], false, false, null],
+            ['Carne de res molida', 'Carne molida', 350, 'Gramo', 0.40, [], false, false, null],
+            ['Salsa de tomate', 'Salsa tomate', 350, 'Mililitro', 0.20, [], false, false, null],
+            ['Queso mozzarella', 'Queso mozzarella', 200, 'Gramo', 0.52, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 18. Filete de res a la parrilla
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Filete de res a la parrilla',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Secar y sazonar filetes.',
+            '⚠ Precalentar parrilla y cocinar por ambos lados hasta el punto deseado conforme a normas de seguridad alimentaria.',
+            'Reposar y servir.',
+        ]),
+        [
+            ['Filete de res (lomito)', 'Filete de res de 180 g', 4, 'Unidad', 178.57, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Romero (seco)', 'Romero al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 19. Focaccia con romero
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Panadería',
+        'Focaccia con romero',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Mezclar harina, agua, levadura y sal; amasar o hacer pliegues.',
+            'Fermentar hasta duplicar.',
+            'Extender en bandeja aceitada, reposar, marcar hoyuelos, añadir aceite y romero; hornear 220 °C 20–25 minutos.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina', 0.5, 'Kilogramo', 61.73, [], false, false, null],
+            ['Agua', 'Agua', 350, 'Mililitro', 0.00, [], false, false, null],
+            ['Levadura', 'Levadura seca', 7, 'Gramo', 3.18, [], false, false, null],
+            ['Sal', 'Sal', 10, 'Gramo', 0.03, [], false, false, null],
+            ['Aceite de oliva', 'Aceite oliva', 45, 'Mililitro', 0.45, [], false, false, null],
+            ['Romero (seco)', 'Romero al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 20. Pizza cuatro quesos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pizza cuatro quesos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Preparar y fermentar masa.',
+            'Dividir y estirar.',
+            'Distribuir quesos y hornear en horno muy caliente, 230–250 °C, hasta base dorada y queso fundido.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina', 0.5, 'Kilogramo', 61.73, [], false, false, null],
+            ['Agua', 'Agua', 300, 'Mililitro', 0.00, [], false, false, null],
+            ['Levadura', 'Levadura', 7, 'Gramo', 3.18, [], false, false, null],
+            ['Sal', 'Sal', 10, 'Gramo', 0.03, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Queso mozzarella', 'Queso mozzarella', 100, 'Gramo', 0.52, [], false, false, null],
+            ['Queso ricotta', 'Ricota', 80, 'Gramo', 0.40, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 60, 'Gramo', 1.63, [], false, false, null],
+            ['Queso azul', 'Queso azul', 60, 'Gramo', 0.71, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    return $mensajes;
+}
+
+/**
+ * Carga de las 80 recetas de elaboración gastronómica (PDF de Eyaelkys) —
+ * tanda 2 de 4: recetas 21 a 40. Cada receta se crea solo si su nombre no
+ * existe todavía (idempotente), con sus ingredientes enlazados al catálogo,
+ * porciones reales estimadas (porciones_base), 17 porciones de prueba
+ * (las degustaciones que rinde el lote del PDF) y un ícono sugerido.
+ *
+ * Supuestos de esta tanda (a revisar por Eyaelkys):
+ * - Las cantidades son las del PDF (lote de 17 degustaciones). Las porciones
+ *   reales (porciones_base) son una estimación mía de platos completos.
+ * - Ingredientes que no estaban en el catálogo se crean con precio de
+ *   referencia (estimación de mercado RD, marcada en su nota de compra).
+ * - Rangos: se costea con el número mayor (ej. 180–220 g de harina → 220 g)
+ *   y la preparación conserva el rango.
+ * - Las advertencias sanitarias de la preparación van como líneas "⚠".
+ * - "Queso" sin tipo: se costeó como mozzarella.
+ * - 1 cebolla/tomate/zanahoria/papa por unidad: peso medio asumido (cebolla 150 g, tomate 130 g, zanahoria 80 g, papa 200 g).
+ * - Aceite sin cantidad (freír/sofreír): "al gusto", no entra al costo; ajusta si quieres costearlo.
+ * - Línea sin catálogo: preparación intermedia costeada con el costo por kilo de la receta que la produce.
+ * - Caldo ≈ RD$40/litro (estimación; el costo real depende de si es casero).
+ * - Salsa de tomate en ml/g: lata de 227 g ≈ 227 ml.
+ * - Bacalao desalado (500 g): costeado al 70 % del precio del bacalao salado (el desalado pesa más que el seco).
+ * - Garbanzos/habichuelas cocidos: costeados al 40 % de su peso en seco (rinden ≈2.5×); se compran secos.
+ */
+function sembrarRecetas80Tanda2(PDO $pdo): array
+{
+    $mensajes = [];
+    prepararCargaRecetas80($pdo);
+    sembrarIngredientesNuevos80($pdo, [
+        ['Solomillo de cerdo', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 230.00, 'Solomillo/lomito de cerdo. Estimación de mercado RD (≈RD$230/libra). Ajusta si tienes el precio real.'],
+        ['Carne de res para guisar y brochetas', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 230.00, 'Res en cubos. Estimación de mercado RD (≈RD$230/libra). Ajusta si tienes el precio real.'],
+        ['Baguette', 'Panadería', '🥖', 'Unidad', 'Unidad', 1, 45.00, 'Estimación de mercado RD, baguette de panadería. Ajusta si tienes el precio real.'],
+        ['Berenjena', 'Vegetal', '🍆', 'Libra', 'Libra', 1, 55.00, 'Estimación de mercado RD (≈RD$55/libra). 1 berenjena mediana ≈ 300 g. Ajusta si tienes el precio real.'],
+        ['Maicena', 'Repostería', '🌽', 'Gramo', 'Paquete', 400, 95.00, 'Fécula de maíz, paquete de 400 g por ≈RD$95. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Jarrete de res', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 200.00, 'Jarrete en rodajas (ossobuco). Estimación de mercado RD (≈RD$200/libra). Ajusta si tienes el precio real.'],
+        ['Apio', 'Vegetal', '🥬', 'Rama', 'Manojo', 8, 40.00, 'Estimación de mercado RD: manojo de ≈8 ramas por RD$40.00. Ajusta si tienes el precio real.'],
+        ['Caldo (pollo o vegetales)', 'Enlatado y conserva', '🍲', 'Litro', 'Litro', 1, 40.00, 'Caldo preparado o hecho con cubitos/base: estimación ≈RD$40/litro. Ajusta si tienes el costo real.'],
+        ['Arroz bomba', 'Grano y cereal', '🍚', 'Libra', 'Libra', 1, 160.00, 'Arroz para paella. Estimación de mercado RD, sin fuente puntual verificada. Ajusta si tienes el precio real.'],
+        ['Azafrán', 'Condimento y especia', '🌼', 'Gramo', 'Paquete', 0.5, 150.00, 'Estimación de mercado RD: sobre de 0.5 g por RD$150.00 (≈RD$300/g). Ajusta si tienes el precio real.'],
+        ['Ciruelas pasas', 'Fruta', '🍑', 'Libra', 'Libra', 1, 250.00, 'Estimación de mercado RD (≈RD$250/libra). Ajusta si tienes el precio real.'],
+        ['Cordero (pierna o paleta)', 'Cárnico', '🐑', 'Libra', 'Libra', 1, 380.00, 'Estimación de mercado RD (≈RD$380/libra). Ajusta si tienes el precio real.'],
+        ['Rabo de res', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 210.00, 'Estimación de mercado RD (≈RD$210/libra). Ajusta si tienes el precio real.'],
+    ]);
+    // Peso/densidad de referencia SOLO si el catálogo no los tenía (para convertir unidades en la lista de compra).
+    completarPesoDensidad80($pdo, [
+        ['Apio', null, 50],
+        ['Berenjena', null, 300],
+        ['Calabacín', null, 227],
+        ['Cebolla blanca', null, 150],
+        ['Pan rallado', 0.45, null],
+        ['Papa', null, 200],
+        ['Perejil', null, 50],
+        ['Queso rallado', 0.4, null],
+        ['Sal', 1.2, null],
+        ['Tomate', null, 130],
+        ['Zanahoria', null, 80],
+    ]);
+
+    // 21. Solomillo de cerdo al horno
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Solomillo de cerdo al horno',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Marinar con aceite, ajo, mostaza y tomillo.',
+            '⚠ Sellar en sartén y terminar en horno a 190 °C hasta cocción interna segura.',
+            'Reposar antes de cortar.',
+        ]),
+        [
+            ['Solomillo de cerdo', 'Solomillo de cerdo', 700, 'Gramo', 0.51, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Mostaza', 'Mostaza', 1, 'Cucharadita', 1.11, [], false, false, null],
+            ['Tomillo (seco)', 'Tomillo al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 22. Papas gratinadas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Guarnición',
+        'Papas gratinadas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Cortar papas finas.',
+            'Frotar fuente con ajo; alternar papas, condimentos y queso.',
+            'Cubrir con leche y crema; hornear 180 °C 50–65 minutos hasta tiernas.',
+        ]),
+        [
+            ['Papa', 'Papas', 0.8, 'Kilogramo', 83.78, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 300, 'Mililitro', 0.49, [], false, false, null],
+            ['Leche entera', 'Leche', 0.15, 'Litro', 74.00, [], false, false, null],
+            ['Queso mozzarella', 'Queso (mozzarella)', 120, 'Gramo', 0.52, [], false, false, null],
+            ['Ajo', 'Ajo', 1, 'Diente', 14.50, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Nuez moscada molida', 'Nuez moscada al gusto', 0, 'Cucharadita', 6.56, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 23. Brochetas de res a la parrilla
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Brochetas de res a la parrilla',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Marinar res brevemente en refrigeración.',
+            'Ensartar alternando vegetales.',
+            'Cocinar a la parrilla girando hasta cocción adecuada.',
+            '⚠ Evitar contaminación cruzada.',
+        ]),
+        [
+            ['Carne de res para guisar y brochetas', 'Carne de res en cubos', 600, 'Gramo', 0.51, ['Cortado en cubos'], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 15, 'Mililitro', 0.35, [], false, false, null],
+            ['Ajo', 'Ajo', 0, 'Diente', 14.50, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 24. Pan de ajo horneado
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Pan de ajo horneado',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Mezclar mantequilla blanda con ajo y perejil.',
+            'Untar pan rebanado, espolvorear queso y hornear 190 °C 10–12 minutos.',
+        ]),
+        [
+            ['Baguette', 'Baguette', 1, 'Unidad', 45.00, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 100, 'Gramo', 0.31, [], false, false, null],
+            ['Ajo', 'Ajo', 3, 'Diente', 14.50, [], false, false, null],
+            ['Perejil', 'Perejil', 15, 'Gramo', 0.50, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 40, 'Gramo', 1.63, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 25. Camarones empanizados
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Camarones empanizados',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Secar y sazonar camarones.',
+            'Pasar por harina, huevo y pan.',
+            'Freír a 175 °C por tandas hasta cocidos y dorados; escurrir.',
+        ]),
+        [
+            ['Camarón', 'Camarones', 500, 'Gramo', 0.62, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.1, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevos', 2, 'Unidad', 6.50, [], false, false, null],
+            ['Pan rallado', 'Pan rallado', 150, 'Gramo', 0.20, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Aceite vegetal', 'Aceite para freír (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 26. Falafel de garbanzos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Falafel de garbanzos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Escurrir garbanzos crudos remojados y procesar con condimentos.',
+            'Añadir harina, refrigerar mezcla y formar bolitas.',
+            'Freír a 170–175 °C hasta bien cocidas.',
+        ]),
+        [
+            ['Garbanzos', 'Garbanzos secos (remojados 12 h)', 0.35, 'Kilogramo', 154.32, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Ajo', 'Ajo', 3, 'Diente', 14.50, [], false, false, null],
+            ['Perejil', 'Perejil', 0, 'Manojo', 25.00, [], true, false, null],
+            ['Harina de trigo', 'Harina', 30, 'Gramo', 0.06, [], false, false, null],
+            ['Comino', 'Comino al gusto', 0, 'Cucharadita', 3.09, [], true, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 27. Arepitas de maíz
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Arepitas de maíz',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Mezclar harina con agua, sal y queso; reposar 10 minutos.',
+            'Formar discos pequeños y freír hasta dorados y cocidos por dentro.',
+        ]),
+        [
+            ['Harina de maíz', 'Harina de maíz precocida', 0.25, 'Kilogramo', 45.35, [], false, false, null],
+            ['Agua', 'Agua', 320, 'Mililitro', 0.00, [], false, false, null],
+            ['Queso rallado', 'Queso rallado', 80, 'Gramo', 0.56, ['Rallado'], false, false, null],
+            ['Sal', 'Sal', 8, 'Gramo', 0.03, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 28. Calamares a la romana
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Calamares a la romana',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Secar calamares.',
+            'Preparar batido ligero de harina, huevo y agua fría.',
+            'Rebozar y freír en aceite a 175 °C por tandas hasta dorados y cocidos.',
+        ]),
+        [
+            ['Calamar (anillas)', 'Aros de calamar', 500, 'Gramo', 0.44, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.15, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Agua', 'Agua fría', 180, 'Mililitro', 0.00, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 29. Berenjenas rebozadas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Berenjenas rebozadas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cortar berenjena en rodajas, salar ligeramente y secar.',
+            'Empanar con harina, huevo y pan; freír hasta doradas y tiernas.',
+        ]),
+        [
+            ['Berenjena', 'Berenjenas', 2, 'Unidad', 36.38, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.12, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevos', 2, 'Unidad', 6.50, [], false, false, null],
+            ['Pan rallado', 'Pan rallado', 100, 'Gramo', 0.20, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 30. Arancini de queso
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Arancini de queso',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Mantener risotto frío.',
+            'Formar bolas rellenas de mozzarella, empanar y freír a 175 °C hasta doradas y calientes en el centro.',
+        ]),
+        [
+            [null, 'Risotto frío del día anterior (receta Risotto de hongos)', 0.5, 'Kilogramo', 284.84, ['Frío'], false, false, null],
+            ['Queso mozzarella', 'Queso mozzarella', 120, 'Gramo', 0.52, [], false, false, null],
+            ['Harina de trigo', 'Harina', 80, 'Gramo', 0.06, [], false, false, null],
+            ['Huevo', 'Huevos', 2, 'Unidad', 6.50, [], false, false, null],
+            ['Pan rallado', 'Pan rallado', 120, 'Gramo', 0.20, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 31. Bolitas de plátano maduro
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Bolitas de plátano maduro',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Hervir plátanos hasta tiernos, escurrir y hacer puré.',
+            'Agregar fécula, formar bolas con queso dentro y freír hasta doradas.',
+        ]),
+        [
+            ['Plátano maduro', 'Plátanos maduros', 3, 'Unidad', 20.00, [], false, false, null],
+            ['Queso mozzarella', 'Queso (mozzarella)', 120, 'Gramo', 0.52, [], false, false, null],
+            ['Maicena', 'Fécula de maíz (maicena)', 40, 'Gramo', 0.24, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 32. Tempura de vegetales
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Tempura de vegetales',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cortar vegetales finos.',
+            'Mezclar harina, huevo y agua helada sin batir en exceso.',
+            'Sumergir y freír a 175 °C en tandas hasta crujientes.',
+        ]),
+        [
+            ['Zanahoria', 'Zanahoria', 1, 'Unidad', 5.47, [], false, false, null],
+            ['Calabacín', 'Calabacín', 1, 'Unidad', 22.50, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.16, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Agua', 'Agua helada', 220, 'Mililitro', 0.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 33. Ossobuco de res
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Ossobuco de res',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Enharinar y sellar jarrete.',
+            'Sofreír vegetales, agregar tomate y caldo.',
+            'Tapar y brasear a fuego bajo 2–3 horas hasta tierno.',
+        ]),
+        [
+            ['Jarrete de res', 'Jarrete de res (rodajas)', 4, 'Rodaja', 121.25, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Zanahoria', 'Zanahoria', 1, 'Unidad', 5.47, [], false, false, null],
+            ['Apio', 'Apio', 1, 'Rama', 5.00, [], false, false, null],
+            ['Tomate', 'Tomate', 0.3, 'Kilogramo', 103.62, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 500, 'Mililitro', 0.04, [], false, false, null],
+            ['Harina de trigo', 'Harina', 30, 'Gramo', 0.06, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 34. Paella mixta
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Paella mixta',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Dorar pollo y cocinarlo.',
+            'Sofreír pimiento y tomate; agregar arroz, caldo y azafrán.',
+            'Cocer sin remover excesivamente.',
+            '⚠ Incorporar mariscos al final hasta cocción segura.',
+        ]),
+        [
+            ['Arroz bomba', 'Arroz bomba', 350, 'Gramo', 0.35, [], false, false, null],
+            ['Pollo entero', 'Pollo', 300, 'Gramo', 0.21, [], false, false, null],
+            ['Camarón', 'Camarones', 200, 'Gramo', 0.62, [], false, false, null],
+            ['Mejillones (carne)', 'Mejillones limpios', 200, 'Gramo', 0.50, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Tomate', 'Tomate', 1, 'Unidad', 13.47, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 1000, 'Mililitro', 0.04, [], false, false, null],
+            ['Azafrán', 'Azafrán al gusto', 0, 'Gramo', 300.00, [], true, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 35. Lomo de cerdo en salsa de ciruelas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Lomo de cerdo en salsa de ciruelas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Sellar lomo y reservar.',
+            'Sofreír cebolla, añadir ciruelas, caldo y vinagre.',
+            '⚠ Regresar carne, tapar y cocinar suavemente hasta temperatura segura.',
+            'Licuar salsa si se desea.',
+        ]),
+        [
+            ['Carne de cerdo', 'Lomo de cerdo', 700, 'Gramo', 0.33, [], false, false, null],
+            ['Ciruelas pasas', 'Ciruelas pasas', 180, 'Gramo', 0.55, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 300, 'Mililitro', 0.04, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Vinagre', 'Vinagre', 20, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 36. Pastelón de berenjena y carne
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pastelón de berenjena y carne',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Asar berenjenas en láminas.',
+            'Cocinar carne con cebolla y tomate completamente.',
+            'Montar capas con queso y gratinar a 190 °C 20–25 minutos.',
+        ]),
+        [
+            ['Berenjena', 'Berenjenas', 3, 'Unidad', 36.38, [], false, false, null],
+            ['Carne de res molida', 'Carne molida', 400, 'Gramo', 0.40, [], false, false, null],
+            ['Salsa de tomate', 'Salsa tomate', 250, 'Gramo', 0.20, [], false, false, null],
+            ['Queso mozzarella', 'Queso (mozzarella)', 200, 'Gramo', 0.52, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 37. Cordero estofado con romero
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Cordero estofado con romero',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Dorar cordero.',
+            'Sofreír vegetales, incorporar tomate, romero y caldo.',
+            'Tapar y cocinar lentamente 1.5–2 horas hasta tierno.',
+        ]),
+        [
+            ['Cordero (pierna o paleta)', 'Cordero', 750, 'Gramo', 0.84, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Zanahoria', 'Zanahorias', 2, 'Unidad', 5.47, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 400, 'Mililitro', 0.04, [], false, false, null],
+            ['Tomate', 'Tomate', 0.15, 'Kilogramo', 103.62, [], false, false, null],
+            ['Romero (seco)', 'Romero al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 38. Bacalao con garbanzos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Bacalao con garbanzos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Desalar bacalao en refrigeración con cambios de agua.',
+            'Preparar sofrito, añadir tomate y garbanzos.',
+            '⚠ Incorporar bacalao y guisar hasta cocción completa.',
+        ]),
+        [
+            ['Bacalao (filete salado)', 'Bacalao desalado', 500, 'Gramo', 0.40, [], false, false, null],
+            ['Garbanzos', 'Garbanzos cocidos', 0.35, 'Kilogramo', 61.73, ['Cocido'], false, false, null],
+            ['Tomate', 'Tomate', 0.25, 'Kilogramo', 103.62, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Pimiento', 'Pimiento', 1, 'Unidad', 18.33, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 39. Rabo de res estofado
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Rabo de res estofado',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Dorar rabo.',
+            'Sofreír vegetales, añadir tomate y caldo.',
+            'Cocinar tapado 3–4 horas a fuego lento hasta que la carne esté tierna.',
+        ]),
+        [
+            ['Rabo de res', 'Rabo de res', 900, 'Gramo', 0.46, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Zanahoria', 'Zanahoria', 1, 'Unidad', 5.47, [], false, false, null],
+            ['Tomate', 'Tomate', 0.25, 'Kilogramo', 103.62, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 700, 'Mililitro', 0.04, [], false, false, null],
+            ['Tomillo (seco)', 'Tomillo al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 40. Locrio de mariscos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Locrio de mariscos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        5,
+        implode("\n\n", [
+            'Sofreír vegetales y tomate; agregar arroz y caldo.',
+            'Cocer casi completamente, añadir mariscos y terminar hasta que estén cocidos y el arroz tierno.',
+        ]),
+        [
+            ['Arroz', 'Arroz', 350, 'Gramo', 0.10, [], false, false, null],
+            ['Camarón', 'Camarones', 250, 'Gramo', 0.62, [], false, false, null],
+            ['Calamar (anillas)', 'Calamares', 250, 'Gramo', 0.44, [], false, false, null],
+            ['Mejillones (carne)', 'Mejillones limpios', 200, 'Gramo', 0.50, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Ají cubanela', 'Ají', 1, 'Unidad', 10.71, [], false, false, null],
+            ['Tomate', 'Tomate', 0.15, 'Kilogramo', 103.62, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 750, 'Mililitro', 0.04, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    return $mensajes;
+}
+
+/**
+ * Carga de las 80 recetas de elaboración gastronómica (PDF de Eyaelkys) —
+ * tanda 3 de 4: recetas 41 a 60. Cada receta se crea solo si su nombre no
+ * existe todavía (idempotente), con sus ingredientes enlazados al catálogo,
+ * porciones reales estimadas (porciones_base), 17 porciones de prueba
+ * (las degustaciones que rinde el lote del PDF) y un ícono sugerido.
+ *
+ * Supuestos de esta tanda (a revisar por Eyaelkys):
+ * - Las cantidades son las del PDF (lote de 17 degustaciones). Las porciones
+ *   reales (porciones_base) son una estimación mía de platos completos.
+ * - Ingredientes que no estaban en el catálogo se crean con precio de
+ *   referencia (estimación de mercado RD, marcada en su nota de compra).
+ * - Rangos: se costea con el número mayor (ej. 180–220 g de harina → 220 g)
+ *   y la preparación conserva el rango.
+ * - Las advertencias sanitarias de la preparación van como líneas "⚠".
+ * - Café preparado: 1 cucharada de café molido por cada ≈100 ml.
+ * - Leche condensada/evaporada en ml: lata de 395 g ≈ 304 ml; lata evaporada de 354 ml.
+ * - Línea sin catálogo: preparación intermedia costeada con el costo por kilo de la receta que la produce.
+ * - Garbanzos/habichuelas cocidos: costeados al 40 % de su peso en seco (rinden ≈2.5×); se compran secos.
+ * - 1 cebolla/tomate/zanahoria/papa por unidad: peso medio asumido (cebolla 150 g, tomate 130 g, zanahoria 80 g, papa 200 g).
+ * - "Queso" sin tipo: se costeó como mozzarella.
+ */
+function sembrarRecetas80Tanda3(PDO $pdo): array
+{
+    $mensajes = [];
+    prepararCargaRecetas80($pdo);
+    sembrarIngredientesNuevos80($pdo, [
+        ['Bizcochos de soletilla', 'Repostería', '🍪', 'Gramo', 'Paquete', 200, 220.00, 'Estimación de mercado RD: paquete de 200 g por RD$220.00. Ajusta si tienes el precio real.'],
+        ['Frutos rojos (congelados)', 'Fruta', '🍓', 'Libra', 'Libra', 1, 450.00, 'Mezcla de frutos rojos congelados. Estimación de mercado RD (≈RD$450/libra). Ajusta si tienes el precio real.'],
+        ['Maicena', 'Repostería', '🌽', 'Gramo', 'Paquete', 400, 95.00, 'Fécula de maíz, paquete de 400 g por ≈RD$95. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Clara de huevo pasteurizada', 'Lácteo y huevo', '🥚', 'Unidad', 'Paquete', 13, 250.00, 'Claras líquidas pasteurizadas: estimación RD$250 por envase de ≈13 claras. Ajusta si tienes el precio real.'],
+        ['Fruta variada (de temporada)', 'Fruta', '🍓', 'Libra', 'Libra', 1, 80.00, 'Mezcla de frutas de temporada. Estimación RD (≈RD$80/libra). Ajusta según las frutas que uses.'],
+        ['Albahaca fresca', 'Vegetal', '🌿', 'Gramo', 'Paquete', 30, 45.00, 'Estimación de mercado RD: manojo/paquete de ≈30 g por RD$45.00. Ajusta si tienes el precio real.'],
+        ['Guayaba', 'Fruta', '🍈', 'Libra', 'Libra', 1, 60.00, 'Estimación de mercado RD (≈RD$60/libra). Ajusta si tienes el precio real.'],
+        ['Tahini', 'Condimento y especia', '🥜', 'Gramo', 'Unidad', 454, 650.00, 'Pasta de ajonjolí, frasco de 454 g por ≈RD$650. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Apio', 'Vegetal', '🥬', 'Rama', 'Manojo', 8, 40.00, 'Estimación de mercado RD: manojo de ≈8 ramas por RD$40.00. Ajusta si tienes el precio real.'],
+        ['Remolacha', 'Vegetal', '🫜', 'Libra', 'Libra', 1, 40.00, 'Estimación de mercado RD (≈RD$40/libra). Ajusta si tienes el precio real.'],
+        ['Queso de cabra', 'Lácteo y huevo', '🧀', 'Libra', 'Libra', 1, 900.00, 'Estimación de mercado RD (≈RD$900/libra). Ajusta si tienes el precio real.'],
+        ['Vinagre balsámico', 'Condimento y especia', '🍶', 'Mililitro', 'Unidad', 250, 280.00, 'Botella de 250 ml por ≈RD$280. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Champiñones', 'Vegetal', '🍄', 'Libra', 'Libra', 1, 140.00, 'Champiñones frescos. Estimación de mercado RD (≈RD$140/libra). Ajusta si tienes el precio real.'],
+    ]);
+    // Peso/densidad de referencia SOLO si el catálogo no los tenía (para convertir unidades en la lista de compra).
+    completarPesoDensidad80($pdo, [
+        ['Ají morrón rojo', null, 200],
+        ['Apio', null, 50],
+        ['Cebolla blanca', null, 150],
+        ['Cilantro', null, 50],
+        ['Manzana', null, 180],
+        ['Perejil', null, 50],
+        ['Puerro', null, 200],
+        ['Sal', 1.2, null],
+        ['Tomate', null, 130],
+        ['Zanahoria', null, 80],
+    ]);
+
+    // 41. Tiramisú
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Tiramisú',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Batir crema con azúcar e incorporar mascarpone.',
+            'Remojar brevemente soletillas en café; alternar capas con crema.',
+            'Refrigerar 4 horas y espolvorear cacao.',
+            '⚠ Versión sin huevo crudo.',
+        ]),
+        [
+            ['Queso mascarpone', 'Queso mascarpone', 250, 'Gramo', 0.77, [], false, false, null],
+            ['Crema para batir', 'Crema para batir', 200, 'Mililitro', 0.26, ['Batido'], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 60, 'Gramo', 0.08, [], false, false, null],
+            ['Bizcochos de soletilla', 'Bizcochos de soletilla', 180, 'Gramo', 1.10, [], false, false, null],
+            ['Café molido', 'Café frío', 0.25, 'Litro', 42.31, ['Frío'], false, false, null],
+            ['Cocoa en polvo', 'Cacao al gusto', 0, 'Cucharada', 1.49, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 42. Panna cotta de frutos rojos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Panna cotta de frutos rojos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Hidratar gelatina en agua.',
+            'Calentar crema, leche y azúcar sin hervir; disolver gelatina.',
+            'Verter en moldes y refrigerar 4 horas.',
+            'Cocer frutos rojos para salsa, enfriar y servir.',
+        ]),
+        [
+            ['Crema para batir', 'Crema para batir', 500, 'Mililitro', 0.26, [], false, false, null],
+            ['Leche entera', 'Leche', 0.15, 'Litro', 74.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 80, 'Gramo', 0.08, [], false, false, null],
+            ['Gelatina sin sabor', 'Gelatina sin sabor', 10, 'Gramo', 3.33, [], false, false, null],
+            ['Agua', 'Agua', 50, 'Mililitro', 0.00, [], false, false, null],
+            ['Frutos rojos (congelados)', 'Frutos rojos', 180, 'Gramo', 0.99, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 43. Profiteroles con crema pastelera
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Profiteroles con crema pastelera',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Hervir agua, leche y mantequilla; agregar harina y secar masa.',
+            'Enfriar un poco, añadir huevos gradualmente; formar y hornear 200 °C 25–30 minutos.',
+            'Preparar crema pastelera cocida con leche, yemas, azúcar y maicena; enfriar y rellenar.',
+        ]),
+        [
+            ['Agua', 'Agua', 125, 'Mililitro', 0.00, [], false, false, null],
+            ['Leche entera', 'Leche', 125, 'Mililitro', 0.07, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 100, 'Gramo', 0.31, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.15, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevos', 4, 'Unidad', 6.50, [], false, false, null],
+            ['Leche entera', 'Leche (crema pastelera)', 0.4, 'Litro', 74.00, [], false, false, null],
+            ['Huevo', 'Yemas de huevo (crema pastelera)', 3, 'Unidad', 6.50, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar (crema pastelera)', 80, 'Gramo', 0.08, [], false, false, null],
+            ['Maicena', 'Maicena (crema pastelera)', 30, 'Gramo', 0.24, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 44. Tarta de manzana
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Tarta de manzana',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Arenar harina con mantequilla y azúcar; unir con huevo y refrigerar.',
+            'Forrar molde, colocar manzanas laminadas con azúcar y canela; hornear 180 °C 35–45 minutos.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina', 0.25, 'Kilogramo', 61.73, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 125, 'Gramo', 0.31, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 80, 'Gramo', 0.08, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Manzana', 'Manzanas', 4, 'Unidad', 40.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar (para las manzanas)', 30, 'Gramo', 0.08, [], false, false, null],
+            ['Canela en polvo', 'Canela al gusto', 0, 'Cucharadita', 3.80, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 45. Tres leches de café
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Tres leches de café',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        10,
+        implode("\n\n", [
+            'Batir huevos con azúcar a punto cinta; incorporar harina y polvo.',
+            'Hornear 180 °C 25–30 minutos.',
+            'Mezclar tres leches y café, perforar bizcocho frío y remojar; refrigerar.',
+        ]),
+        [
+            ['Huevo', 'Huevos', 4, 'Unidad', 6.50, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 0.12, 'Kilogramo', 77.16, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.12, 'Kilogramo', 61.73, [], false, false, null],
+            ['Polvo de hornear', 'Polvo hornear', 1, 'Cucharadita', 2.50, [], false, false, null],
+            ['Leche evaporada', 'Leche evaporada', 200, 'Mililitro', 0.20, [], false, false, null],
+            ['Leche condensada', 'Leche condensada', 200, 'Mililitro', 0.36, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 200, 'Mililitro', 0.49, [], false, false, null],
+            ['Café molido', 'Café', 80, 'Mililitro', 0.04, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 46. Éclairs de chocolate
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Éclairs de chocolate',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        10,
+        implode("\n\n", [
+            'Preparar masa choux hirviendo líquidos y mantequilla; añadir harina y secar; integrar huevos.',
+            'Escudillar bastones y hornear 200 °C 25–30 minutos.',
+            'Enfriar, rellenar con crema pastelera segura y cubrir con chocolate fundido.',
+        ]),
+        [
+            ['Agua', 'Agua', 125, 'Mililitro', 0.00, [], false, false, null],
+            ['Leche entera', 'Leche', 125, 'Mililitro', 0.07, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 100, 'Gramo', 0.31, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.15, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevos', 4, 'Unidad', 6.50, [], false, false, null],
+            [null, 'Crema pastelera fría (receta de Profiteroles)', 0.4, 'Kilogramo', 125.40, ['Frío'], false, false, null],
+            ['Chocolate oscuro para hornear', 'Chocolate', 150, 'Gramo', 1.41, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 47. Pavlova con frutas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Pavlova con frutas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Batir claras e incorporar azúcar poco a poco; añadir maicena y vinagre.',
+            'Formar disco y secar en horno a 110 °C 75–90 minutos.',
+            'Enfriar, cubrir con crema y fruta justo antes de servir.',
+        ]),
+        [
+            ['Clara de huevo pasteurizada', 'Claras pasteurizadas', 4, 'Unidad', 19.23, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 0.22, 'Kilogramo', 77.16, [], false, false, null],
+            ['Maicena', 'Maicena', 10, 'Gramo', 0.24, [], false, false, null],
+            ['Vinagre', 'Vinagre', 5, 'Mililitro', 0.15, [], false, false, null],
+            ['Crema para batir', 'Crema para batir (batida)', 200, 'Mililitro', 0.26, ['Batido'], false, false, null],
+            ['Fruta variada (de temporada)', 'Frutas', 0.25, 'Kilogramo', 176.37, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 48. Crème brûlée
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Crème brûlée',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        5,
+        implode("\n\n", [
+            'Calentar crema con vainilla.',
+            'Mezclar yemas y azúcar, temperar con crema y colar.',
+            'Hornear en baño María a 150 °C hasta cuajar; enfriar y refrigerar.',
+            'Espolvorear azúcar y caramelizar antes de servir.',
+        ]),
+        [
+            ['Crema para batir', 'Crema para batir', 500, 'Mililitro', 0.26, [], false, false, null],
+            ['Huevo', 'Yemas de huevo', 5, 'Unidad', 6.50, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 90, 'Gramo', 0.08, [], false, false, null],
+            ['Vainilla blanca', 'Vainilla al gusto', 0, 'Cucharadita', 0.55, [], true, false, null],
+            ['Azúcar blanca', 'Azúcar (para la costra)', 50, 'Gramo', 0.08, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 49. Pesto de albahaca
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Pesto de albahaca',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Lavar y secar albahaca.',
+            'Procesar con queso, nueces y ajo; emulsionar con aceite.',
+            '⚠ Envasar limpio, fechar y refrigerar de inmediato.',
+            'Consumir pronto o congelar.',
+        ]),
+        [
+            ['Albahaca fresca', 'Albahaca', 70, 'Gramo', 1.50, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 50, 'Gramo', 1.63, [], false, false, null],
+            ['Nueces', 'Nueces', 40, 'Gramo', 0.84, [], false, false, null],
+            ['Ajo', 'Ajo', 1, 'Diente', 14.50, [], false, false, null],
+            ['Aceite de oliva', 'Aceite oliva', 120, 'Mililitro', 0.45, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 50. Mermelada de guayaba
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Mermelada de guayaba',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        10,
+        implode("\n\n", [
+            'Cocer guayaba con agua, licuar y colar semillas.',
+            'Añadir azúcar y limón, cocinar hasta consistencia de mermelada.',
+            'Enfriar, envasar y refrigerar.',
+            '⚠ No es receta validada para conserva de despensa.',
+        ]),
+        [
+            ['Guayaba', 'Guayaba', 700, 'Gramo', 0.13, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 0.35, 'Kilogramo', 77.16, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 40, 'Mililitro', 0.35, [], false, false, null],
+            ['Agua', 'Agua', 150, 'Mililitro', 0.00, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 51. Compota de manzana
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Compota de manzana',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Pelar y cortar manzanas.',
+            'Cocer con agua, azúcar y canela hasta ablandar.',
+            '⚠ Triturar, añadir limón, enfriar rápidamente, envasar y refrigerar.',
+        ]),
+        [
+            ['Manzana', 'Manzana', 700, 'Gramo', 0.22, [], false, false, null],
+            ['Agua', 'Agua', 120, 'Mililitro', 0.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 25, 'Gramo', 0.08, [], false, false, null],
+            ['Canela en polvo', 'Canela al gusto', 0, 'Cucharadita', 3.80, [], true, false, null],
+            ['Limón verde', 'Jugo de limón', 10, 'Mililitro', 0.35, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 52. Salsa bechamel
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Salsa bechamel',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Fundir mantequilla, agregar harina y cocer 2 minutos.',
+            'Incorporar leche gradualmente batiendo; hervir suave hasta espesar.',
+            '⚠ Enfriar rápidamente en recipientes poco profundos y refrigerar.',
+        ]),
+        [
+            ['Leche entera', 'Leche', 0.5, 'Litro', 74.00, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 40, 'Gramo', 0.31, [], false, false, null],
+            ['Harina de trigo', 'Harina', 40, 'Gramo', 0.06, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Nuez moscada molida', 'Nuez moscada al gusto', 0, 'Cucharadita', 6.56, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 53. Hummus de garbanzos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Hummus de garbanzos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Procesar garbanzos con tahini, limón, ajo y agua hasta textura cremosa.',
+            'Agregar aceite, ajustar sazón.',
+            '⚠ Porcionar, fechar y refrigerar.',
+        ]),
+        [
+            ['Garbanzos', 'Garbanzos cocidos', 0.4, 'Kilogramo', 61.73, ['Cocido'], false, false, null],
+            ['Tahini', 'Tahini', 60, 'Gramo', 1.43, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 50, 'Mililitro', 0.35, [], false, false, null],
+            ['Ajo', 'Ajo', 1, 'Diente', 14.50, [], false, false, null],
+            ['Agua', 'Agua fría', 50, 'Mililitro', 0.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 25, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 54. Salsa de pimientos asados
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Salsa de pimientos asados',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Asar pimientos hasta piel tostada; cubrir, pelar y retirar semillas.',
+            'Procesar con ajo, aceite y limón.',
+            'Enfriar, envasar y refrigerar.',
+        ]),
+        [
+            ['Ají morrón rojo', 'Pimientos rojos', 3, 'Unidad', 32.63, [], false, false, null],
+            ['Ajo', 'Ajo', 1, 'Diente', 14.50, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 30, 'Mililitro', 0.15, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 15, 'Mililitro', 0.35, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 55. Puré de batata
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Guarnición',
+        'Puré de batata',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        5,
+        implode("\n\n", [
+            'Hervir batata pelada hasta tierna.',
+            'Escurrir, triturar con mantequilla y leche caliente.',
+            '⚠ Porcionar en recipientes poco profundos, enfriar rápidamente y refrigerar.',
+        ]),
+        [
+            ['Batata', 'Batata', 0.7, 'Kilogramo', 77.16, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 60, 'Gramo', 0.31, [], false, false, null],
+            ['Leche entera', 'Leche', 0.1, 'Litro', 74.00, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Nuez moscada molida', 'Nuez moscada al gusto', 0, 'Cucharadita', 6.56, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 56. Caldo concentrado de vegetales
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Salsa y conserva',
+        'Caldo concentrado de vegetales',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Lavar y cortar vegetales.',
+            'Cocer a fuego suave 60 minutos, colar y reducir si se desea.',
+            '⚠ Enfriar rápidamente, fechar y refrigerar o congelar.',
+        ]),
+        [
+            ['Cebolla blanca', 'Cebollas', 2, 'Unidad', 13.89, [], false, false, null],
+            ['Zanahoria', 'Zanahorias', 2, 'Unidad', 5.47, [], false, false, null],
+            ['Apio', 'Apio (ramas)', 2, 'Rama', 5.00, [], false, false, null],
+            ['Puerro', 'Puerro', 1, 'Unidad', 19.84, [], false, false, null],
+            ['Agua', 'Agua', 2, 'Litro', 0.00, [], false, false, null],
+            ['Hojas de laurel', 'Laurel al gusto', 0, 'Hoja', 0.36, [], true, false, null],
+            ['Perejil', 'Perejil', 0, 'Manojo', 25.00, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 57. Tartar de tomate y aguacate
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Tartar de tomate y aguacate',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            '⚠ Desinfectar vegetales.',
+            'Cortar tomate y aguacate en cubos, mezclar con cebolla, limón y aceite.',
+            'Montar con aro ante el comensal y servir de inmediato.',
+        ]),
+        [
+            ['Tomate', 'Tomate', 0.35, 'Kilogramo', 103.62, [], false, false, null],
+            ['Aguacate', 'Aguacates', 2, 'Unidad', 32.00, [], false, false, null],
+            ['Cebolla roja', 'Cebolla morada', 40, 'Gramo', 0.10, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 25, 'Mililitro', 0.35, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Cilantro', 'Cilantro', 0, 'Manojo', 25.00, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 58. Carpaccio de remolacha cocida
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Aperitivo',
+        'Carpaccio de remolacha cocida',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Laminar remolacha cocida finamente.',
+            'Disponer en plato ante el cliente, añadir queso, nueces, aceite y vinagre.',
+        ]),
+        [
+            ['Remolacha', 'Remolacha cocida (fría)', 0.4, 'Kilogramo', 88.18, ['Cocido', 'Frío'], false, false, null],
+            ['Queso de cabra', 'Queso de cabra', 40, 'Gramo', 1.98, [], false, false, null],
+            ['Nueces', 'Nueces', 30, 'Gramo', 0.84, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Vinagre balsámico', 'Vinagre balsámico', 15, 'Mililitro', 1.12, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 59. Pasta Alfredo frente al cliente
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pasta Alfredo frente al cliente',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cocer pasta al dente en cocina.',
+            '⚠ En estación de servicio segura, fundir mantequilla, añadir pasta y agua.',
+            'Incorporar parmesano fuera de fuego fuerte, emulsionar y emplatar.',
+        ]),
+        [
+            ['Pasta (fettuccine)', 'Fettuccine', 350, 'Gramo', 0.37, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 80, 'Gramo', 0.31, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 150, 'Gramo', 1.63, [], false, false, null],
+            ['Agua', 'Agua de cocción de la pasta', 120, 'Mililitro', 0.00, [], false, false, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 60. Omelet de queso y champiñones
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Omelet de queso y champiñones',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Saltear champiñones previamente.',
+            '⚠ Batir huevos, cocinar por porciones en sartén limpia, añadir champiñones y queso, plegar y terminar hasta cocción segura.',
+        ]),
+        [
+            ['Huevo', 'Huevos', 8, 'Unidad', 6.50, [], false, false, null],
+            ['Champiñones', 'Champiñones', 200, 'Gramo', 0.31, [], false, false, null],
+            ['Queso mozzarella', 'Queso (mozzarella)', 120, 'Gramo', 0.52, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 25, 'Gramo', 0.31, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    return $mensajes;
+}
+
+/**
+ * Carga de las 80 recetas de elaboración gastronómica (PDF de Eyaelkys) —
+ * tanda 4 de 4: recetas 61 a 80. Cada receta se crea solo si su nombre no
+ * existe todavía (idempotente), con sus ingredientes enlazados al catálogo,
+ * porciones reales estimadas (porciones_base), 17 porciones de prueba
+ * (las degustaciones que rinde el lote del PDF) y un ícono sugerido.
+ *
+ * Supuestos de esta tanda (a revisar por Eyaelkys):
+ * - Las cantidades son las del PDF (lote de 17 degustaciones). Las porciones
+ *   reales (porciones_base) son una estimación mía de platos completos.
+ * - Ingredientes que no estaban en el catálogo se crean con precio de
+ *   referencia (estimación de mercado RD, marcada en su nota de compra).
+ * - Rangos: se costea con el número mayor (ej. 180–220 g de harina → 220 g)
+ *   y la preparación conserva el rango.
+ * - Las advertencias sanitarias de la preparación van como líneas "⚠".
+ * - Caldo ≈ RD$40/litro (estimación; el costo real depende de si es casero).
+ * - Aceite sin cantidad (freír/sofreír): "al gusto", no entra al costo; ajusta si quieres costearlo.
+ * - Salsa de tomate en ml/g: lata de 227 g ≈ 227 ml.
+ * - "Queso" sin tipo: se costeó como mozzarella.
+ * - 1 cebolla/tomate/zanahoria/papa por unidad: peso medio asumido (cebolla 150 g, tomate 130 g, zanahoria 80 g, papa 200 g).
+ * - Arroz cocido refrigerado (450 g) = ≈150 g de arroz en crudo.
+ * - "Hongos" = champiñones.
+ * - 2 pechugas de pato = 650 g.
+ * - Línea sin catálogo: preparación intermedia costeada con el costo por kilo de la receta que la produce.
+ */
+function sembrarRecetas80Tanda4(PDO $pdo): array
+{
+    $mensajes = [];
+    prepararCargaRecetas80($pdo);
+    sembrarIngredientesNuevos80($pdo, [
+        ['Filete de res (lomito)', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 450.00, 'Lomito/filete de res. Estimación de mercado RD (≈RD$450/libra). Ajusta si tienes el precio real.'],
+        ['Caldo (pollo o vegetales)', 'Enlatado y conserva', '🍲', 'Litro', 'Litro', 1, 40.00, 'Caldo preparado o hecho con cubitos/base: estimación ≈RD$40/litro. Ajusta si tienes el costo real.'],
+        ['Tortillas de trigo', 'Panadería', '🌯', 'Unidad', 'Paquete', 10, 120.00, 'Paquete de 10 tortillas por ≈RD$120. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Chicharrón de cerdo', 'Cárnico', '🥓', 'Libra', 'Libra', 1, 260.00, 'Estimación de mercado RD (≈RD$260/libra). Ajusta si tienes el precio real.'],
+        ['Pasta para canelones (tubos)', 'Grano y cereal', '🍝', 'Tubo', 'Paquete', 20, 150.00, 'Paquete de ≈20 tubos por ≈RD$150. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Guisantes (arvejas)', 'Vegetal', '🫛', 'Libra', 'Libra', 1, 110.00, 'Guisantes/arvejas congelados. Estimación de mercado RD (≈RD$110/libra). Ajusta si tienes el precio real.'],
+        ['Salsa de soja', 'Condimento y especia', '🍶', 'Mililitro', 'Unidad', 296, 95.00, 'Botella de ≈296 ml por RD$95. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Polenta', 'Grano y cereal', '🌽', 'Libra', 'Libra', 1, 60.00, 'Harina de maíz gruesa/polenta. Estimación de mercado RD (≈RD$60/libra). Ajusta si tienes el precio real.'],
+        ['Champiñones', 'Vegetal', '🍄', 'Libra', 'Libra', 1, 140.00, 'Champiñones frescos. Estimación de mercado RD (≈RD$140/libra). Ajusta si tienes el precio real.'],
+        ['Solomillo de cerdo', 'Cárnico', '🥩', 'Libra', 'Libra', 1, 230.00, 'Solomillo/lomito de cerdo. Estimación de mercado RD (≈RD$230/libra). Ajusta si tienes el precio real.'],
+        ['Masa de hojaldre', 'Panadería', '🥐', 'Gramo', 'Paquete', 450, 320.00, 'Hojaldre congelado, paquete de ≈450 g por RD$320. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Pechuga de pato', 'Cárnico', '🦆', 'Libra', 'Libra', 1, 620.00, 'Estimación de mercado RD (≈RD$620/libra). Ajusta si tienes el precio real.'],
+        ['Frutos rojos (congelados)', 'Fruta', '🍓', 'Libra', 'Libra', 1, 450.00, 'Mezcla de frutos rojos congelados. Estimación de mercado RD (≈RD$450/libra). Ajusta si tienes el precio real.'],
+        ['Fruta variada (de temporada)', 'Fruta', '🍓', 'Libra', 'Libra', 1, 80.00, 'Mezcla de frutas de temporada. Estimación RD (≈RD$80/libra). Ajusta según las frutas que uses.'],
+    ]);
+    // Peso/densidad de referencia SOLO si el catálogo no los tenía (para convertir unidades en la lista de compra).
+    completarPesoDensidad80($pdo, [
+        ['Cebolla blanca', null, 150],
+        ['Cilantro', null, 50],
+        ['Lechuga', null, 400],
+        ['Mayonesa', 0.95, null],
+        ['Miel de abeja', 1.42, null],
+        ['Pan rallado', 0.45, null],
+        ['Papa', null, 200],
+        ['Pechuga de pollo', null, 200],
+        ['Perejil', null, 50],
+        ['Sal', 1.2, null],
+        ['Tomate', null, 130],
+        ['Zanahoria', null, 80],
+    ]);
+
+    // 61. Fresas con chocolate tibio
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Fresas con chocolate tibio',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            '⚠ Lavar y desinfectar fresas.',
+            'Calentar crema y verter sobre chocolate; mezclar con mantequilla.',
+            'Presentar fresas y salsear ante el cliente.',
+        ]),
+        [
+            ['Fresa', 'Fresas', 400, 'Gramo', 0.33, [], false, false, null],
+            ['Chocolate oscuro para hornear', 'Chocolate', 180, 'Gramo', 1.41, [], false, false, null],
+            ['Crema para batir', 'Crema para batir', 100, 'Mililitro', 0.26, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 10, 'Gramo', 0.31, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 62. Filete de res trinchado
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Filete de res trinchado',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        5,
+        implode("\n\n", [
+            'Sazonar y sellar filete.',
+            '⚠ Terminar en horno según punto y normas sanitarias.',
+            '⚠ Reposar, llevar a estación segura y trinchar ante el cliente.',
+            'Salsear.',
+        ]),
+        [
+            ['Filete de res (lomito)', 'Filete de res entero', 750, 'Gramo', 0.99, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Ajo', 'Ajo', 0, 'Diente', 14.50, [], true, false, null],
+            ['Romero (seco)', 'Romero al gusto', 0, 'Cucharadita', 7.78, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+            ['Caldo (pollo o vegetales)', 'Jugo de carne (o caldo)', 100, 'Mililitro', 0.04, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 63. Macedonia tropical con yogur
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Macedonia tropical con yogur',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Lavar, pelar y cortar frutas; refrigerar.',
+            'Mezclar yogur y miel.',
+            'Montar porciones ante el cliente, rociar limón y acompañar con yogur.',
+        ]),
+        [
+            ['Piña', 'Piña', 0.2, 'Kilogramo', 136.36, [], false, false, null],
+            ['Lechosa', 'Lechosa (papaya)', 0.2, 'Kilogramo', 55.12, [], false, false, null],
+            ['Mango', 'Mango', 0.2, 'Kilogramo', 136.00, [], false, false, null],
+            ['Guineo', 'Guineos', 2, 'Unidad', 3.80, [], false, false, null],
+            ['Yogurt natural (envase grande)', 'Yogur natural', 0.25, 'Kilogramo', 145.63, [], false, false, null],
+            ['Miel de abeja', 'Miel', 15, 'Gramo', 0.55, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 15, 'Mililitro', 0.35, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 64. Tortillas de trigo rellenas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Tortillas de trigo rellenas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Cocinar y desmenuzar pollo.',
+            '⚠ Mantener a temperatura segura.',
+            '⚠ Preparar vegetales desinfectados y salsa de yogur.',
+            '⚠ Calentar tortillas y montar ante el cliente evitando contaminación cruzada.',
+        ]),
+        [
+            ['Tortillas de trigo', 'Tortillas de trigo', 8, 'Unidad', 12.00, [], false, false, null],
+            ['Pechuga de pollo', 'Pollo cocido', 350, 'Gramo', 0.38, ['Cocido'], false, false, null],
+            ['Lechuga', 'Lechuga', 150, 'Gramo', 0.14, [], false, false, null],
+            ['Tomate', 'Tomate', 0.15, 'Kilogramo', 103.62, [], false, false, null],
+            ['Yogurt natural (envase grande)', 'Yogur', 0.12, 'Kilogramo', 145.63, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 30, 'Mililitro', 0.35, [], false, false, null],
+            ['Comino', 'Comino al gusto', 0, 'Cucharadita', 3.09, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 65. Mofongo de camarones
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Mofongo de camarones',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Freír plátanos hasta tiernos.',
+            'Majar con ajo y chicharrón.',
+            'Cocinar camarones en salsa ligera de ajo y caldo hasta cocidos; montar mofongo y servir.',
+            '⚠ Completar limpieza y cierre de estación.',
+        ]),
+        [
+            ['Plátano verde', 'Plátanos verdes', 4, 'Unidad', 20.00, [], false, false, null],
+            ['Camarón', 'Camarones', 450, 'Gramo', 0.62, [], false, false, null],
+            ['Ajo', 'Ajo', 4, 'Diente', 14.50, [], false, false, null],
+            ['Chicharrón de cerdo', 'Chicharrón cocido', 60, 'Gramo', 0.57, ['Cocido'], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 350, 'Mililitro', 0.04, [], false, false, null],
+            ['Aceite vegetal', 'Aceite (al gusto)', 0, 'Litro', 147.00, [], true, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 66. Pechuga rellena de espinacas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pechuga rellena de espinacas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Saltear espinacas y ajo, enfriar y mezclar con queso.',
+            'Abrir pechugas, rellenar y cerrar.',
+            '⚠ Sellar y hornear hasta 74 °C internos; sanitizar estación.',
+        ]),
+        [
+            ['Pechuga de pollo', 'Pechugas de pollo', 4, 'Unidad', 76.72, [], false, false, null],
+            ['Espinaca', 'Espinacas', 180, 'Gramo', 0.24, [], false, false, null],
+            ['Queso crema', 'Queso crema', 160, 'Gramo', 1.27, [], false, false, null],
+            ['Ajo', 'Ajo', 2, 'Diente', 14.50, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 67. Canelones de ricota
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Canelones de ricota',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Cocer o hidratar pasta según fabricante.',
+            'Mezclar ricota y espinacas cocidas, rellenar, cubrir con salsa y queso.',
+            'Hornear 190 °C 25–35 minutos.',
+            '⚠ Realizar cierre.',
+        ]),
+        [
+            ['Pasta para canelones (tubos)', 'Tubos de canelón', 12, 'Tubo', 7.50, [], false, false, null],
+            ['Queso ricotta', 'Ricota', 350, 'Gramo', 0.40, [], false, false, null],
+            ['Espinaca', 'Espinacas', 180, 'Gramo', 0.24, [], false, false, null],
+            ['Salsa de tomate', 'Salsa tomate', 450, 'Mililitro', 0.20, [], false, false, null],
+            ['Queso mozzarella', 'Queso mozzarella', 120, 'Gramo', 0.52, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 68. Pastel de papa y carne
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pastel de papa y carne',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Hervir papas y preparar puré.',
+            'Cocinar carne completamente con cebolla y tomate.',
+            'Montar carne y puré en fuente, añadir queso y gratinar.',
+            '⚠ Limpiar estación.',
+        ]),
+        [
+            ['Papa', 'Papas', 0.85, 'Kilogramo', 83.78, [], false, false, null],
+            ['Carne de res molida', 'Carne molida', 450, 'Gramo', 0.40, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Tomate', 'Tomate', 0.2, 'Kilogramo', 103.62, [], false, false, null],
+            ['Leche entera', 'Leche', 0.1, 'Litro', 74.00, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 40, 'Gramo', 0.31, [], false, false, null],
+            ['Queso mozzarella', 'Queso (mozzarella)', 100, 'Gramo', 0.52, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 69. Hamburguesa artesanal
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Hamburguesa artesanal',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Formar 4 hamburguesas sin compactar en exceso.',
+            '⚠ Cocinar carne molida a 71 °C internos.',
+            'Tostar panes, montar con vegetales limpios y queso.',
+            '⚠ Cerrar estación.',
+        ]),
+        [
+            ['Carne de res molida', 'Carne molida de res', 600, 'Gramo', 0.40, [], false, false, null],
+            ['Pan de hamburguesa', 'Pan de hamburguesa', 4, 'Unidad', 11.13, [], false, false, null],
+            ['Lechuga', 'Lechuga (hojas)', 4, 'Hoja', 3.56, [], false, false, null],
+            ['Tomate', 'Tomate', 1, 'Unidad', 13.47, [], false, false, null],
+            ['Queso cheddar', 'Queso en lonjas', 4, 'Lonja', 9.70, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Mayonesa', 'Salsa de la casa al gusto', 0, 'Cucharada', 4.72, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 70. Arroz frito oriental
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Arroz frito oriental',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cocinar pollo completamente y reservar.',
+            'Saltear verduras, cuajar huevos, incorporar arroz frío y pollo; calentar todo completamente y sazonar con soja.',
+            '⚠ No dejar arroz a temperatura ambiente.',
+        ]),
+        [
+            ['Arroz', 'Arroz cocido refrigerado (≈150 g de arroz crudo)', 150, 'Gramo', 0.10, ['Cocido'], false, false, null],
+            ['Pechuga de pollo', 'Pollo', 200, 'Gramo', 0.38, [], false, false, null],
+            ['Huevo', 'Huevos', 2, 'Unidad', 6.50, [], false, false, null],
+            ['Zanahoria', 'Zanahoria', 0.1, 'Kilogramo', 68.34, [], false, false, null],
+            ['Guisantes (arvejas)', 'Guisantes', 80, 'Gramo', 0.24, [], false, false, null],
+            ['Salsa de soja', 'Salsa soja', 40, 'Mililitro', 0.32, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 71. Tacos de pescado a la plancha
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Tacos de pescado a la plancha',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            '⚠ Cortar repollo desinfectado y mezclar salsa de yogur y limón.',
+            'Sazonar y cocinar pescado a la plancha completamente.',
+            'Calentar tortillas y montar.',
+            '⚠ Limpiar superficies.',
+        ]),
+        [
+            ['Filete de pescado', 'Pescado', 600, 'Gramo', 0.33, [], false, false, null],
+            ['Tortillas de trigo', 'Tortillas de trigo', 8, 'Unidad', 12.00, [], false, false, null],
+            ['Repollo', 'Repollo', 0.2, 'Kilogramo', 77.16, [], false, false, null],
+            ['Yogurt natural (envase grande)', 'Yogur', 0.1, 'Kilogramo', 145.63, [], false, false, null],
+            ['Limón verde', 'Limón', 1, 'Unidad', 5.23, [], false, false, null],
+            ['Aguacate', 'Aguacate', 1, 'Unidad', 32.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 15, 'Mililitro', 0.15, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 72. Sándwich club
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Sándwich club',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Cocinar tocineta y pollo completamente; tostar pan.',
+            '⚠ Montar tres capas con mayonesa, pollo y vegetales desinfectados.',
+            '⚠ Cortar, presentar y completar cierre.',
+        ]),
+        [
+            ['Pan de sándwich', 'Pan de sándwich (rebanadas)', 12, 'Rebanada', 4.91, [], false, false, null],
+            ['Pechuga de pollo', 'Pollo cocido', 400, 'Gramo', 0.38, ['Cocido'], false, false, null],
+            ['Tocineta', 'Tocineta (tiras)', 8, 'Tira', 5.95, [], false, false, null],
+            ['Lechuga', 'Lechuga (hojas)', 4, 'Hoja', 3.56, [], false, false, null],
+            ['Tomate', 'Tomates', 2, 'Unidad', 13.47, [], false, false, null],
+            ['Mayonesa', 'Mayonesa', 80, 'Gramo', 0.33, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 73. Raviolis de espinacas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Raviolis de espinacas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Amasar harina y huevos; reposar 30 minutos.',
+            'Mezclar espinacas cocidas y escurridas con ricota y queso.',
+            'Estirar, rellenar, sellar y hervir 3–5 minutos; servir con mantequilla.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina', 0.3, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevos', 3, 'Unidad', 6.50, [], false, false, null],
+            ['Queso ricotta', 'Ricota', 200, 'Gramo', 0.40, [], false, false, null],
+            ['Espinaca', 'Espinacas', 180, 'Gramo', 0.24, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 40, 'Gramo', 1.63, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 30, 'Gramo', 0.31, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 74. Pescado en costra de hierbas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pescado en costra de hierbas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Mezclar pan, hierbas, mantequilla y ralladura.',
+            '⚠ Cubrir pescado sazonado y hornear a 190 °C 15–20 minutos según grosor hasta cocción completa.',
+        ]),
+        [
+            ['Filete de pescado', 'Pescado', 650, 'Gramo', 0.33, [], false, false, null],
+            ['Pan rallado', 'Pan rallado', 100, 'Gramo', 0.20, [], false, false, null],
+            ['Perejil', 'Perejil', 25, 'Gramo', 0.50, [], false, false, null],
+            ['Cilantro', 'Cilantro', 20, 'Gramo', 0.50, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 40, 'Gramo', 0.31, [], false, false, null],
+            ['Limón verde', 'Limón', 1, 'Unidad', 5.23, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 75. Polenta cremosa con hongos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Polenta cremosa con hongos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Verter polenta en caldo hirviendo removiendo; cocer según envase hasta tierna.',
+            'Saltear hongos con ajo; terminar polenta con mantequilla y queso y servir juntos.',
+        ]),
+        [
+            ['Polenta', 'Polenta', 220, 'Gramo', 0.13, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 900, 'Mililitro', 0.04, [], false, false, null],
+            ['Champiñones', 'Hongos (champiñones)', 250, 'Gramo', 0.31, [], false, false, null],
+            ['Queso parmesano', 'Queso parmesano', 60, 'Gramo', 1.63, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 40, 'Gramo', 0.31, [], false, false, null],
+            ['Ajo', 'Ajo', 1, 'Diente', 14.50, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 76. Wellington de cerdo
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Wellington de cerdo',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        6,
+        implode("\n\n", [
+            'Sellar cerdo y enfriar.',
+            'Picar y saltear hongos con cebolla hasta secos; enfriar.',
+            'Untar cerdo con mostaza, envolver con hongos y hojaldre.',
+            '⚠ Barnizar y hornear 200 °C hasta hojaldre dorado y cerdo con cocción interna segura.',
+        ]),
+        [
+            ['Solomillo de cerdo', 'Solomillo de cerdo', 650, 'Gramo', 0.51, [], false, false, null],
+            ['Masa de hojaldre', 'Masa de hojaldre', 350, 'Gramo', 0.71, [], false, false, null],
+            ['Champiñones', 'Champiñones', 250, 'Gramo', 0.31, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Unidad', 13.89, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Aceite vegetal', 'Aceite', 20, 'Mililitro', 0.15, [], false, false, null],
+            ['Mostaza', 'Mostaza al gusto', 0, 'Cucharada', 3.33, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 77. Ñoquis con queso azul
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Ñoquis con queso azul',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Hervir papa, hacer puré y unir con huevo y harina; formar ñoquis.',
+            'Hervir hasta cocidos.',
+            'Fundir queso azul en crema a fuego suave y mezclar con ñoquis.',
+        ]),
+        [
+            ['Papa', 'Papa', 0.7, 'Kilogramo', 83.78, [], false, false, null],
+            ['Harina de trigo', 'Harina', 0.2, 'Kilogramo', 61.73, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            ['Queso azul', 'Queso azul', 100, 'Gramo', 0.71, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 200, 'Mililitro', 0.49, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 78. Pechuga de pato con frutos rojos
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pechuga de pato con frutos rojos',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Marcar piel del pato y dorar comenzando por piel.',
+            '⚠ Terminar cocción a temperatura segura.',
+            'Reducir frutos rojos con caldo, miel y vinagre; reposar pato, cortar y servir.',
+        ]),
+        [
+            ['Pechuga de pato', 'Pechuga de pato (2 pechugas)', 650, 'Gramo', 1.37, [], false, false, null],
+            ['Frutos rojos (congelados)', 'Frutos rojos', 200, 'Gramo', 0.99, [], false, false, null],
+            ['Caldo (pollo o vegetales)', 'Caldo', 120, 'Mililitro', 0.04, [], false, false, null],
+            ['Miel de abeja', 'Miel', 20, 'Gramo', 0.55, [], false, false, null],
+            ['Vinagre', 'Vinagre', 15, 'Mililitro', 0.15, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, true, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 79. Tartaletas de frutas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Tartaletas de frutas',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        8,
+        implode("\n\n", [
+            'Preparar masa quebrada, reposar, forrar moldes y hornear a 180 °C 15–20 minutos.',
+            'Enfriar, rellenar con crema pastelera refrigerada y decorar con frutas lavadas.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina', 0.25, 'Kilogramo', 61.73, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 125, 'Gramo', 0.31, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 80, 'Gramo', 0.08, [], false, false, null],
+            ['Huevo', 'Huevo', 1, 'Unidad', 6.50, [], false, false, null],
+            [null, 'Crema pastelera cocida (receta de Profiteroles)', 0.4, 'Kilogramo', 125.40, ['Cocido'], false, false, null],
+            ['Fruta variada (de temporada)', 'Fruta variada', 0.25, 'Kilogramo', 176.37, [], false, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 80. Soufflé de chocolate
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Soufflé de chocolate',
+        'Receta del recetario de 80 elaboraciones; el lote del PDF rinde 17 degustaciones.',
+        4,
+        implode("\n\n", [
+            'Fundir chocolate con mantequilla.',
+            'Mezclar yemas y harina; batir claras con azúcar hasta picos suaves.',
+            'Incorporar con movimientos envolventes, llenar moldes preparados y hornear 190 °C 12–16 minutos; servir inmediatamente.',
+        ]),
+        [
+            ['Chocolate oscuro para hornear', 'Chocolate', 180, 'Gramo', 1.41, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 40, 'Gramo', 0.31, [], false, false, null],
+            ['Huevo', 'Huevos (separados)', 4, 'Unidad', 6.50, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 60, 'Gramo', 0.08, [], false, false, null],
+            ['Harina de trigo', 'Harina', 20, 'Gramo', 0.06, [], false, false, null],
+            ['Mantequilla', 'Mantequilla (para los moldes)', 0, 'Cucharadita', 1.46, [], true, false, null],
+        ]
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
     return $mensajes;
 }
 
@@ -2780,6 +5247,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarResponsableCompra($pdo));
         $mensajes = array_merge($mensajes, agregarPorcionesPruebaARecetas($pdo));
         $mensajes = array_merge($mensajes, agregarBaseCalculoAPracticaReceta($pdo));
+        $mensajes = array_merge($mensajes, agregarIconoARecetas($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetas80Tanda1($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetas80Tanda2($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetas80Tanda3($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetas80Tanda4($pdo));
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));

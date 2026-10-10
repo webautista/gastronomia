@@ -69,7 +69,7 @@ require __DIR__ . '/../includes/layout_top.php';
 
 <div class="page-head">
   <div>
-    <h1><?= e($receta['nombre']) ?></h1>
+    <h1><?= tituloRecetaHtml($receta) ?></h1>
     <p><?= e($receta['categoria']) ?> · rinde <?= $porcionesBase ?> <?= $porcionesBase === 1 ? 'porción' : 'porciones' ?><?= porcionesPruebaReceta($receta) > 0 ? ' · ' . porcionesPruebaReceta($receta) . ' de prueba' : '' ?></p>
     <?php if (trim((string) ($receta['descripcion'] ?? '')) !== ''): ?>
       <p style="max-width:640px;"><?= nl2br(e($receta['descripcion'])) ?></p>

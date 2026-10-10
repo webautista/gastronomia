@@ -246,6 +246,161 @@ function renderPreparacionHtml(string $texto): string
     return $html;
 }
 
+/**
+ * ¿Ya existe recetas.icono? Tolerante a que setup.php todavía no se haya
+ * corrido (resuelve una vez por petición).
+ */
+function recetasTieneIcono(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW COLUMNS FROM recetas LIKE 'icono'")->fetch();
+        } catch (PDOException $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/** ¿El texto empieza con un emoji? (ej. nombres de receta que ya llevan uno escrito a mano) */
+function empiezaConEmoji(string $texto): bool
+{
+    return (bool) preg_match('/^\s*[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}]/u', $texto);
+}
+
+/**
+ * Ícono (emoji) que se muestra antes del nombre de una receta. Si el nombre
+ * ya empieza con un emoji escrito a mano, no se repite otro.
+ */
+function iconoVisibleReceta(array $receta): string
+{
+    if (empiezaConEmoji((string) ($receta['nombre'] ?? ''))) {
+        return '';
+    }
+    return trim((string) ($receta['icono'] ?? ''));
+}
+
+/** Título de receta listo para HTML: "🍎 Nombre de la receta" (escapado). */
+function tituloRecetaHtml(array $receta): string
+{
+    $icono = iconoVisibleReceta($receta);
+    return ($icono !== '' ? '<span class="rec-icono" aria-hidden="true">' . e($icono) . '</span> ' : '') . e((string) $receta['nombre']);
+}
+
+/**
+ * Emoji sugerido para una receta según su nombre (ingrediente principal o
+ * tipo de plato) y, si el nombre no dice nada, según su categoría. Solo
+ * usa emojis que Windows 10 ya dibuja (Unicode hasta 12). Las reglas se
+ * evalúan en orden: la primera palabra que coincida gana. Una palabra con
+ * "=" al final solo coincide completa ("pan=" no coincide con "panna").
+ */
+function iconoSugeridoReceta(string $nombre, string $categoria = ''): string
+{
+    static $reglas = null;
+    if ($reglas === null) {
+        $reglas = [
+            '🍡' => ['brochetas de fruta', 'brocheta de fruta'],
+            '🥣' => ['yogur', 'yogurt', 'granola', 'quinoa', 'cereal', 'polenta', 'macedonia'],
+            '🧁' => ['cupcake', 'muffin'],
+            '🍞' => ['pan=', 'pan de', 'focaccia', 'baguette', 'sandwich', 'sándwich', 'bruschetta', 'tostada'],
+            '🥐' => ['croissant', 'hojaldre', 'profiterol', 'eclair', 'éclair'],
+            '🍝' => ['lasana', 'lasaña', 'canelon', 'pasta', 'espagueti', 'spaghetti', 'fettuccine', 'macarron', 'noqui', 'ñoqui', 'ravioli', 'tallarin'],
+            '🍕' => ['pizza'],
+            '🌮' => ['taco', 'tortilla de trigo', 'tortillas', 'burrito', 'quesadilla'],
+            '🍔' => ['hamburguesa'],
+            '🌭' => ['salchicha', 'hot dog'],
+            '🧆' => ['hummus', 'falafel', 'albondiga', 'tahini', 'arancini'],
+            '🥟' => ['empanada', 'pastelito', 'catibia', 'dumpling'],
+            '🐑' => ['cordero'],
+            '🍲' => ['sopa', 'crema de', 'caldo', 'sancocho', 'asopao', 'consome', 'gazpacho', 'minestrone', 'locro', 'guiso', 'estofado'],
+            '🥘' => ['paella', 'locrio', 'pastelon', 'pastelón', 'mofongo', 'ossobuco', 'rabo'],
+            '🍚' => ['arroz', 'risotto', 'moro'],
+            '🥗' => ['ensalada', 'tartar', 'carpaccio'],
+            '🍳' => ['huevo', 'omelet', 'omelette', 'revoltillo', 'tortilla de huevo', 'quiche'],
+            '🍤' => ['camaron', 'camarón', 'tempura', 'langostino'],
+            '🦞' => ['langosta'],
+            '🐙' => ['pulpo'],
+            '🦑' => ['calamar'],
+            '🦪' => ['mejillon', 'mejillón', 'almeja', 'ostra', 'marisco'],
+            '🐟' => ['ceviche', 'pescado', 'salmon', 'salmón', 'atun', 'atún', 'bacalao', 'mero=', 'dorado', 'tilapia', 'filete de pescado'],
+            '🦆' => ['pato'],
+            '🍗' => ['pollo', 'pechuga', 'pavo'],
+            '🍖' => ['costilla', 'lechon', 'lechón', 'cerdo', 'agridulce', 'wellington', 'solomillo', 'lomo'],
+            '🥩' => ['res=', 'de res', 'carne', 'bistec', 'filete', 'brocheta', 'parrilla'],
+            '🍎' => ['manzana'],
+            '🍐' => ['pera=', 'peras'],
+            '🍊' => ['naranja', 'mandarina'],
+            '🍋' => ['limon', 'limón', 'lima='],
+            '🍌' => ['guineo', 'banana', 'platano', 'plátano', 'tostone'],
+            '🍓' => ['fresa', 'frutos rojos', 'fruta', 'frutas'],
+            '🍒' => ['cereza', 'guinda'],
+            '🍇' => ['uva', 'arandano', 'arándano'],
+            '🍈' => ['melon', 'melón'],
+            '🍉' => ['sandia', 'sandía'],
+            '🍍' => ['pina', 'piña'],
+            '🥥' => ['coco'],
+            '🥭' => ['mango', 'chinola', 'maracuya', 'maracuyá', 'guayaba', 'tamarindo'],
+            '🍑' => ['durazno', 'melocoton', 'melocotón'],
+            '🥝' => ['kiwi'],
+            '🥑' => ['aguacate'],
+            '🍅' => ['tomate'],
+            '🍆' => ['berenjena'],
+            '🥕' => ['zanahoria'],
+            '🌽' => ['maiz', 'maíz', 'arepita', 'arepa'],
+            '🥔' => ['papa', 'patata', 'pure', 'puré'],
+            '🍠' => ['batata', 'yuca'],
+            '🧅' => ['cebolla', 'cebollita'],
+            '🧄' => ['ajo='],
+            '🍄' => ['champinon', 'champiñon', 'champiñón', 'hongo', 'seta'],
+            '🌶️' => ['aji', 'ají', 'pimiento', 'picante'],
+            '🥦' => ['brocoli', 'brócoli', 'vegetal', 'verdura', 'escabeche', 'encurtid', 'remolacha'],
+            '🥬' => ['espinaca', 'lechuga', 'acelga', 'albahaca', 'pesto'],
+            '🥒' => ['pepino', 'pepinillo'],
+            '🎃' => ['calabaza', 'auyama'],
+            '🌱' => ['habichuela', 'frijol', 'lenteja', 'garbanzo'],
+            '🥜' => ['nuez', 'nueces', 'almendra', 'mani', 'maní'],
+            '🍫' => ['chocolate', 'cacao', 'brownie'],
+            '☕' => ['cafe', 'café', 'tiramisu', 'tiramisú'],
+            '🍵' => ['te=', 'té=', 'matcha'],
+            '🍯' => ['miel', 'mermelada', 'compota'],
+            '🧀' => ['queso', 'bechamel', 'alfredo', 'gratinad', 'fondue'],
+            '🧈' => ['mantequilla'],
+            '🥛' => ['leche', 'natilla'],
+            '🍨' => ['helado', 'sorbete', 'gelato'],
+            '🍪' => ['galleta', 'cookie'],
+            '🍩' => ['dona', 'donut', 'rosquilla'],
+            '🥧' => ['pie de', 'pie=', 'tarta', 'tartaleta'],
+            '🍮' => ['flan', 'panna', 'brulee', 'brûlée', 'pudin', 'pudín', 'mousse', 'crema catalana', 'gelatina', 'pavlova', 'merengue', 'souffle', 'soufflé'],
+            '🥞' => ['panqueque', 'pancake', 'crepa', 'crepe'],
+            '🧇' => ['waffle'],
+            '🍰' => ['cheesecake', 'pastel', 'torta', 'cake', 'bizcocho', 'panque', 'tres leches', 'postre'],
+            '🍹' => ['coctel', 'cóctel', 'sangria', 'sangría', 'ponche', 'mojito'],
+            '🍷' => ['vino'],
+            '🥤' => ['jugo', 'batido', 'smoothie', 'limonada', 'bebida', 'refresco', 'agua de'],
+            '🥫' => ['salsa', 'aderezo', 'vinagreta', 'chimichurri', 'guacamole', 'chutney', 'conserva', 'reduccion', 'reducción', 'sofrito'],
+        ];
+    }
+    $n = ' ' . normalizarNombreIngrediente($nombre) . ' ';
+    foreach ($reglas as $emoji => $palabras) {
+        foreach ($palabras as $palabra) {
+            $exacta = substr($palabra, -1) === '=';
+            $clave = normalizarNombreIngrediente(rtrim($palabra, '='));
+            if ($clave === '') {
+                continue;
+            }
+            if ($exacta ? str_contains($n, ' ' . $clave . ' ') : str_contains($n, ' ' . $clave)) {
+                return $emoji;
+            }
+        }
+    }
+    $porCategoria = [
+        'plato fuerte' => '🍽️', 'guarnicion' => '🥗', 'postre' => '🍰', 'aperitivo' => '🥟',
+        'panaderia' => '🍞', 'bebida' => '🥤', 'desayuno' => '🍳', 'sopa y crema' => '🍲', 'salsa y conserva' => '🥫',
+    ];
+    return $porCategoria[normalizarNombreIngrediente($categoria)] ?? '🍽️';
+}
+
 /** Texto "base N porciones" / "base N pruebas" según el contexto. */
 function etiquetaPorcionesReferencia(array $receta, string $entidadTipo): string
 {

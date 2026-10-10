@@ -77,7 +77,7 @@ require __DIR__ . '/../includes/layout_top.php';
           <?php foreach ($disponibles as $rc): ?>
             <label class="check-row" data-nombre="<?= e($rc['nombre']) ?>" data-categoria="<?= e($rc['categoria']) ?>" data-cat="<?= (int) $rc['categoria_id'] ?>">
               <input type="checkbox" name="receta_ids[]" value="<?= (int) $rc['id'] ?>">
-              <span><span class="cname"><?= e($rc['nombre']) ?></span><br><span class="csub"><?= e($rc['categoria']) ?> · base <?= (int) $rc['porciones_base'] ?> porciones</span></span>
+              <span><span class="cname"><?= tituloRecetaHtml($rc) ?></span><br><span class="csub"><?= e($rc['categoria']) ?> · base <?= (int) $rc['porciones_base'] ?> porciones</span></span>
             </label>
           <?php endforeach; ?>
         </div>

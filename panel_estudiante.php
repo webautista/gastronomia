@@ -195,7 +195,7 @@ require __DIR__ . '/includes/layout_top.php';
             <div style="display:flex;align-items:center;gap:8px;">
               <button class="icon-btn no-print" type="button" data-role="recipe-collapse-toggle" title="Colapsar/expandir"><?= icon('chevronDown') ?></button>
               <div>
-                <h4><?= e($rc['nombre']) ?></h4>
+                <h4><?= tituloRecetaHtml($rc) ?></h4>
                 <div class="cell-muted"><?= e($rc['categoria']) ?> · <?= e(etiquetaPorcionesReferencia($rc, $rc['entidad_tipo'])) ?> · <span class="mono" data-role="costo-total-badge"><?= money($rc['costo_total']) ?></span></div>
               </div>
             </div>

@@ -8,7 +8,7 @@ $usuarioActual = requireLogin($base);
 $id = intOrNull($_GET['id'] ?? null);
 requirePermission($usuarioActual, 'recetas', $id ? 'editar' : 'crear', $base);
 
-$receta = ['nombre' => '', 'descripcion' => '', 'categoria_id' => '', 'porciones_base' => '', 'porciones_prueba' => null, 'preparacion' => '', 'foto' => null];
+$receta = ['nombre' => '', 'descripcion' => '', 'categoria_id' => '', 'porciones_base' => '', 'porciones_prueba' => null, 'icono' => '', 'preparacion' => '', 'foto' => null];
 $ingredientes = [['ingrediente_id' => '', 'nombre' => '', 'cantidad' => '', 'unidad_id' => '', 'costo_unitario' => '', 'reemplazo' => '', 'al_gusto' => 0, 'opcional' => 0, 'acciones' => []]];
 $errores = [];
 
@@ -135,6 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $receta['porciones_base'] = intOrNull($_POST['porciones_base'] ?? null);
     $receta['porciones_prueba'] = intOrNull($_POST['porciones_prueba'] ?? null);
     $receta['preparacion']    = trim($_POST['preparacion'] ?? '');
+    $receta['icono']          = mb_substr(trim($_POST['icono'] ?? ''), 0, 16);
 
     $ingNombres        = $_POST['ing_nombre'] ?? [];
     $ingCantidad       = $_POST['ing_cantidad'] ?? [];
@@ -264,6 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->prepare('UPDATE recetas SET porciones_prueba=? WHERE id=?')->execute([$receta['porciones_prueba'], $id]);
                 }
                 $pdo->prepare('DELETE FROM ingredientes WHERE receta_id = ?')->execute([$id]);
+                $guardarIcono = true;
             } else {
                 $stmt = $pdo->prepare('INSERT INTO recetas (nombre, descripcion, categoria_id, porciones_base, preparacion, foto) VALUES (?,?,?,?,?,?)');
                 $stmt->execute([$receta['nombre'], $descripcionFinal, $receta['categoria_id'], $receta['porciones_base'], $receta['preparacion'] !== '' ? $receta['preparacion'] : null, $fotoFinal]);
@@ -271,6 +273,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (recetasTienePorcionesPrueba($pdo)) {
                     $pdo->prepare('UPDATE recetas SET porciones_prueba=? WHERE id=?')->execute([$receta['porciones_prueba'], $id]);
                 }
+                $guardarIcono = true;
+            }
+            // Ícono del título: el que se escribió/eligió, o —si se dejó vacío—
+            // uno sugerido según el nombre y la categoría de la receta.
+            if (!empty($guardarIcono) && recetasTieneIcono($pdo)) {
+                $iconoFinal = $receta['icono'];
+                if ($iconoFinal === '' && !empiezaConEmoji($receta['nombre'])) {
+                    $nombreCategoria = (string) (array_column($categorias, 'nombre', 'id')[$receta['categoria_id']] ?? '');
+                    $iconoFinal = iconoSugeridoReceta($receta['nombre'], $nombreCategoria);
+                }
+                $pdo->prepare('UPDATE recetas SET icono=? WHERE id=?')->execute([$iconoFinal !== '' ? $iconoFinal : null, $id]);
             }
 
             // Una consulta preparada por fila de ingrediente es inevitable (cada
@@ -334,6 +347,24 @@ require __DIR__ . '/../includes/layout_top.php';
       <label for="nombre">Nombre de la receta</label>
       <input type="text" id="nombre" name="nombre" required value="<?= e($receta['nombre']) ?>">
     </div>
+
+    <?php if (recetasTieneIcono(db())): ?>
+    <div class="field">
+      <label for="icono">Ícono del título <span class="cell-muted">(opcional)</span></label>
+      <input type="text" id="icono" name="icono" maxlength="16" style="max-width:120px;font-size:1.3rem;text-align:center;" value="<?= e((string) ($receta['icono'] ?? '')) ?>" placeholder="🍎">
+      <div class="icon-picker" data-role="icon-picker">
+        <?php foreach (['🍎','🍌','🍋','🍓','🍍','🥭','🥕','🍅','🍆','🥔','🍄','🥬','🥦','🧅','🌽','🍞','🥐','🍝','🍕','🌮','🍲','🥘','🍚','🥗','🍳','🧀','🍗','🥩','🍖','🐟','🍤','🦑','🍰','🧁','🥧','🍮','🍫','🍪','🥣','🥤','🍹','🥫','🌶️','☕'] as $emo): ?>
+          <button type="button" class="icon-picker-btn" data-emoji="<?= e($emo) ?>"><?= e($emo) ?></button>
+        <?php endforeach; ?>
+      </div>
+      <div class="hint">Se muestra antes del nombre en las tarjetas y títulos de la receta. Si lo dejas vacío, se elige uno automático según el nombre. También puedes escribir tu propio emoji (en Windows: tecla Windows + punto).</div>
+    </div>
+    <script>
+      document.querySelectorAll('[data-role="icon-picker"] .icon-picker-btn').forEach(function (b) {
+        b.addEventListener('click', function () { document.getElementById('icono').value = b.dataset.emoji; });
+      });
+    </script>
+    <?php endif; ?>
 
     <div class="field">
       <label for="descripcion">Descripción</label>

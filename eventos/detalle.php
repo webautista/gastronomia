@@ -728,7 +728,7 @@ require __DIR__ . '/../includes/layout_top.php';
           <div class="dash-head-id">
             <div class="dash-icon"><?= icon('whisk') ?></div>
             <div>
-              <div class="dash-title"><?= e($rc['nombre']) ?></div>
+              <div class="dash-title"><?= tituloRecetaHtml($rc) ?></div>
               <div class="dash-meta">
                 <span><?= e($rc['categoria']) ?></span>
                 <span>base <?= $porcionesBase ?> porciones</span>
