@@ -9,6 +9,10 @@ requirePermission($usuarioActual, 'practicas', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'practicas', 'editar');
 $puedeCrear = can($usuarioActual, 'practicas', 'crear');
 $puedeEliminar = can($usuarioActual, 'practicas', 'eliminar');
+// "Ver cierre" lleva directo al reporte de cierre financiero (reportes/cierre.php,
+// que exige el permiso de Reportes) y solo se habilita cuando la fecha ya pasó.
+$puedeVerCierre = can($usuarioActual, 'reportes', 'ver');
+$hoyCierre = date('Y-m-d');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['accion'] ?? '') === 'eliminar') {
     requirePermission($usuarioActual, 'practicas', 'eliminar', $base);
@@ -140,7 +144,16 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
           <?php endif; ?>
           <div class="dash-footer">
-            <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $p['id'] ?>">Ver detalle</a>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $p['id'] ?>">Ver detalle</a>
+              <?php if ($puedeVerCierre): $cierreListo = $p['fecha'] < $hoyCierre; ?>
+                <?php if ($cierreListo): ?>
+                  <a class="btn btn-secondary btn-sm" href="../reportes/cierre.php?tipo=practica&id=<?= (int) $p['id'] ?>" title="Abrir el reporte de cierre financiero"><?= icon('clipboardList') ?> Ver cierre</a>
+                <?php else: ?>
+                  <span class="btn btn-secondary btn-sm" style="opacity:.5;cursor:not-allowed;" aria-disabled="true" title="Disponible después de la fecha de la práctica"><?= icon('clipboardList') ?> Ver cierre</span>
+                <?php endif; ?>
+              <?php endif; ?>
+            </div>
             <?php if ($puedeEditar || $puedeEliminar): ?>
               <div class="row-actions">
                 <?php if ($puedeEditar): ?>

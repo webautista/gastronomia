@@ -194,7 +194,7 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
   <div class="page-head" style="margin-bottom:0;padding:16px 16px 0;"><h2 class="section-title" style="margin:0;">Gastos</h2></div>
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Fecha</th><th>Estado</th><th>Monto</th></tr></thead>
+    <thead><tr><th>Categoría</th><th>Descripción</th><th>Proveedor</th><th>Fecha</th><th>Estado</th><th style="white-space:nowrap;text-align:right;">Monto</th></tr></thead>
     <tbody>
       <?php if (!$datos['gastos']): ?>
         <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:24px;">Todavía no hay gastos registrados.</td></tr>
@@ -210,18 +210,18 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
             <?php elseif ($g['estado'] === 'confirmado'): ?><span class="chip chip-warning" title="Confirmado, pero todavía no se ha pagado"><?= e(etiquetaEstadoGasto('confirmado')) ?></span>
             <?php else: ?><span class="chip chip-muted"><?= e(etiquetaEstadoGasto('proyectado')) ?></span><?php endif; ?>
           </td>
-          <td class="mono"><?= money(montoEfectivoGasto($g)) ?></td>
+          <td class="mono" style="white-space:nowrap;text-align:right;"><?= money(montoEfectivoGasto($g)) ?></td>
         </tr>
       <?php endforeach; ?>
     </tbody>
     <?php if ($datos['gastos']): ?>
     <tfoot>
       <?php if ($subtotalesGasto['confirmado'] > 0.005 || $subtotalesGasto['proyectado'] > 0.005): ?>
-        <tr><td colspan="5" style="text-align:right;" class="cell-muted">Pagado</td><td class="mono"><?= money($subtotalesGasto['pagado']) ?></td></tr>
-        <?php if ($subtotalesGasto['confirmado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted"><?= e(etiquetaEstadoGasto('confirmado')) ?> (todavía sin pagar)</td><td class="mono"><?= money($subtotalesGasto['confirmado']) ?></td></tr><?php endif; ?>
-        <?php if ($subtotalesGasto['proyectado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted">Proyectado (sin confirmar)</td><td class="mono"><?= money($subtotalesGasto['proyectado']) ?></td></tr><?php endif; ?>
+        <tr><td colspan="5" style="text-align:right;" class="cell-muted">Pagado</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['pagado']) ?></td></tr>
+        <?php if ($subtotalesGasto['confirmado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted"><?= e(etiquetaEstadoGasto('confirmado')) ?> (todavía sin pagar)</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['confirmado']) ?></td></tr><?php endif; ?>
+        <?php if ($subtotalesGasto['proyectado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted">Proyectado (sin confirmar)</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['proyectado']) ?></td></tr><?php endif; ?>
       <?php endif; ?>
-      <tr><td colspan="5" style="text-align:right;"><b>Total</b></td><td class="mono"><b><?= money(array_sum($catTotales)) ?></b></td></tr>
+      <tr><td colspan="5" style="text-align:right;"><b>Total</b></td><td class="mono" style="white-space:nowrap;text-align:right;"><b><?= money(array_sum($catTotales)) ?></b></td></tr>
     </tfoot>
     <?php endif; ?>
   </table>
@@ -251,7 +251,7 @@ $chipsMetodo = [
         <?php $alDia = $e['pendiente'] <= 0.005; ?>
         <tr>
           <td><?= e($e['estudiante_nombre']) ?></td>
-          <td class="mono"><?= money($e['pagado']) ?></td>
+          <td class="mono" style="white-space:nowrap;"><?= money($e['pagado']) ?></td>
           <td>
             <?php if (!$e['por_metodo']): ?>
               <span class="cell-muted">—</span>
@@ -263,7 +263,7 @@ $chipsMetodo = [
             <?php if ($alDia): ?>
               <span class="chip chip-success"><?= icon('check') ?> Al día</span>
             <?php else: ?>
-              <span class="chip chip-warning mono"><?= money($e['pendiente']) ?></span>
+              <span class="chip chip-warning mono" style="white-space:nowrap;"><?= money($e['pendiente']) ?></span>
             <?php endif; ?>
           </td>
         </tr>
@@ -271,7 +271,7 @@ $chipsMetodo = [
     </tbody>
     <?php if ($datos['estudiantes']): ?>
     <tfoot>
-      <tr><td style="text-align:right;"><b>Total</b></td><td class="mono"><b><?= money($datos['recaudado']) ?></b></td><td></td><td class="mono"><b><?= money(array_sum(array_column($datos['estudiantes'], 'pendiente'))) ?></b></td></tr>
+      <tr><td style="text-align:right;"><b>Total</b></td><td class="mono" style="white-space:nowrap;"><b><?= money($datos['recaudado']) ?></b></td><td></td><td class="mono" style="white-space:nowrap;"><b><?= money(array_sum(array_column($datos['estudiantes'], 'pendiente'))) ?></b></td></tr>
     </tfoot>
     <?php endif; ?>
   </table>

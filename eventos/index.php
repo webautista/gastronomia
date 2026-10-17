@@ -9,6 +9,10 @@ requirePermission($usuarioActual, 'eventos', 'ver', $base);
 $puedeEditar = can($usuarioActual, 'eventos', 'editar');
 $puedeCrear = can($usuarioActual, 'eventos', 'crear');
 $puedeEliminar = can($usuarioActual, 'eventos', 'eliminar');
+// "Ver cierre" lleva directo al reporte de cierre financiero (reportes/cierre.php,
+// que exige el permiso de Reportes) y solo se habilita cuando la fecha ya pasó.
+$puedeVerCierre = can($usuarioActual, 'reportes', 'ver');
+$hoyCierre = date('Y-m-d');
 // Responsable de la compra (sección 45): lo ve quien puede ver la pestaña
 // Estudiantes o la Lista de Compra del evento.
 $puedeVerResponsableCompra = can($usuarioActual, 'eventos_estudiantes', 'ver') || can($usuarioActual, 'eventos_lista_compra', 'ver');
@@ -139,7 +143,16 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
           <?php endif; ?>
           <div class="dash-footer">
-            <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a class="btn btn-secondary btn-sm" href="detalle.php?id=<?= (int) $ev['id'] ?>">Ver detalle</a>
+              <?php if ($puedeVerCierre): $cierreListo = !empty($ev['fecha_tentativa']) ? substr($ev['fecha'], 0, 7) < substr($hoyCierre, 0, 7) : $ev['fecha'] < $hoyCierre; ?>
+                <?php if ($cierreListo): ?>
+                  <a class="btn btn-secondary btn-sm" href="../reportes/cierre.php?tipo=evento&id=<?= (int) $ev['id'] ?>" title="Abrir el reporte de cierre financiero"><?= icon('clipboardList') ?> Ver cierre</a>
+                <?php else: ?>
+                  <span class="btn btn-secondary btn-sm" style="opacity:.5;cursor:not-allowed;" aria-disabled="true" title="Disponible después de la fecha del evento"><?= icon('clipboardList') ?> Ver cierre</span>
+                <?php endif; ?>
+              <?php endif; ?>
+            </div>
             <?php if ($puedeEditar || $puedeEliminar): ?>
               <div class="row-actions">
                 <?php if ($puedeEditar): ?>
