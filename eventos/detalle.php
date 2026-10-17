@@ -192,38 +192,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($accion === 'subir_foto') {
         requirePermission($usuarioActual, 'eventos_fotos', 'crear', $base);
         $descripcionFoto = trim((string) ($_POST['descripcion'] ?? ''));
-        if (!isset($_FILES['foto']) || $_FILES['foto']['error'] === UPLOAD_ERR_NO_FILE) {
-            flash('Elige una foto para subir.', 'error');
-        } elseif ($_FILES['foto']['error'] !== UPLOAD_ERR_OK) {
-            flash('No se pudo subir la foto. Intenta de nuevo.', 'error');
+        // Se pueden subir varias fotos a la vez (campo "fotos[]"). También se
+        // tolera el campo antiguo de una sola foto ("foto").
+        $archivosFotos = [];
+        $subidaFotos = $_FILES['fotos'] ?? ($_FILES['foto'] ?? null);
+        if ($subidaFotos) {
+            foreach (array_keys((array) $subidaFotos['name']) as $iFoto) {
+                $errorFoto = (int) ((array) $subidaFotos['error'])[$iFoto];
+                if ($errorFoto === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+                $archivosFotos[] = [
+                    'name' => (string) ((array) $subidaFotos['name'])[$iFoto],
+                    'tmp_name' => (string) ((array) $subidaFotos['tmp_name'])[$iFoto],
+                    'size' => (int) ((array) $subidaFotos['size'])[$iFoto],
+                    'error' => $errorFoto,
+                ];
+            }
+        }
+        if (!$archivosFotos) {
+            flash('Elige al menos una foto para subir.', 'error');
         } else {
             $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-            $mime = @mime_content_type($_FILES['foto']['tmp_name']);
-            if (!isset($tiposPermitidos[$mime])) {
-                flash('La foto debe ser una imagen JPG, PNG o WEBP.', 'error');
-            } elseif ($_FILES['foto']['size'] > 5 * 1024 * 1024) {
-                flash('La foto no puede pesar más de 5 MB.', 'error');
-            } else {
                 // Las fotos de un evento (galería, no el banner) también las
                 // ven los padres, así que se guardan en el almacenamiento
                 // compartido fuera del repositorio (enlace `public/` en la
                 // raíz del proyecto -> ../shared/public) — mismo criterio
-                // que el banner. Carpeta `public/eventos/fotos` (subcarpeta
-                // de `public/eventos`, donde ya vive el banner, ambas ya
-                // creadas por Eyaelkys; nombres de archivo con prefijos
-                // distintos así que nunca chocan entre sí).
-                $directorioDestino = __DIR__ . '/../public/eventos/fotos';
-                if (!is_dir($directorioDestino)) {
-                    mkdir($directorioDestino, 0775, true);
+                // que el banner. Carpeta `public/eventos/fotos`.
+            $directorioDestino = __DIR__ . '/../public/eventos/fotos';
+            if (!is_dir($directorioDestino)) {
+                mkdir($directorioDestino, 0775, true);
+            }
+            $stmtInsertFoto = $pdo->prepare('INSERT INTO evento_fotos (evento_id, ruta, descripcion) VALUES (?,?,?)');
+            $fotosSubidas = 0;
+            $fotosConError = [];
+            foreach ($archivosFotos as $archivoFoto) {
+                $nombreMostrar = $archivoFoto['name'] !== '' ? $archivoFoto['name'] : 'foto';
+                if ($archivoFoto['error'] !== UPLOAD_ERR_OK) {
+                    $fotosConError[] = $nombreMostrar . ' (no se pudo subir)';
+                    continue;
+                }
+                $mime = @mime_content_type($archivoFoto['tmp_name']);
+                if (!isset($tiposPermitidos[$mime])) {
+                    $fotosConError[] = $nombreMostrar . ' (debe ser JPG, PNG o WEBP)';
+                    continue;
+                }
+                if ($archivoFoto['size'] > 5 * 1024 * 1024) {
+                    $fotosConError[] = $nombreMostrar . ' (pesa más de 5 MB)';
+                    continue;
                 }
                 $nombreArchivo = 'evento_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
-                if (move_uploaded_file($_FILES['foto']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
-                    $pdo->prepare('INSERT INTO evento_fotos (evento_id, ruta, descripcion) VALUES (?,?,?)')
-                        ->execute([$id, 'public/eventos/fotos/' . $nombreArchivo, $descripcionFoto !== '' ? $descripcionFoto : null]);
-                    flash('Foto agregada.');
+                if (move_uploaded_file($archivoFoto['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
+                    $stmtInsertFoto->execute([$id, 'public/eventos/fotos/' . $nombreArchivo, $descripcionFoto !== '' ? $descripcionFoto : null]);
+                    $fotosSubidas++;
                 } else {
-                    flash('No se pudo guardar la foto en el servidor. Vuelve a intentarlo.', 'error');
+                    $fotosConError[] = $nombreMostrar . ' (no se pudo guardar en el servidor)';
                 }
+            }
+            if ($fotosSubidas > 0) {
+                flash($fotosSubidas === 1 ? 'Foto agregada.' : $fotosSubidas . ' fotos agregadas.');
+            }
+            if ($fotosConError) {
+                flash('No se pudieron agregar: ' . implode('; ', $fotosConError) . '.', 'error');
             }
         }
     } elseif ($accion === 'eliminar_foto') {
@@ -1008,20 +1038,21 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php elseif ($tab === 'fotos'): ?>
   <?php if ($puedeCrearFotoTab): ?>
   <div class="card card-pad no-print" style="margin-bottom:20px;">
-    <div class="section-title-row"><span class="section-icon is-gold"><?= icon('camera') ?></span><h2 class="section-title">Agregar foto</h2></div>
+    <div class="section-title-row"><span class="section-icon is-gold"><?= icon('camera') ?></span><h2 class="section-title">Agregar fotos</h2></div>
     <form method="post" enctype="multipart/form-data" style="margin-top:10px;">
       <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
       <input type="hidden" name="accion" value="subir_foto">
       <div class="field">
-        <label>Foto (JPG, PNG o WEBP, máx. 5 MB)</label>
-        <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required>
+        <label>Fotos (JPG, PNG o WEBP, máx. 5 MB cada una)</label>
+        <input type="file" name="fotos[]" accept="image/jpeg,image/png,image/webp" multiple required>
+        <div class="hint">Puedes elegir varias fotos a la vez (mantén Ctrl o Shift al seleccionar, o selecciónalas todas en la galería de tu teléfono).</div>
       </div>
       <div class="field">
-        <label>Descripción (opcional)</label>
+        <label>Descripción (opcional, se aplica a todas las fotos que subas)</label>
         <input type="text" name="descripcion" maxlength="255" placeholder="Ej. Montaje del salón">
       </div>
       <div class="form-actions">
-        <button class="btn btn-primary" type="submit"><?= icon('plus') ?> Agregar foto</button>
+        <button class="btn btn-primary" type="submit"><?= icon('plus') ?> Agregar fotos</button>
       </div>
     </form>
   </div>
