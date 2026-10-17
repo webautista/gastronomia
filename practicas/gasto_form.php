@@ -23,7 +23,9 @@ if (!$practica) {
 
 $categorias = db()->query('SELECT * FROM categorias_gasto WHERE activo = 1 ORDER BY orden ASC, nombre ASC')->fetchAll();
 $categoriaPorDefecto = $categorias[0]['id'] ?? null;
-$gasto = ['categoria_id' => $categoriaPorDefecto, 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d'), 'estado' => 'proyectado', 'es_material_receta' => 0];
+// Estudiante que reportó el gasto (opcional): solo entre los asignados a este practica.
+$estudiantesReporte = gastosTieneReportadoPor(db()) ? estudiantesAsignadosEntidad(db(), 'practica', $practicaId) : [];
+$gasto = ['categoria_id' => $categoriaPorDefecto, 'descripcion' => '', 'proveedor' => '', 'monto' => '', 'fecha' => date('Y-m-d'), 'estado' => 'proyectado', 'es_material_receta' => 0, 'reportado_por' => null];
 $errores = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -35,6 +37,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $gasto['fecha']        = $_POST['fecha'] ?? '';
     $gasto['estado']       = ($_POST['estado'] ?? '') === 'confirmado' ? 'confirmado' : 'proyectado';
     $gasto['es_material_receta'] = !empty($_POST['es_material_receta']) ? 1 : 0;
+    $gasto['reportado_por'] = intOrNull($_POST['reportado_por'] ?? null);
+    if (!in_array($gasto['reportado_por'], array_map('intval', array_column($estudiantesReporte, 'id')), true)) {
+        $gasto['reportado_por'] = null;
+    }
 
     if (!in_array($gasto['categoria_id'], array_column($categorias, 'id'), true)) {
         $errores[] = 'Categoría no válida.';
@@ -53,6 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $montoConfirmadoInicial = $gasto['estado'] === 'confirmado' ? $gasto['monto'] : null;
         $stmt = db()->prepare('INSERT INTO gastos (practica_id, categoria_id, descripcion, proveedor, monto, monto_confirmado, fecha, estado, es_material_receta) VALUES (?,?,?,?,?,?,?,?,?)');
         $stmt->execute([$practicaId, $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['monto'], $montoConfirmadoInicial, $gasto['fecha'], $gasto['estado'], $gasto['es_material_receta']]);
+        if ($gasto['reportado_por'] !== null) {
+            db()->prepare('UPDATE gastos SET reportado_por_estudiante_id = ? WHERE id = ?')->execute([$gasto['reportado_por'], (int) db()->lastInsertId()]);
+        }
         flash($gasto['estado'] === 'confirmado' ? 'Gasto registrado.' : 'Partida proyectada agregada.');
         redirect('detalle.php?id=' . $practicaId . '&tab=gastos');
     }
@@ -121,6 +130,19 @@ require __DIR__ . '/../includes/layout_top.php';
         <input type="number" id="monto" name="monto" min="0" step="0.01" required value="<?= e((string) $gasto['monto']) ?>">
       </div>
     </div>
+
+    <?php if ($estudiantesReporte): ?>
+    <div class="field">
+      <label for="reportado_por">¿Qué estudiante reportó este gasto? (opcional)</label>
+      <select id="reportado_por" name="reportado_por">
+        <option value="">— Ninguno en particular —</option>
+        <?php foreach ($estudiantesReporte as $est): ?>
+          <option value="<?= (int) $est['id'] ?>" <?= (int) $gasto['reportado_por'] === (int) $est['id'] ? 'selected' : '' ?>><?= e($est['nombre']) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <div class="hint">El estudiante que hizo la compra y entregó la factura. Es solo informativo: sirve para saber a quién reembolsar si no se le devolvió el efectivo. No es lo mismo que el responsable de la compra de los ingredientes.</div>
+    </div>
+    <?php endif; ?>
 
     <div class="form-actions">
       <a class="btn btn-secondary" href="detalle.php?id=<?= $practicaId ?>&tab=gastos">Cancelar</a>

@@ -767,6 +767,7 @@ function etiquetaCampoGastoHistorial(string $campo): string
         'factura_agregada'  => 'Factura agregada',
         'factura_quitada'   => 'Factura quitada',
         'es_material_receta' => 'Material de receta',
+        'reportado_por'     => 'Reportó el gasto',
         default             => ucfirst($campo),
     };
 }
@@ -945,6 +946,49 @@ function sincronizarFacturaPrincipalGasto(PDO $pdo, int $gastoId): void
     $stmt->execute([$gastoId]);
     $primera = $stmt->fetchColumn();
     $pdo->prepare('UPDATE gastos SET factura = ? WHERE id = ?')->execute([$primera !== false ? $primera : null, $gastoId]);
+}
+
+/**
+ * ¿Existe ya la columna gastos.reportado_por_estudiante_id (el estudiante que
+ * reportó el gasto)? La agrega setup.php (agregarReportadoPorAGastos); hasta
+ * entonces las pantallas de gastos simplemente no ofrecen ese campo.
+ */
+function gastosTieneReportadoPor(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW COLUMNS FROM gastos LIKE 'reportado_por_estudiante_id'")->fetchColumn();
+        } catch (Throwable $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/** Estudiantes asignados a un evento ('evento') o práctica ('practica'), por nombre: id y nombre. */
+function estudiantesAsignadosEntidad(PDO $pdo, string $entidadTipo, int $entidadId): array
+{
+    [$tabla, $columna] = $entidadTipo === 'evento' ? ['evento_estudiante', 'evento_id'] : ['practica_estudiante', 'practica_id'];
+    $stmt = $pdo->prepare("SELECT est.id, est.nombre FROM $tabla t JOIN estudiantes est ON est.id = t.estudiante_id WHERE t.$columna = ? ORDER BY est.nombre ASC");
+    $stmt->execute([$entidadId]);
+    return $stmt->fetchAll();
+}
+
+/** Mapa id => nombre de los estudiantes pedidos (ignora vacíos y repetidos). */
+function nombresEstudiantesPorId(PDO $pdo, array $ids): array
+{
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if (!$ids) {
+        return [];
+    }
+    $stmt = $pdo->prepare('SELECT id, nombre FROM estudiantes WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')');
+    $stmt->execute($ids);
+    $mapa = [];
+    foreach ($stmt->fetchAll() as $f) {
+        $mapa[(int) $f['id']] = $f['nombre'];
+    }
+    return $mapa;
 }
 
 /**

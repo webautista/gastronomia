@@ -59,7 +59,21 @@ if (!in_array((int) $gastoActual['categoria_id'], array_column($categorias, 'id'
     }
 }
 
+// Estudiante que reportó el gasto (opcional): los asignados a este practica, más el
+// actual aunque ya no esté asignado (para no perderlo de vista al guardar).
+$tieneReportadoPor = gastosTieneReportadoPor(db());
+$estudiantesReporte = $tieneReportadoPor ? estudiantesAsignadosEntidad(db(), 'practica', $practicaId) : [];
+$reportadoActualId = $tieneReportadoPor ? intOrNull($gastoActual['reportado_por_estudiante_id'] ?? null) : null;
+$reportadoActualNombre = null;
+if ($reportadoActualId !== null) {
+    $reportadoActualNombre = nombresEstudiantesPorId(db(), [$reportadoActualId])[$reportadoActualId] ?? null;
+    if (!in_array($reportadoActualId, array_map('intval', array_column($estudiantesReporte, 'id')), true) && $reportadoActualNombre !== null) {
+        $estudiantesReporte[] = ['id' => $reportadoActualId, 'nombre' => $reportadoActualNombre . ' (ya no está asignado)'];
+    }
+}
+
 $gasto = [
+    'reportado_por'     => $reportadoActualId,
     'categoria_id'      => (int) $gastoActual['categoria_id'],
     'descripcion'       => $gastoActual['descripcion'],
     'proveedor'         => $gastoActual['proveedor'] ?? '',
@@ -80,6 +94,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $gasto['fecha']            = $_POST['fecha'] ?? '';
     $gasto['monto']            = (float) ($_POST['monto'] ?? 0);
     $gasto['es_material_receta'] = !empty($_POST['es_material_receta']) ? 1 : 0;
+    if ($tieneReportadoPor) {
+        $gasto['reportado_por'] = intOrNull($_POST['reportado_por'] ?? null);
+        if (!in_array($gasto['reportado_por'], array_map('intval', array_column($estudiantesReporte, 'id')), true)) {
+            $gasto['reportado_por'] = null;
+        }
+    }
     if ($esConfirmadoOPagado) {
         $gasto['monto_confirmado'] = (float) ($_POST['monto_confirmado'] ?? 0);
     }
@@ -122,6 +142,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $params[] = $gasto['monto_pagado'];
             $params[] = $gasto['fecha_pago'];
         }
+        if ($tieneReportadoPor) {
+            $sets[] = 'reportado_por_estudiante_id=?';
+            $params[] = $gasto['reportado_por'];
+        }
         $params[] = $id;
         db()->prepare('UPDATE gastos SET ' . implode(', ', $sets) . ' WHERE id=?')->execute($params);
 
@@ -137,6 +161,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // como si hubieran cambiado.
         registrarCambioGasto(db(), $id, 'monto', sprintf('%.2f', $gastoActual['monto']), sprintf('%.2f', $gasto['monto']), $usuarioId, $usuarioNombre);
         registrarCambioGasto(db(), $id, 'es_material_receta', !empty($gastoActual['es_material_receta']) ? 'Sí' : 'No', $gasto['es_material_receta'] ? 'Sí' : 'No', $usuarioId, $usuarioNombre);
+        if ($tieneReportadoPor) {
+            $reportadoNuevoNombre = $gasto['reportado_por'] !== null ? (nombresEstudiantesPorId(db(), [$gasto['reportado_por']])[$gasto['reportado_por']] ?? (string) $gasto['reportado_por']) : '—';
+            registrarCambioGasto(db(), $id, 'reportado_por', $reportadoActualId !== null ? ($reportadoActualNombre ?? (string) $reportadoActualId) : '—', $reportadoNuevoNombre, $usuarioId, $usuarioNombre);
+        }
         if ($esConfirmadoOPagado) {
             registrarCambioGasto(db(), $id, 'monto_confirmado', sprintf('%.2f', $gastoActual['monto_confirmado'] ?? $gastoActual['monto']), sprintf('%.2f', $gasto['monto_confirmado']), $usuarioId, $usuarioNombre);
         }
@@ -202,6 +230,19 @@ require __DIR__ . '/../includes/layout_top.php';
       </label>
       <div class="hint">Si está marcado, este gasto se compara contra el costo de materiales de las recetas en vez de sumarse aparte.</div>
     </div>
+
+    <?php if ($tieneReportadoPor): ?>
+    <div class="field">
+      <label for="reportado_por">¿Qué estudiante reportó este gasto? (opcional)</label>
+      <select id="reportado_por" name="reportado_por">
+        <option value="">— Ninguno en particular —</option>
+        <?php foreach ($estudiantesReporte as $est): ?>
+          <option value="<?= (int) $est['id'] ?>" <?= (int) $gasto['reportado_por'] === (int) $est['id'] ? 'selected' : '' ?>><?= e($est['nombre']) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <div class="hint">El estudiante que hizo la compra y entregó la factura (para saber a quién reembolsar si no se le devolvió el efectivo). Solo informativo.</div>
+    </div>
+    <?php endif; ?>
 
     <div class="field-row">
       <div class="field">

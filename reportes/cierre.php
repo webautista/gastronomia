@@ -48,6 +48,10 @@ $puedeLinkear = $tipo === 'evento' ? $puedeVerEventos : $puedeVerPracticas;
 $respCompra = obtenerResponsableCompra(db(), $tipo, $id);
 
 $catTotales = $datos['gastos_por_categoria'];
+// Estudiante que reportó cada gasto (quién hizo la compra y entregó la
+// factura): solo se muestra en la vista interna, no en la que se comparte
+// con los padres.
+$nombresReportadoPor = $conEstudiantes ? nombresEstudiantesPorId(db(), array_column($datos['gastos'], 'reportado_por_estudiante_id')) : [];
 // Subtotal de los gastos por etapa, para dejar claro cuánto de lo listado
 // ya se pagó y cuánto sigue "Confirmado - Pendiente" (o solo proyectado).
 $subtotalesGasto = ['pagado' => 0.0, 'confirmado' => 0.0, 'proyectado' => 0.0];
@@ -242,7 +246,7 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
       <?php foreach ($datos['gastos'] as $g): ?>
         <tr>
           <td><?= e($g['categoria']) ?></td>
-          <td class="cell-muted"><?= e($g['descripcion']) ?></td>
+          <td class="cell-muted"><?= e($g['descripcion']) ?><?php if (!empty($nombresReportadoPor[(int) ($g['reportado_por_estudiante_id'] ?? 0)])): ?><div style="font-size:.76rem;margin-top:2px;"><?= icon('users') ?> Reportó: <b><?= e($nombresReportadoPor[(int) $g['reportado_por_estudiante_id']]) ?></b></div><?php endif; ?></td>
           <td class="cell-muted"><?= e($g['proveedor'] ?: '—') ?></td>
           <td class="cell-muted"><?= fmtDate($g['fecha']) ?></td>
           <td>

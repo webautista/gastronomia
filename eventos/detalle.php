@@ -383,6 +383,9 @@ if ($puedeVerGastos) {
     );
     $stmt->execute([$id]);
     $gastosEvento = $stmt->fetchAll();
+    // Estudiante que reportó cada gasto: solo lo ve quien puede editar gastos
+    // (no el rol Padres, que consulta la pestaña en solo lectura).
+    $nombresReportadoPor = $puedeEditarGasto ? nombresEstudiantesPorId(db(), array_column($gastosEvento, 'reportado_por_estudiante_id')) : [];
 }
 
 // La cuota se calcula sola por defecto: costo de las recetas (o el gasto
@@ -928,6 +931,7 @@ require __DIR__ . '/../includes/layout_top.php';
       $varianteGasto = $g['estado'] === 'pagado' ? 'is-sage' : ($g['estado'] === 'confirmado' ? 'is-wine-sage' : '');
       $estadoLabel = etiquetaEstadoGasto($g['estado']);
       $cantFacturasG = count(facturasDeGasto(db(), $g));
+      $reportoG = $nombresReportadoPor[(int) ($g['reportado_por_estudiante_id'] ?? 0)] ?? null;
     ?>
       <div class="dash-card">
         <div class="dash-card-head <?= $varianteGasto ?>">
@@ -960,10 +964,11 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <?php endif; ?>
           </div>
-          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || $g['estado'] === 'confirmado'): ?>
+          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || $g['estado'] === 'confirmado' || $reportoG): ?>
           <div class="cell-muted" style="font-size:.78rem;display:flex;flex-direction:column;gap:4px;">
             <?php if (!empty($g['es_material_receta'])): ?><span>Material de receta</span><?php endif; ?>
             <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><span>Pagado: <?= fmtDate($g['fecha_pago']) ?></span><?php endif; ?>
+            <?php if ($reportoG): ?><span><?= icon('users') ?> Reportó: <b><?= e($reportoG) ?></b></span><?php endif; ?>
             <?php if ($g['estado'] === 'confirmado'): ?><span><b>Pendiente de pago</b> — todavía no se ha pagado</span><?php endif; ?>
           </div>
           <?php endif; ?>

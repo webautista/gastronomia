@@ -2512,6 +2512,29 @@ function agregarResponsableCompra(PDO $pdo): array
 }
 
 /**
+ * Agrega gastos.reportado_por_estudiante_id (INT UNSIGNED NULL, FK a
+ * estudiantes ON DELETE SET NULL), a pedido de Eyaelkys: para fines de
+ * información, poder anotar (opcional) qué estudiante reportó un gasto, o
+ * sea quién hizo esa compra y entregó la factura, para saber a quién hay
+ * que reembolsar si no se le devolvió el efectivo. No es lo mismo que el
+ * responsable de la compra del evento/práctica (eventos.responsable_compra_id,
+ * que es quien compra los ingredientes). Va aquí y no en el CREATE TABLE de
+ * db/schema.sql porque "gastos" ya existe en producción. NULL = nadie en
+ * particular, los gastos existentes quedan igual.
+ */
+function agregarReportadoPorAGastos(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'gastos', 'id') || columnaExiste($pdo, 'gastos', 'reportado_por_estudiante_id')) {
+        return $mensajes;
+    }
+    $pdo->exec('ALTER TABLE gastos ADD COLUMN reportado_por_estudiante_id INT UNSIGNED NULL');
+    $pdo->exec('ALTER TABLE gastos ADD CONSTRAINT fk_gastos_reportado_por FOREIGN KEY (reportado_por_estudiante_id) REFERENCES estudiantes(id) ON DELETE SET NULL');
+    $mensajes[] = 'Se agregó "reportado_por_estudiante_id" a la tabla gastos (opcional: el estudiante que reportó el gasto, o sea quién hizo la compra y entregó la factura; los gastos existentes quedaron sin estudiante).';
+    return $mensajes;
+}
+
+/**
  * Agrega recetas.porciones_prueba (INT UNSIGNED NULL), a pedido de
  * Eyaelkys: las recetas que diseña el maestro para la clase están pensadas
  * para que los 17 estudiantes las prueben, así que cada receta necesita dos
@@ -5283,6 +5306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasGastosATabla($pdo));
+        $mensajes = array_merge($mensajes, agregarReportadoPorAGastos($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosEventos($pdo));
 
