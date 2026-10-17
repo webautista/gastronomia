@@ -100,14 +100,19 @@ require __DIR__ . '/../includes/layout_top.php';
 // Primera fila: costo estimado, lista de compra y cuota confirmada. El
 // "Costo real" (con el nombre de quien es el cierre: evento o práctica),
 // lo recaudado y la diferencia entre ambos van juntos en la fila siguiente,
-// y el total pendiente de pago de los estudiantes en un cuadro destacado.
+// y las facturas pendientes de pago (gastos confirmados sin pagar) en un cuadro destacado.
 // (Antes el costo real solo aparecía si difería de la lista de compra; ahora
 // va siempre, porque la diferencia se calcula contra él.)
 $etiquetaCostoReal = $tipo === 'evento' ? 'Costo real evento' : 'Costo real práctica';
 $costoReal = (float) $cuotas['total_confirmado'];
 $diferenciaCierre = (float) $datos['recaudado'] - $costoReal;
 $sobraCierre = $diferenciaCierre >= -0.005;
-$totalPendienteCierre = array_sum(array_column($datos['estudiantes'], 'pendiente'));
+// "Facturas pendientes de pago": los gastos ya confirmados que todavía no se
+// han pagado (los mismos que se rotulan "Confirmado - Pendiente"): cuántos
+// son y cuánto suman. Un gasto solo proyectado no cuenta (aún no es una factura).
+$facturasPendientes = array_values(array_filter($datos['gastos'], fn ($gp) => $gp['estado'] === 'confirmado'));
+$cantFacturasPendientes = count($facturasPendientes);
+$montoFacturasPendientes = array_sum(array_map('montoEfectivoGasto', $facturasPendientes));
 ?>
 <div class="summary-grid">
   <div class="stat-tile stat-tile--wine">
@@ -150,10 +155,24 @@ $totalPendienteCierre = array_sum(array_column($datos['estudiantes'], 'pendiente
 </div>
 
 <div class="summary-grid" style="grid-template-columns:1fr;">
-  <div class="stat-tile stat-tile--destacado <?= $totalPendienteCierre > 0.005 ? 'stat-tile--terracotta' : 'stat-tile--sage' ?>">
-    <div class="stat-label">Pendiente de pago</div>
-    <div class="stat-value"><?= money($totalPendienteCierre) ?></div>
-    <div class="stat-hint"><?php if ($totalPendienteCierre > 0.005): ?>Suma de lo que falta por pagar de la cuota confirmada de los estudiantes.<?php else: ?>Todos los estudiantes están al día con su cuota confirmada.<?php endif; ?></div>
+  <div class="stat-tile stat-tile--destacado <?= $cantFacturasPendientes > 0 ? 'stat-tile--terracotta' : 'stat-tile--sage' ?>">
+    <div class="stat-label">Facturas pendientes de pago</div>
+    <?php if ($cantFacturasPendientes > 0): ?>
+      <div style="display:flex;gap:48px;flex-wrap:wrap;align-items:flex-end;">
+        <div>
+          <div class="stat-value"><?= $cantFacturasPendientes ?></div>
+          <div class="stat-hint">factura<?= $cantFacturasPendientes === 1 ? '' : 's' ?></div>
+        </div>
+        <div>
+          <div class="stat-value"><?= money($montoFacturasPendientes) ?></div>
+          <div class="stat-hint">monto total</div>
+        </div>
+      </div>
+      <div class="stat-hint" style="margin-top:10px;">Gastos ya confirmados que todavía no se han pagado ("Confirmado - Pendiente").</div>
+    <?php else: ?>
+      <div class="stat-value">0</div>
+      <div class="stat-hint">No hay facturas pendientes de pago: todos los gastos confirmados ya están pagados.</div>
+    <?php endif; ?>
   </div>
 </div>
 
