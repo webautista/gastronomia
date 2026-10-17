@@ -521,3 +521,12 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 }
 
 @page{margin:14mm 12mm;}
+
+/* Reportes → Cierre financiero: bloques Eventos / Prácticas, cada uno con "En curso y pendientes" y "Finalizados" (plegado). */
+.cierre-grupo-titulo{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);padding:14px 16px 6px;}
+.tabla-cierre{table-layout:fixed;}
+.cierre-finalizados{border-top:1px solid var(--border);margin-top:6px;}
+.cierre-finalizados summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:12px 16px;font-size:.82rem;font-weight:600;color:var(--accent);}
+.cierre-finalizados summary::-webkit-details-marker{display:none;}
+.cierre-finalizados summary svg{width:14px;height:14px;transition:transform .15s;transform:rotate(-90deg);}
+.cierre-finalizados[open] summary svg{transform:rotate(0);}

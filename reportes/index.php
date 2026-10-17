@@ -17,7 +17,11 @@
  *   fondo en una sola vista.
  * - Cierre financiero: directorio de eventos/prácticas para entrar al cierre
  *   de uno (cierre.php) — costo real vs. proyectado, gastos por categoría y
- *   estado de pago de cada estudiante.
+ *   estado de pago de cada estudiante. Separado (a pedido de Eyaelkys) en
+ *   dos bloques, Eventos y Prácticas, y dentro de cada uno "En curso y
+ *   pendientes" arriba y "Finalizados" abajo (plegado). Un evento es
+ *   finalizado si su estado es Finalizado; una práctica, que no tiene
+ *   estado, si su fecha ya pasó.
  *
  * Un solo módulo de permiso ("reportes", solo "ver" tiene efecto) para las
  * cuatro pestañas y las dos pantallas de detalle — ver la nota junto al
@@ -88,17 +92,37 @@ if ($tab === 'cartera') {
         "SELECT ev.*, es.nombre AS estado FROM eventos ev JOIN estados_evento es ON es.id = ev.estado_id"
     )->fetchAll();
     $practicasLista = db()->query('SELECT id, nombre, fecha FROM practicas')->fetchAll();
+    // Cierres ya "cerrados" (congelados, ver cierres_financieros): se marcan
+    // con un chip en la lista. Tolera que la tabla no exista todavía.
+    $cierresCerrados = [];
+    try {
+        foreach (db()->query('SELECT entidad_tipo, entidad_id FROM cierres_financieros')->fetchAll() as $c) {
+            $cierresCerrados[$c['entidad_tipo'] . ':' . $c['entidad_id']] = true;
+        }
+    } catch (Throwable $ex) {
+        $cierresCerrados = [];
+    }
+    $hoy = date('Y-m-d');
     $listaCierre = [];
     foreach ($eventosLista as $e) {
-        $listaCierre[] = ['tipo' => 'evento', 'id' => (int) $e['id'], 'nombre' => $e['nombre'], 'fecha' => $e['fecha'], 'fecha_tentativa' => !empty($e['fecha_tentativa']), 'estado' => $e['estado']];
+        $listaCierre[] = ['tipo' => 'evento', 'id' => (int) $e['id'], 'nombre' => $e['nombre'], 'fecha' => $e['fecha'], 'fecha_tentativa' => !empty($e['fecha_tentativa']), 'estado' => $e['estado'], 'finalizado' => $e['estado'] === 'Finalizado', 'cerrado' => isset($cierresCerrados['evento:' . $e['id']])];
     }
     foreach ($practicasLista as $p) {
-        $listaCierre[] = ['tipo' => 'practica', 'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'fecha' => $p['fecha'], 'estado' => null];
+        $listaCierre[] = ['tipo' => 'practica', 'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'fecha' => $p['fecha'], 'estado' => null, 'finalizado' => $p['fecha'] < $hoy, 'cerrado' => isset($cierresCerrados['practica:' . $p['id']])];
     }
     if ($busqueda !== '') {
         $listaCierre = array_values(array_filter($listaCierre, fn ($f) => mb_stripos($f['nombre'], $busqueda) !== false));
     }
     usort($listaCierre, fn ($a, $b) => strcmp($b['fecha'], $a['fecha']));
+    // Dos bloques (eventos / prácticas) y, dentro de cada uno, pendientes
+    // arriba y finalizados abajo; cada lista conserva el orden por fecha.
+    $gruposCierre = [
+        'evento'   => ['titulo' => 'Eventos',   'icono' => 'calendar', 'pendientes' => [], 'finalizados' => []],
+        'practica' => ['titulo' => 'Prácticas', 'icono' => 'whisk',    'pendientes' => [], 'finalizados' => []],
+    ];
+    foreach ($listaCierre as $f) {
+        $gruposCierre[$f['tipo']][$f['finalizado'] ? 'finalizados' : 'pendientes'][] = $f;
+    }
 }
 
 $placeholdersBusqueda = [
@@ -285,26 +309,53 @@ require __DIR__ . '/../includes/layout_top.php';
       <div>No hay eventos ni prácticas que coincidan con tu búsqueda.</div>
     </div></div>
   <?php else: ?>
-  <div class="card">
+  <?php
+  // Una fila de la lista: nombre + estado (solo eventos; el tipo ya lo dice
+  // el bloque) + chip si el cierre ya está cerrado, fecha y enlace.
+  $filaCierre = function (array $f): string {
+      ob_start(); ?>
+      <tr>
+        <td>
+          <b><?= e($f['nombre']) ?></b>
+          <?php if ($f['estado']): ?><span class="chip chip-muted" style="margin-left:6px;font-size:.7rem;"><?= e($f['estado']) ?></span><?php endif; ?>
+          <?php if (!empty($f['cerrado'])): ?><span class="chip chip-success" style="font-size:.7rem;" title="El cierre financiero ya está cerrado (congelado)"><?= icon('lock') ?> Cierre cerrado</span><?php endif; ?>
+        </td>
+        <td class="cell-muted"><?= fmtFechaEvento($f['fecha'], $f['fecha_tentativa'] ?? false) ?></td>
+        <td><a href="cierre.php?tipo=<?= e($f['tipo']) ?>&id=<?= (int) $f['id'] ?>">Ver cierre →</a></td>
+      </tr>
+      <?php return ob_get_clean();
+  };
+  ?>
+  <?php foreach ($gruposCierre as $g):
+      $totalGrupo = count($g['pendientes']) + count($g['finalizados']);
+      if ($totalGrupo === 0) { continue; }
+  ?>
+  <div class="section-title-row" style="margin-top:6px;"><span class="section-icon is-gold"><?= icon($g['icono']) ?></span><h2 class="section-title"><?= e($g['titulo']) ?> <span class="cell-muted" style="font-weight:400;font-size:.9rem;">(<?= $totalGrupo ?>)</span></h2></div>
+  <div class="card" style="margin-bottom:22px;">
+    <div class="cierre-grupo-titulo">En curso y pendientes (<?= count($g['pendientes']) ?>)</div>
+    <?php if ($g['pendientes']): ?>
     <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Nombre</th><th>Fecha</th><th></th></tr></thead>
-      <tbody>
-        <?php foreach ($listaCierre as $f): ?>
-          <tr>
-            <td>
-              <b><?= e($f['nombre']) ?></b>
-              <span class="chip chip-muted" style="margin-left:6px;font-size:.7rem;"><?= $f['tipo'] === 'evento' ? 'Evento' : 'Práctica' ?></span>
-              <?php if ($f['estado']): ?><span class="chip chip-muted" style="font-size:.7rem;"><?= e($f['estado']) ?></span><?php endif; ?>
-            </td>
-            <td class="cell-muted"><?= fmtFechaEvento($f['fecha'], $f['fecha_tentativa'] ?? false) ?></td>
-            <td><a href="cierre.php?tipo=<?= $f['tipo'] ?>&id=<?= $f['id'] ?>">Ver cierre →</a></td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
+    <table class="table tabla-cierre">
+      <colgroup><col style="width:58%"><col style="width:27%"><col style="width:15%"></colgroup>
+      <tbody><?php foreach ($g['pendientes'] as $f) { echo $filaCierre($f); } ?></tbody>
     </table>
     </div>
+    <?php else: ?>
+      <div class="cell-muted" style="padding:6px 16px 16px;font-size:.88rem;">No hay nada pendiente.</div>
+    <?php endif; ?>
+    <?php if ($g['finalizados']): ?>
+    <details class="cierre-finalizados"<?= $busqueda !== '' ? ' open' : '' ?>>
+      <summary><?= icon('chevronDown') ?> Finalizados (<?= count($g['finalizados']) ?>)</summary>
+      <div class="table-wrap">
+      <table class="table tabla-cierre">
+        <colgroup><col style="width:58%"><col style="width:27%"><col style="width:15%"></colgroup>
+        <tbody><?php foreach ($g['finalizados'] as $f) { echo $filaCierre($f); } ?></tbody>
+      </table>
+      </div>
+    </details>
+    <?php endif; ?>
   </div>
+  <?php endforeach; ?>
   <?php endif; ?>
 
 <?php endif; ?>
