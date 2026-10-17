@@ -458,6 +458,8 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 
 .dash-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .dash-footer .row-actions{margin-left:auto;}
+/* Tarjetas de gasto: hasta cuatro acciones (confirmar/pagar, editar, facturas, borrar), así que se permite que bajen a otra línea. */
+.dash-footer.dash-footer-wrap{flex-wrap:wrap;gap:8px;}
 
 /* Dos variantes más del degradado de .dash-card-head, para diferenciar de
    un vistazo más tipos de tarjeta: Estudiantes usa is-sage (salvia→dorado),

@@ -875,11 +875,12 @@ require __DIR__ . '/../includes/layout_top.php';
   <div class="event-grid">
     <?php foreach ($gastosPractica as $g):
       $varianteGasto = $g['estado'] === 'pagado' ? 'is-sage' : ($g['estado'] === 'confirmado' ? 'is-wine-sage' : '');
-      $estadoLabel = $g['estado'] === 'proyectado' ? 'Proyectado' : ($g['estado'] === 'confirmado' ? 'Confirmado' : 'Pagado');
+      $estadoLabel = etiquetaEstadoGasto($g['estado']);
+      $cantFacturasG = count(facturasDeGasto(db(), $g));
     ?>
       <div class="dash-card">
         <div class="dash-card-head <?= $varianteGasto ?>">
-          <div class="dash-head-top">
+          <div class="dash-head-top dash-head-wrap">
             <div class="dash-head-id">
               <div class="dash-icon"><?= icon('receipt') ?></div>
               <div>
@@ -908,16 +909,14 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <?php endif; ?>
           </div>
-          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || ($g['estado'] === 'pagado' && !empty($g['factura']))): ?>
+          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || $g['estado'] === 'confirmado'): ?>
           <div class="cell-muted" style="font-size:.78rem;display:flex;flex-direction:column;gap:4px;">
             <?php if (!empty($g['es_material_receta'])): ?><span>Material de receta</span><?php endif; ?>
             <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><span>Pagado: <?= fmtDate($g['fecha_pago']) ?></span><?php endif; ?>
-            <?php if ($g['estado'] === 'pagado' && !empty($g['factura'])): ?>
-              <a href="<?= e($base . '/' . $g['factura']) ?>" target="_blank" rel="noopener"><?= icon('receipt') ?> Ver factura</a>
-            <?php endif; ?>
+            <?php if ($g['estado'] === 'confirmado'): ?><span><b>Pendiente de pago</b> — todavía no se ha pagado</span><?php endif; ?>
           </div>
           <?php endif; ?>
-          <div class="dash-footer">
+          <div class="dash-footer dash-footer-wrap">
             <?php if ($g['estado'] === 'proyectado' && $puedeEditarGasto): ?>
             <form method="post" data-confirm="¿Confirmar esta partida por el monto indicado?" style="display:flex;gap:6px;align-items:center;">
               <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -930,9 +929,10 @@ require __DIR__ . '/../includes/layout_top.php';
             <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
               <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
             <?php endif; ?>
-            <?php if ($g['estado'] === 'pagado' && $puedeEditarGasto): ?>
+            <?php if ($puedeEditarGasto): ?>
               <a class="btn btn-secondary btn-sm" href="gasto_editar.php?id=<?= (int) $g['id'] ?>"><?= icon('edit') ?> Editar</a>
             <?php endif; ?>
+            <a class="btn btn-secondary btn-sm" href="gasto_facturas.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Facturas<?= $cantFacturasG ? ' (' . $cantFacturasG . ')' : '' ?></a>
             <div class="row-actions">
               <?php if ($puedeEliminarGasto && ($g['estado'] !== 'pagado' || $esAdmin)): ?>
               <form method="post" data-confirm="<?= $g['estado'] === 'pagado' ? '¿Eliminar este gasto ya pagado? Es una acción de auditoría, solo un Administrador puede hacerla.' : '¿Eliminar esta partida?' ?>">

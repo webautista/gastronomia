@@ -5046,6 +5046,34 @@ function agregarFechaTentativaAEventos(PDO $pdo): array
 }
 
 /**
+ * Copia la factura "principal" de cada gasto (columna gastos.factura, la
+ * única que existía antes) a la nueva tabla gastos_facturas, para que desde
+ * ahora todas las facturas de un gasto vivan en un solo lugar y se puedan
+ * agregar o quitar varias (ver el docblock de la tabla en db/schema.sql).
+ * Idempotente: solo copia las que todavía no están en la tabla. La tabla
+ * misma la crea schema.sql (tabla nueva), no hace falta tocar columnas.
+ */
+function migrarFacturasGastosATabla(PDO $pdo): array
+{
+    $mensajes = [];
+    if (!columnaExiste($pdo, 'gastos', 'factura') || !columnaExiste($pdo, 'gastos_facturas', 'ruta')) {
+        return $mensajes;
+    }
+    $filas = $pdo->query(
+        "SELECT g.id FROM gastos g
+         WHERE g.factura IS NOT NULL AND g.factura <> ''
+           AND NOT EXISTS (SELECT 1 FROM gastos_facturas f WHERE f.gasto_id = g.id AND f.ruta = g.factura)"
+    )->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($filas as $gastoId) {
+        copiarFacturaPrincipalATabla($pdo, (int) $gastoId, 'Sistema (migración)');
+    }
+    if ($filas) {
+        $mensajes[] = count($filas) . ' factura(s) de gastos ya pagados copiadas a la nueva tabla de facturas (ahora un gasto puede tener varias).';
+    }
+    return $mensajes;
+}
+
+/**
  * Mueve las facturas de gastos que quedaron guardadas en
  * assets/uploads/facturas/ (dentro del repositorio, así que un despliegue
  * las borra) hacia private/facturas/ (el enlace `private/` en la raíz del
@@ -5254,6 +5282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetas80Tanda4($pdo));
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
+        $mensajes = array_merge($mensajes, migrarFacturasGastosATabla($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosPracticas($pdo));
         $mensajes = array_merge($mensajes, otorgarAccesoPadresAFotosEventos($pdo));
 

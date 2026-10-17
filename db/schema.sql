@@ -1033,6 +1033,29 @@ CREATE TABLE IF NOT EXISTS gastos_historial (
     KEY idx_gastoshist_gasto (gasto_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Facturas de un gasto (a pedido de Eyaelkys: antes solo se podía cargar UNA
+-- factura, y únicamente al marcar el gasto como pagado). Ahora un gasto puede
+-- tener varias, y se pueden agregar o quitar en cualquier etapa (proyectado,
+-- confirmado o pagado) desde la pantalla Facturas de cada gasto (ver
+-- eventos/gasto_facturas.php y practicas/gasto_facturas.php). Pagar exige que
+-- haya al menos una. gastos.factura se conserva como la factura principal
+-- (la primera) para no romper lo que ya la leía. ruta es relativa a la raíz
+-- del proyecto (private/facturas/...). Quitar una factura borra solo esta
+-- fila, el archivo queda en el servidor y su ruta en gastos_historial.
+CREATE TABLE IF NOT EXISTS gastos_facturas (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    gasto_id INT UNSIGNED NOT NULL,
+    ruta VARCHAR(255) NOT NULL,
+    subido_por INT UNSIGNED NULL,
+    subido_por_nombre VARCHAR(150) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_gastosfact_gasto FOREIGN KEY (gasto_id)
+        REFERENCES gastos(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gastosfact_usuario FOREIGN KEY (subido_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    KEY idx_gastosfact_gasto (gasto_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Decisiones de compra por evento o práctica: cuando la lista de compra
 -- sugiere llevar el paquete completo de un ingrediente (ej. pasta, queso —
 -- no se vende suelto en la cantidad exacta de la receta), aquí se guarda si

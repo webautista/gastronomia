@@ -48,6 +48,13 @@ $puedeLinkear = $tipo === 'evento' ? $puedeVerEventos : $puedeVerPracticas;
 $respCompra = obtenerResponsableCompra(db(), $tipo, $id);
 
 $catTotales = $datos['gastos_por_categoria'];
+// Subtotal de los gastos por etapa, para dejar claro cuánto de lo listado
+// ya se pagó y cuánto sigue "Confirmado - Pendiente" (o solo proyectado).
+$subtotalesGasto = ['pagado' => 0.0, 'confirmado' => 0.0, 'proyectado' => 0.0];
+foreach ($datos['gastos'] as $gSub) {
+    $claveSub = isset($subtotalesGasto[$gSub['estado']]) ? $gSub['estado'] : 'proyectado';
+    $subtotalesGasto[$claveSub] += montoEfectivoGasto($gSub);
+}
 $maxCat = max(1, ...(array_values($catTotales) ?: [1]));
 $paletaCategorias = ['var(--copper)', 'var(--accent)', 'var(--success)', 'var(--accent-strong)'];
 
@@ -199,9 +206,9 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
           <td class="cell-muted"><?= e($g['proveedor'] ?: '—') ?></td>
           <td class="cell-muted"><?= fmtDate($g['fecha']) ?></td>
           <td>
-            <?php if ($g['estado'] === 'pagado'): ?><span class="chip chip-success">Pagado</span>
-            <?php elseif ($g['estado'] === 'confirmado'): ?><span class="chip chip-warning">Confirmado</span>
-            <?php else: ?><span class="chip chip-muted">Proyectado</span><?php endif; ?>
+            <?php if ($g['estado'] === 'pagado'): ?><span class="chip chip-success"><?= e(etiquetaEstadoGasto('pagado')) ?></span>
+            <?php elseif ($g['estado'] === 'confirmado'): ?><span class="chip chip-warning" title="Confirmado, pero todavía no se ha pagado"><?= e(etiquetaEstadoGasto('confirmado')) ?></span>
+            <?php else: ?><span class="chip chip-muted"><?= e(etiquetaEstadoGasto('proyectado')) ?></span><?php endif; ?>
           </td>
           <td class="mono"><?= money(montoEfectivoGasto($g)) ?></td>
         </tr>
@@ -209,6 +216,11 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
     </tbody>
     <?php if ($datos['gastos']): ?>
     <tfoot>
+      <?php if ($subtotalesGasto['confirmado'] > 0.005 || $subtotalesGasto['proyectado'] > 0.005): ?>
+        <tr><td colspan="5" style="text-align:right;" class="cell-muted">Pagado</td><td class="mono"><?= money($subtotalesGasto['pagado']) ?></td></tr>
+        <?php if ($subtotalesGasto['confirmado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted"><?= e(etiquetaEstadoGasto('confirmado')) ?> (todavía sin pagar)</td><td class="mono"><?= money($subtotalesGasto['confirmado']) ?></td></tr><?php endif; ?>
+        <?php if ($subtotalesGasto['proyectado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted">Proyectado (sin confirmar)</td><td class="mono"><?= money($subtotalesGasto['proyectado']) ?></td></tr><?php endif; ?>
+      <?php endif; ?>
       <tr><td colspan="5" style="text-align:right;"><b>Total</b></td><td class="mono"><b><?= money(array_sum($catTotales)) ?></b></td></tr>
     </tfoot>
     <?php endif; ?>

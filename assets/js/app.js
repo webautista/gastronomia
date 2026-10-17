@@ -251,8 +251,10 @@
     if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
     var accept = input.getAttribute('accept') || '';
     if (accept.indexOf('image/') === -1) return;
-    var archivo = input.files && input.files[0];
-    if (!archivo) return;
+    /* Un campo puede traer varios archivos (ej. las páginas de una factura
+       grande): se comprimen todos, no solo el primero. */
+    var archivos = input.files ? Array.prototype.slice.call(input.files) : [];
+    if (!archivos.length) return;
 
     var boton = input.form ? input.form.querySelector('button[type="submit"]') : null;
     var textoOriginalBoton = boton ? boton.textContent : null;
@@ -261,11 +263,12 @@
       boton.textContent = 'Preparando imagen…';
     }
 
-    var promesa = comprimirImagenParaSubida(archivo).then(function (comprimido) {
-      if (comprimido !== archivo) {
+    var promesa = Promise.all(archivos.map(comprimirImagenParaSubida)).then(function (comprimidos) {
+      var hayCambio = comprimidos.some(function (c, i) { return c !== archivos[i]; });
+      if (hayCambio) {
         try {
           var dt = new DataTransfer();
-          dt.items.add(comprimido);
+          comprimidos.forEach(function (c) { dt.items.add(c); });
           input.files = dt.files;
         } catch (err) {
           /* Navegador sin soporte para reemplazar el archivo: se sube el original. */

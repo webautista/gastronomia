@@ -1,7 +1,8 @@
 <?php
 /**
- * Marcar un gasto ya confirmado como pagado: exige la fecha de pago y una
- * imagen de la factura (ver includes/helpers.php, montoEfectivoGasto() y
+ * Marcar un gasto ya confirmado como pagado: exige la fecha de pago y al
+ * menos una factura (la que ya se haya cargado antes desde gasto_facturas.php
+ * cuenta, o se sube una aquí mismo) (ver includes/helpers.php, montoEfectivoGasto() y
  * el ciclo de vida proyectado → confirmado → pagado documentado en
  * db/schema.sql, tabla gastos). El monto pagado es editable por separado
  * del monto confirmado, para conservar el historial de las tres etapas.
@@ -63,43 +64,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
         $errores[] = 'La fecha de pago no es válida.';
     }
 
-    $facturaFinal = null;
+    // La factura puede venir de antes (cargada desde "Facturas" cuando el
+    // gasto todavía estaba proyectado o confirmado) o subirse aquí mismo;
+    // hace falta al menos una de las dos. Si ya hay y se sube otra, se suma.
+    $facturasPrevias = facturasDeGasto(db(), $gasto);
+    $archivosNuevos = archivosSubidos('factura');
+    $rutasNuevas = [];
     if (!$errores) {
-        if (!isset($_FILES['factura']) || $_FILES['factura']['error'] === UPLOAD_ERR_NO_FILE) {
-            $errores[] = 'Debes cargar una imagen de la factura para poder marcar el gasto como pagado.';
-        } elseif ($_FILES['factura']['error'] !== UPLOAD_ERR_OK) {
-            $errores[] = 'No se pudo subir la factura. Intenta de nuevo.';
+        if (!$facturasPrevias && !$archivosNuevos) {
+            $errores[] = 'Debes cargar al menos una imagen de la factura para poder marcar el gasto como pagado.';
         } else {
-            $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-            $mime = @mime_content_type($_FILES['factura']['tmp_name']);
-            if (!isset($tiposPermitidos[$mime])) {
-                $errores[] = 'La factura debe ser una imagen JPG, PNG o WEBP.';
-            } elseif ($_FILES['factura']['size'] > 5 * 1024 * 1024) {
-                $errores[] = 'La imagen de la factura no puede pesar más de 5 MB.';
-            } else {
-                // Las facturas son contenido privado (solo lo ve quien tiene
-                // permiso de Gastos), pero igual deben sobrevivir a los
-                // despliegues, así que se guardan en el almacenamiento
-                // compartido fuera del repositorio (enlace `private/` en la
-                // raíz del proyecto -> ../shared/private), igual que las
-                // fotos públicas usan `public/`.
-                $directorioDestino = __DIR__ . '/../private/facturas';
-                if (!is_dir($directorioDestino)) {
-                    mkdir($directorioDestino, 0775, true);
-                }
-                $nombreArchivo = 'factura_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
-                if (move_uploaded_file($_FILES['factura']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
-                    $facturaFinal = 'private/facturas/' . $nombreArchivo;
+            // Se pueden subir varias imágenes a la vez (páginas de una factura grande).
+            foreach ($archivosNuevos as $archivo) {
+                [$ruta, $errorSubida] = guardarFacturaSubida($archivo, $id);
+                if ($errorSubida) {
+                    $errores[] = ($archivo['name'] !== '' ? $archivo['name'] . ': ' : '') . $errorSubida;
                 } else {
-                    $errores[] = 'No se pudo guardar la factura en el servidor. Vuelve a intentarlo.';
+                    $rutasNuevas[] = $ruta;
                 }
+            }
+            if ($errores) {
+                // Si alguna falló no se marca como pagado: las que ya se
+                // habían guardado en el servidor en este intento se descartan.
+                foreach ($rutasNuevas as $rutaHuerfana) {
+                    @unlink(dirname(__DIR__) . '/' . $rutaHuerfana);
+                }
+                $rutasNuevas = [];
             }
         }
     }
 
     if (!$errores) {
-        db()->prepare("UPDATE gastos SET estado='pagado', monto_pagado=?, fecha_pago=?, factura=? WHERE id=?")
-            ->execute([$montoPagado, $fechaPago, $facturaFinal, $id]);
+        db()->prepare("UPDATE gastos SET estado='pagado', monto_pagado=?, fecha_pago=? WHERE id=?")
+            ->execute([$montoPagado, $fechaPago, $id]);
+        foreach ($rutasNuevas as $rutaNueva) {
+            if (tablaGastosFacturasExiste(db())) {
+                agregarFacturaGasto(db(), $id, $rutaNueva, (int) $usuarioActual['id'], $usuarioActual['nombre']);
+            } else {
+                // Aún sin setup.php: se guarda como siempre en gastos.factura
+                // (una sola, la última).
+                db()->prepare('UPDATE gastos SET factura = ? WHERE id = ?')->execute([$rutaNueva, $id]);
+            }
+        }
         flash('Gasto marcado como pagado.');
         redirect('detalle.php?id=' . $eventoId . '&tab=gastos');
     }
@@ -133,10 +139,22 @@ require __DIR__ . '/../includes/layout_top.php';
       </div>
     </div>
 
+    <?php $facturasPrevias = $facturasPrevias ?? facturasDeGasto(db(), $gasto); ?>
     <div class="field">
-      <label for="factura">Factura (foto)</label>
-      <input type="file" id="factura" name="factura" accept="image/jpeg,image/png,image/webp" required>
-      <div class="hint">Obligatoria. JPG, PNG o WEBP, hasta 5 MB.</div>
+      <label>Facturas ya cargadas (<?= count($facturasPrevias) ?>)</label>
+      <?php if ($facturasPrevias): ?>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+          <?php foreach ($facturasPrevias as $f): ?>
+            <a href="<?= e($base . '/' . $f['ruta']) ?>" target="_blank" rel="noopener"><img src="<?= e($base . '/' . $f['ruta']) ?>" alt="Factura" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;"></a>
+          <?php endforeach; ?>
+        </div>
+        <div class="hint" style="margin-bottom:10px;">Estas facturas ya cuentan para marcar el gasto como pagado. Puedes <a href="gasto_facturas.php?id=<?= $id ?>">agregar o quitar facturas aquí</a> antes de continuar.</div>
+      <?php else: ?>
+        <p class="cell-muted" style="margin-top:0;">Todavía no hay ninguna factura cargada para este gasto.</p>
+      <?php endif; ?>
+      <label for="factura"><?= $facturasPrevias ? 'Agregar más facturas (opcional)' : 'Factura (foto)' ?></label>
+      <input type="file" id="factura" name="factura[]" accept="image/jpeg,image/png,image/webp" multiple <?= $facturasPrevias ? '' : 'required' ?>>
+      <div class="hint"><?= $facturasPrevias ? 'Opcional: ya hay al menos una factura.' : 'Obligatoria si todavía no hay ninguna.' ?> Puedes elegir varias imágenes a la vez (páginas de una misma factura). JPG, PNG o WEBP, hasta 5 MB cada una.</div>
     </div>
 
     <div class="form-actions">

@@ -764,8 +764,187 @@ function etiquetaCampoGastoHistorial(string $campo): string
         'fecha'             => 'Fecha del gasto',
         'fecha_pago'        => 'Fecha de pago',
         'factura'           => 'Factura',
+        'factura_agregada'  => 'Factura agregada',
+        'factura_quitada'   => 'Factura quitada',
+        'es_material_receta' => 'Material de receta',
         default             => ucfirst($campo),
     };
+}
+
+/**
+ * Texto del estado de un gasto tal como se muestra en pantalla y en el
+ * cierre financiero. Un gasto "confirmado" todavía NO se ha pagado (a pedido
+ * de Eyaelkys), así que se rotula "Confirmado - Pendiente" para que no se
+ * confunda con uno ya pagado.
+ */
+function etiquetaEstadoGasto(string $estado): string
+{
+    return match ($estado) {
+        'pagado'     => 'Pagado',
+        'confirmado' => 'Confirmado - Pendiente',
+        default      => 'Proyectado',
+    };
+}
+
+/**
+ * ¿Existe ya la tabla gastos_facturas (varias facturas por gasto)? La crea
+ * db/schema.sql al correr setup.php. Mientras tanto las pantallas siguen
+ * funcionando con la columna gastos.factura de siempre.
+ */
+function tablaGastosFacturasExiste(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW TABLES LIKE 'gastos_facturas'")->fetchColumn();
+        } catch (Throwable $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/**
+ * Facturas de un gasto (en cualquier etapa: proyectado, confirmado o
+ * pagado), la más antigua primero. Junta las de la tabla gastos_facturas
+ * con la factura "principal" que antes vivía sola en gastos.factura (si
+ * todavía no se copió a la tabla, ver migrarFacturasGastosATabla() en
+ * setup.php). Cada elemento: id (null si solo existe en gastos.factura),
+ * ruta, subido_por, creado_en.
+ */
+function facturasDeGasto(PDO $pdo, array $gasto): array
+{
+    $lista = [];
+    $rutas = [];
+    if (tablaGastosFacturasExiste($pdo)) {
+        $stmt = $pdo->prepare('SELECT id, ruta, subido_por_nombre, creado_en FROM gastos_facturas WHERE gasto_id = ? ORDER BY id ASC');
+        $stmt->execute([(int) $gasto['id']]);
+        foreach ($stmt->fetchAll() as $f) {
+            $lista[] = ['id' => (int) $f['id'], 'ruta' => $f['ruta'], 'subido_por' => $f['subido_por_nombre'], 'creado_en' => $f['creado_en']];
+            $rutas[$f['ruta']] = true;
+        }
+    }
+    if (!empty($gasto['factura']) && !isset($rutas[$gasto['factura']])) {
+        array_unshift($lista, ['id' => null, 'ruta' => $gasto['factura'], 'subido_por' => null, 'creado_en' => null]);
+    }
+    return $lista;
+}
+
+/**
+ * Archivos subidos por un campo de tipo archivo, sea de uno solo
+ * (name="x") o múltiple (name="x[]" multiple), como lista de arreglos al
+ * estilo de un $_FILES simple (name, type, tmp_name, error, size). Los
+ * espacios del campo sin archivo (UPLOAD_ERR_NO_FILE) se omiten.
+ */
+function archivosSubidos(string $campo): array
+{
+    if (!isset($_FILES[$campo])) {
+        return [];
+    }
+    $f = $_FILES[$campo];
+    if (!is_array($f['name'])) {
+        return $f['error'] === UPLOAD_ERR_NO_FILE ? [] : [$f];
+    }
+    $lista = [];
+    foreach (array_keys($f['name']) as $i) {
+        if ($f['error'][$i] === UPLOAD_ERR_NO_FILE) {
+            continue;
+        }
+        $lista[] = ['name' => $f['name'][$i], 'type' => $f['type'][$i], 'tmp_name' => $f['tmp_name'][$i], 'error' => $f['error'][$i], 'size' => $f['size'][$i]];
+    }
+    return $lista;
+}
+
+/**
+ * Valida y guarda UNA imagen de factura subida por el formulario (JPG, PNG
+ * o WEBP, hasta 5 MB) en el almacenamiento privado compartido
+ * (private/facturas, fuera del repositorio para que sobreviva a los
+ * despliegues). Devuelve [ruta relativa o null, mensaje de error o null].
+ */
+function guardarFacturaSubida(array $archivo, int $gastoId): array
+{
+    if (($archivo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return [null, 'No se pudo subir la factura. Intenta de nuevo.'];
+    }
+    $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    $mime = @mime_content_type($archivo['tmp_name']);
+    if (!isset($tiposPermitidos[$mime])) {
+        return [null, 'La factura debe ser una imagen JPG, PNG o WEBP.'];
+    }
+    if ($archivo['size'] > 5 * 1024 * 1024) {
+        return [null, 'La imagen de la factura no puede pesar más de 5 MB.'];
+    }
+    $directorioDestino = dirname(__DIR__) . '/private/facturas';
+    if (!is_dir($directorioDestino)) {
+        mkdir($directorioDestino, 0775, true);
+    }
+    $nombreArchivo = 'factura_' . $gastoId . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
+    if (!move_uploaded_file($archivo['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
+        return [null, 'No se pudo guardar la factura en el servidor. Vuelve a intentarlo.'];
+    }
+    return ['private/facturas/' . $nombreArchivo, null];
+}
+
+/**
+ * Anota una factura nueva en gastos_facturas y deja gastos.factura (la
+ * "principal", la que leían las pantallas de antes) apuntando a la primera
+ * factura del gasto. Requiere que la tabla exista (setup.php ya corrido).
+ */
+function agregarFacturaGasto(PDO $pdo, int $gastoId, string $ruta, int $usuarioId, string $usuarioNombre): void
+{
+    copiarFacturaPrincipalATabla($pdo, $gastoId, $usuarioNombre);
+    $pdo->prepare('INSERT INTO gastos_facturas (gasto_id, ruta, subido_por, subido_por_nombre) VALUES (?,?,?,?)')
+        ->execute([$gastoId, $ruta, $usuarioId ?: null, $usuarioNombre]);
+    sincronizarFacturaPrincipalGasto($pdo, $gastoId);
+    registrarCambioGasto($pdo, $gastoId, 'factura_agregada', null, $ruta, $usuarioId, $usuarioNombre);
+}
+
+/** Quita una factura (la fila; el archivo NO se borra del servidor, queda anotado en el historial). */
+function quitarFacturaGasto(PDO $pdo, int $gastoId, int $facturaId, int $usuarioId, string $usuarioNombre): bool
+{
+    copiarFacturaPrincipalATabla($pdo, $gastoId, $usuarioNombre);
+    $stmt = $pdo->prepare('SELECT ruta FROM gastos_facturas WHERE id = ? AND gasto_id = ?');
+    $stmt->execute([$facturaId, $gastoId]);
+    $ruta = $stmt->fetchColumn();
+    if ($ruta === false) {
+        return false;
+    }
+    $pdo->prepare('DELETE FROM gastos_facturas WHERE id = ?')->execute([$facturaId]);
+    sincronizarFacturaPrincipalGasto($pdo, $gastoId);
+    registrarCambioGasto($pdo, $gastoId, 'factura_quitada', $ruta, null, $usuarioId, $usuarioNombre);
+    return true;
+}
+
+/**
+ * Si gastos.factura trae una factura que todavía no está en la tabla
+ * gastos_facturas (gasto pagado antes de que existiera la tabla), la copia
+ * allí, para que la lista completa de facturas esté en un solo lugar. No
+ * hace nada si ya está copiada. Usado por setup.php y antes de agregar o
+ * quitar una factura.
+ */
+function copiarFacturaPrincipalATabla(PDO $pdo, int $gastoId, string $usuarioNombre = 'Sistema'): void
+{
+    $stmt = $pdo->prepare('SELECT factura FROM gastos WHERE id = ?');
+    $stmt->execute([$gastoId]);
+    $ruta = $stmt->fetchColumn();
+    if (!$ruta) {
+        return;
+    }
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM gastos_facturas WHERE gasto_id = ? AND ruta = ?');
+    $stmt->execute([$gastoId, $ruta]);
+    if ((int) $stmt->fetchColumn() === 0) {
+        $pdo->prepare('INSERT INTO gastos_facturas (gasto_id, ruta, subido_por, subido_por_nombre) VALUES (?,?,NULL,?)')
+            ->execute([$gastoId, $ruta, $usuarioNombre]);
+    }
+}
+
+/** Mantiene gastos.factura = primera factura del gasto (o NULL si ya no queda ninguna). */
+function sincronizarFacturaPrincipalGasto(PDO $pdo, int $gastoId): void
+{
+    $stmt = $pdo->prepare('SELECT ruta FROM gastos_facturas WHERE gasto_id = ? ORDER BY id ASC LIMIT 1');
+    $stmt->execute([$gastoId]);
+    $primera = $stmt->fetchColumn();
+    $pdo->prepare('UPDATE gastos SET factura = ? WHERE id = ?')->execute([$primera !== false ? $primera : null, $gastoId]);
 }
 
 /**

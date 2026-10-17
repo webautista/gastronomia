@@ -1,19 +1,19 @@
 <?php
 /**
- * Editar un gasto ya marcado como "pagado" — antes quedaba completamente
- * cerrado (solo "Ver factura" y, únicamente para un Administrador,
- * borrarlo), así que si se cargaba la foto de la factura equivocada, o
- * cualquier otro dato quedaba mal, no había forma de corregirlo (a pedido
- * de Eyaelkys). Cualquier rol con permiso de "editar" en eventos_gastos
- * puede entrar aquí (el mismo permiso que ya deja confirmar una partida o
- * marcarla como pagada — Administrador lo tiene siempre, y se le puede dar
- * a un rol propio como "Tesorero" desde Usuarios y roles → Roles), pero
- * cada cambio queda anotado en gastos_historial (ver
- * registrarCambioGasto() en includes/helpers.php): quién, cuándo, de qué
- * valor a cuál. La factura es reemplazable pero nunca obligatoria aquí
- * (ya existe una) — dejar el campo vacío conserva la actual, y la anterior
- * NO se borra del servidor al reemplazarla, por si hiciera falta rastrear
- * el archivo que quedó registrado en el historial.
+ * Editar un gasto de un evento en cualquier etapa de su ciclo de vida
+ * (proyectado, confirmado o pagado). Antes solo se podía editar uno ya
+ * pagado (y hasta entonces la única manera de corregir un gasto
+ * proyectado o confirmado era borrarlo y volver a crearlo — a pedido de
+ * Eyaelkys se abrió para las tres etapas). Los campos que se muestran
+ * dependen de la etapa: un gasto proyectado solo tiene su monto proyectado;
+ * uno confirmado además su monto confirmado; uno pagado además el monto
+ * pagado y la fecha de pago. Cualquier rol con permiso de "editar" en
+ * eventos_gastos puede entrar aquí (el mismo permiso que ya deja confirmar una
+ * partida o marcarla como pagada), y cada cambio queda anotado en
+ * gastos_historial (ver registrarCambioGasto() en includes/helpers.php):
+ * quién, cuándo, de qué valor a cuál. Las facturas ya no se reemplazan
+ * aquí: se agregan o quitan (varias, y en cualquier etapa) desde la pantalla
+ * de Facturas del gasto (gasto_facturas.php).
  */
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/db.php';
@@ -35,10 +35,10 @@ if (!$gastoActual) {
     flash('Ese gasto ya no existe.', 'error');
     redirect('index.php');
 }
-if ($gastoActual['estado'] !== 'pagado') {
-    flash('Solo un gasto ya pagado se edita desde aquí — uno proyectado o confirmado se ajusta directo desde la pestaña de Gastos.', 'error');
-    redirect('detalle.php?id=' . $gastoActual['evento_id'] . '&tab=gastos');
-}
+
+$estadoGasto = $gastoActual['estado'];
+$esConfirmadoOPagado = in_array($estadoGasto, ['confirmado', 'pagado'], true);
+$esPagado = $estadoGasto === 'pagado';
 
 $eventoId = (int) $gastoActual['evento_id'];
 $stmt = db()->prepare('SELECT * FROM eventos WHERE id = ?');
@@ -65,26 +65,28 @@ $gasto = [
     'proveedor'         => $gastoActual['proveedor'] ?? '',
     'fecha'             => $gastoActual['fecha'],
     'monto'             => $gastoActual['monto'],
+    'es_material_receta' => !empty($gastoActual['es_material_receta']) ? 1 : 0,
     'monto_confirmado'  => $gastoActual['monto_confirmado'] ?? $gastoActual['monto'],
     'monto_pagado'      => $gastoActual['monto_pagado'] ?? ($gastoActual['monto_confirmado'] ?? $gastoActual['monto']),
     'fecha_pago'        => $gastoActual['fecha_pago'] ?? date('Y-m-d'),
 ];
 $errores = [];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
-    // Ver el mismo bloque en gasto_pagar.php: la foto de reemplazo superó
-    // el límite total de subida del servidor y PHP descartó todo el POST.
-    $errores[] = 'La imagen es demasiado pesada para este servidor. Tu navegador ya intenta reducirla automáticamente; si el problema sigue, prueba con otra foto o con una de menor resolución.';
-} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfCheck();
     $gasto['categoria_id']     = intOrNull($_POST['categoria_id'] ?? null);
     $gasto['descripcion']      = trim($_POST['descripcion'] ?? '');
     $gasto['proveedor']        = trim($_POST['proveedor'] ?? '');
     $gasto['fecha']            = $_POST['fecha'] ?? '';
     $gasto['monto']            = (float) ($_POST['monto'] ?? 0);
-    $gasto['monto_confirmado'] = (float) ($_POST['monto_confirmado'] ?? 0);
-    $gasto['monto_pagado']     = (float) ($_POST['monto_pagado'] ?? 0);
-    $gasto['fecha_pago']       = $_POST['fecha_pago'] ?? '';
+    $gasto['es_material_receta'] = !empty($_POST['es_material_receta']) ? 1 : 0;
+    if ($esConfirmadoOPagado) {
+        $gasto['monto_confirmado'] = (float) ($_POST['monto_confirmado'] ?? 0);
+    }
+    if ($esPagado) {
+        $gasto['monto_pagado'] = (float) ($_POST['monto_pagado'] ?? 0);
+        $gasto['fecha_pago']   = $_POST['fecha_pago'] ?? '';
+    }
 
     if (!in_array($gasto['categoria_id'], array_column($categorias, 'id'), true)) {
         $errores[] = 'Categoría no válida.';
@@ -92,53 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
     if ($gasto['descripcion'] === '') {
         $errores[] = 'La descripción es obligatoria.';
     }
-    if ($gasto['monto'] <= 0 || $gasto['monto_confirmado'] <= 0 || $gasto['monto_pagado'] <= 0) {
+    if ($gasto['monto'] <= 0 || ($esConfirmadoOPagado && $gasto['monto_confirmado'] <= 0) || ($esPagado && $gasto['monto_pagado'] <= 0)) {
         $errores[] = 'Los montos deben ser mayores a 0.';
     }
     if (!$gasto['fecha'] || !strtotime($gasto['fecha'])) {
         $errores[] = 'La fecha del gasto no es válida.';
     }
-    if (!$gasto['fecha_pago'] || !strtotime($gasto['fecha_pago'])) {
+    if ($esPagado && (!$gasto['fecha_pago'] || !strtotime($gasto['fecha_pago']))) {
         $errores[] = 'La fecha de pago no es válida.';
-    }
-
-    // La factura es opcional aquí: ya existe una, así que solo se procesa
-    // si se elige un archivo nuevo (mismo criterio que la foto de receta
-    // en recetas/form.php, pero sin poder dejarla vacía — siempre hace
-    // falta alguna).
-    $facturaFinal = $gastoActual['factura'];
-    if (!$errores && isset($_FILES['factura']) && $_FILES['factura']['error'] !== UPLOAD_ERR_NO_FILE) {
-        if ($_FILES['factura']['error'] !== UPLOAD_ERR_OK) {
-            $errores[] = 'No se pudo subir la factura nueva. Intenta de nuevo.';
-        } else {
-            $tiposPermitidos = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-            $mime = @mime_content_type($_FILES['factura']['tmp_name']);
-            if (!isset($tiposPermitidos[$mime])) {
-                $errores[] = 'La factura debe ser una imagen JPG, PNG o WEBP.';
-            } elseif ($_FILES['factura']['size'] > 5 * 1024 * 1024) {
-                $errores[] = 'La imagen de la factura no puede pesar más de 5 MB.';
-            } else {
-                // Las facturas son contenido privado (solo lo ve quien tiene
-                // permiso de Gastos), pero igual deben sobrevivir a los
-                // despliegues, así que se guardan en el almacenamiento
-                // compartido fuera del repositorio (enlace `private/` en la
-                // raíz del proyecto -> ../shared/private), igual que las
-                // fotos públicas usan `public/`.
-                $directorioDestino = __DIR__ . '/../private/facturas';
-                if (!is_dir($directorioDestino)) {
-                    mkdir($directorioDestino, 0775, true);
-                }
-                $nombreArchivo = 'factura_' . $id . '_' . bin2hex(random_bytes(6)) . '.' . $tiposPermitidos[$mime];
-                if (move_uploaded_file($_FILES['factura']['tmp_name'], $directorioDestino . '/' . $nombreArchivo)) {
-                    // La factura anterior NO se borra del servidor: queda su
-                    // ruta anotada como "valor_anterior" en el historial, por
-                    // si hiciera falta rastrearla más adelante.
-                    $facturaFinal = 'private/facturas/' . $nombreArchivo;
-                } else {
-                    $errores[] = 'No se pudo guardar la factura nueva en el servidor. Vuelve a intentarlo.';
-                }
-            }
-        }
     }
 
     if (!$errores) {
@@ -147,12 +110,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
         $stmtCatNueva->execute([$gasto['categoria_id']]);
         $categoriaNuevaNombre = $stmtCatNueva->fetchColumn() ?: (string) $gasto['categoria_id'];
 
-        db()->prepare(
-            'UPDATE gastos SET categoria_id=?, descripcion=?, proveedor=?, fecha=?, monto=?, monto_confirmado=?, monto_pagado=?, fecha_pago=?, factura=? WHERE id=?'
-        )->execute([
-            $gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['fecha'],
-            $gasto['monto'], $gasto['monto_confirmado'], $gasto['monto_pagado'], $gasto['fecha_pago'], $facturaFinal, $id,
-        ]);
+        $sets = ['categoria_id=?', 'descripcion=?', 'proveedor=?', 'fecha=?', 'monto=?', 'es_material_receta=?'];
+        $params = [$gasto['categoria_id'], $gasto['descripcion'], $gasto['proveedor'] ?: '—', $gasto['fecha'], $gasto['monto'], $gasto['es_material_receta']];
+        if ($esConfirmadoOPagado) {
+            $sets[] = 'monto_confirmado=?';
+            $params[] = $gasto['monto_confirmado'];
+        }
+        if ($esPagado) {
+            $sets[] = 'monto_pagado=?';
+            $sets[] = 'fecha_pago=?';
+            $params[] = $gasto['monto_pagado'];
+            $params[] = $gasto['fecha_pago'];
+        }
+        $params[] = $id;
+        db()->prepare('UPDATE gastos SET ' . implode(', ', $sets) . ' WHERE id=?')->execute($params);
 
         $usuarioId = (int) $usuarioActual['id'];
         $usuarioNombre = $usuarioActual['nombre'];
@@ -165,10 +136,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
         // y el otro de un (float) de PHP— comparen iguales y no se anoten
         // como si hubieran cambiado.
         registrarCambioGasto(db(), $id, 'monto', sprintf('%.2f', $gastoActual['monto']), sprintf('%.2f', $gasto['monto']), $usuarioId, $usuarioNombre);
-        registrarCambioGasto(db(), $id, 'monto_confirmado', sprintf('%.2f', $gastoActual['monto_confirmado']), sprintf('%.2f', $gasto['monto_confirmado']), $usuarioId, $usuarioNombre);
-        registrarCambioGasto(db(), $id, 'monto_pagado', sprintf('%.2f', $gastoActual['monto_pagado']), sprintf('%.2f', $gasto['monto_pagado']), $usuarioId, $usuarioNombre);
-        registrarCambioGasto(db(), $id, 'fecha_pago', $gastoActual['fecha_pago'], $gasto['fecha_pago'], $usuarioId, $usuarioNombre);
-        registrarCambioGasto(db(), $id, 'factura', $gastoActual['factura'], $facturaFinal, $usuarioId, $usuarioNombre);
+        registrarCambioGasto(db(), $id, 'es_material_receta', !empty($gastoActual['es_material_receta']) ? 'Sí' : 'No', $gasto['es_material_receta'] ? 'Sí' : 'No', $usuarioId, $usuarioNombre);
+        if ($esConfirmadoOPagado) {
+            registrarCambioGasto(db(), $id, 'monto_confirmado', sprintf('%.2f', $gastoActual['monto_confirmado'] ?? $gastoActual['monto']), sprintf('%.2f', $gasto['monto_confirmado']), $usuarioId, $usuarioNombre);
+        }
+        if ($esPagado) {
+            registrarCambioGasto(db(), $id, 'monto_pagado', sprintf('%.2f', $gastoActual['monto_pagado'] ?? $gastoActual['monto_confirmado'] ?? $gastoActual['monto']), sprintf('%.2f', $gasto['monto_pagado']), $usuarioId, $usuarioNombre);
+            registrarCambioGasto(db(), $id, 'fecha_pago', $gastoActual['fecha_pago'], $gasto['fecha_pago'], $usuarioId, $usuarioNombre);
+        }
 
         flash('Gasto actualizado.');
         redirect('detalle.php?id=' . $eventoId . '&tab=gastos');
@@ -176,21 +151,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
 }
 
 $historial = historialGasto(db(), $id);
+$facturas = facturasDeGasto(db(), $gastoActual);
 
-$pageTitle = 'Editar gasto pagado';
+$tituloEtapa = $esPagado ? 'pagado' : ($estadoGasto === 'confirmado' ? 'confirmado (pendiente de pago)' : 'proyectado');
+$pageTitle = 'Editar gasto ' . $tituloEtapa;
 $activeNav = 'eventos';
 $breadcrumb = '<a href="index.php">Eventos</a> &nbsp;/&nbsp; <a href="detalle.php?id=' . $eventoId . '&tab=gastos">' . e($evento['nombre'] ?? '') . '</a> &nbsp;/&nbsp; <b>Editar gasto</b>';
 require __DIR__ . '/../includes/layout_top.php';
 ?>
 
-<div class="page-head"><div><h1>Editar gasto pagado</h1><p>Cualquier cambio queda anotado abajo, con quién lo hizo y cuándo.</p></div></div>
+<div class="page-head"><div><h1>Editar gasto <?= e($tituloEtapa) ?></h1><p>Cualquier cambio queda anotado abajo, con quién lo hizo y cuándo.</p></div></div>
 
 <?php if ($errores): ?>
   <div class="alert alert-error"><?= implode('<br>', array_map('e', $errores)) ?></div>
 <?php endif; ?>
 
 <div class="card card-pad form-card">
-  <form method="post" enctype="multipart/form-data">
+  <form method="post">
     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
 
     <div class="field-row">
@@ -218,17 +195,28 @@ require __DIR__ . '/../includes/layout_top.php';
       <input type="text" id="proveedor" name="proveedor" value="<?= e($gasto['proveedor']) ?>">
     </div>
 
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400;">
+        <input type="checkbox" id="es_material_receta" name="es_material_receta" value="1" style="width:16px;height:16px;" <?= $gasto['es_material_receta'] ? 'checked' : '' ?>>
+        Es para materiales de recetas
+      </label>
+      <div class="hint">Si está marcado, este gasto se compara contra el costo de materiales de las recetas en vez de sumarse aparte.</div>
+    </div>
+
     <div class="field-row">
       <div class="field">
         <label for="monto">Monto proyectado (RD$)</label>
         <input type="number" id="monto" name="monto" min="0.01" step="0.01" required value="<?= e((string) $gasto['monto']) ?>">
       </div>
+      <?php if ($esConfirmadoOPagado): ?>
       <div class="field">
         <label for="monto_confirmado">Monto confirmado (RD$)</label>
         <input type="number" id="monto_confirmado" name="monto_confirmado" min="0.01" step="0.01" required value="<?= e((string) $gasto['monto_confirmado']) ?>">
       </div>
+      <?php endif; ?>
     </div>
 
+    <?php if ($esPagado): ?>
     <div class="field-row">
       <div class="field">
         <label for="monto_pagado">Monto pagado (RD$)</label>
@@ -239,26 +227,30 @@ require __DIR__ . '/../includes/layout_top.php';
         <input type="date" id="fecha_pago" name="fecha_pago" required value="<?= e($gasto['fecha_pago']) ?>">
       </div>
     </div>
-
-    <div class="field">
-      <label>Factura actual</label>
-      <?php if (!empty($gastoActual['factura'])): ?>
-        <div style="margin-bottom:8px;">
-          <a href="<?= e($base . '/' . $gastoActual['factura']) ?>" target="_blank" rel="noopener"><img src="<?= e($base . '/' . $gastoActual['factura']) ?>" alt="Factura actual" style="max-width:220px;max-height:220px;border-radius:8px;border:1px solid var(--border);display:block;"></a>
-        </div>
-      <?php else: ?>
-        <p class="cell-muted" style="margin-top:0;">Este gasto no tiene ninguna factura guardada todavía.</p>
-      <?php endif; ?>
-      <label for="factura">Reemplazar factura</label>
-      <input type="file" id="factura" name="factura" accept="image/jpeg,image/png,image/webp">
-      <div class="hint">Opcional — deja este campo vacío para mantener la factura actual. JPG, PNG o WEBP, hasta 5 MB.</div>
-    </div>
+    <?php endif; ?>
 
     <div class="form-actions">
       <a class="btn btn-secondary" href="detalle.php?id=<?= $eventoId ?>&tab=gastos">Cancelar</a>
       <button class="btn btn-primary" type="submit">Guardar cambios</button>
     </div>
   </form>
+</div>
+
+<div class="card card-pad" style="margin-top:16px;">
+  <div class="section-title-row" style="margin-bottom:10px;">
+    <div class="section-icon is-gold"><?= icon('receipt') ?></div>
+    <h2 class="section-title" style="margin:0;">Facturas (<?= count($facturas) ?>)</h2>
+  </div>
+  <?php if ($facturas): ?>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+      <?php foreach ($facturas as $f): ?>
+        <a href="<?= e($base . '/' . $f['ruta']) ?>" target="_blank" rel="noopener"><img src="<?= e($base . '/' . $f['ruta']) ?>" alt="Factura" style="width:110px;height:110px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;"></a>
+      <?php endforeach; ?>
+    </div>
+  <?php else: ?>
+    <p class="cell-muted" style="margin-top:0;">Este gasto todavía no tiene facturas<?= $estadoGasto === 'confirmado' ? ' (hace falta al menos una para marcarlo como pagado)' : '' ?>.</p>
+  <?php endif; ?>
+  <a class="btn btn-secondary btn-sm" href="gasto_facturas.php?id=<?= $id ?>"><?= icon('receipt') ?> Agregar o quitar facturas</a>
 </div>
 
 <?php if ($historial): ?>
@@ -275,6 +267,10 @@ require __DIR__ . '/../includes/layout_top.php';
         <span class="cell-muted" style="font-size:.85rem;">
           <?php if ($h['campo'] === 'factura'): ?>
             Se reemplazó la imagen de la factura.
+          <?php elseif ($h['campo'] === 'factura_agregada'): ?>
+            Se agregó una factura.
+          <?php elseif ($h['campo'] === 'factura_quitada'): ?>
+            Se quitó una factura.
           <?php else: ?>
             <?= e($h['valor_anterior'] ?? '—') ?> → <?= e($h['valor_nuevo'] ?? '—') ?>
           <?php endif; ?>
