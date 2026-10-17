@@ -530,3 +530,9 @@ label.accion-item{display:flex;align-items:center;gap:6px;font-size:.78rem;paddi
 .cierre-finalizados summary::-webkit-details-marker{display:none;}
 .cierre-finalizados summary svg{width:14px;height:14px;transition:transform .15s;transform:rotate(-90deg);}
 .cierre-finalizados[open] summary svg{transform:rotate(0);}
+
+/* Cierre financiero: cuadro destacado de "Pendiente de pago" (ancho completo, más grande y con borde marcado). */
+.stat-tile--destacado{border-width:2px;border-top-width:4px;padding:20px 24px;}
+.stat-tile--destacado.stat-tile--terracotta{border-color:var(--danger);}
+.stat-tile--destacado.stat-tile--sage{border-color:var(--success);}
+.stat-tile--destacado .stat-value{font-size:2.1rem;}
