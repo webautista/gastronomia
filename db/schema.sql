@@ -1056,6 +1056,31 @@ CREATE TABLE IF NOT EXISTS gastos_facturas (
     KEY idx_gastosfact_gasto (gasto_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Pagos parciales (abonos) de un gasto (a pedido de Eyaelkys: antes un gasto
+-- confirmado solo se podía pagar de una vez). Cada fila es un abono con su
+-- fecha y una nota opcional. Mientras la suma de los abonos sea menor que el
+-- monto confirmado el gasto sigue "Confirmado - Pendiente" (no se toca
+-- gastos.estado); cuando los abonos completan el monto, el gasto pasa solo a
+-- "pagado" (monto_pagado = suma de abonos, fecha_pago = fecha del último).
+-- Ver eventos/gasto_abonar.php y practicas/gasto_abonar.php. Un gasto que se
+-- paga de una vez sigue sin usar esta tabla. registrado_por_nombre repite el
+-- criterio de gastos_historial: el registro no debe perderse si se borra el usuario.
+CREATE TABLE IF NOT EXISTS gastos_pagos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    gasto_id INT UNSIGNED NOT NULL,
+    monto DECIMAL(10,2) NOT NULL,
+    fecha DATE NOT NULL,
+    nota VARCHAR(255) NULL,
+    registrado_por INT UNSIGNED NULL,
+    registrado_por_nombre VARCHAR(150) NOT NULL,
+    creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_gastospagos_gasto FOREIGN KEY (gasto_id)
+        REFERENCES gastos(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gastospagos_usuario FOREIGN KEY (registrado_por)
+        REFERENCES usuarios(id) ON DELETE SET NULL,
+    KEY idx_gastospagos_gasto (gasto_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Decisiones de compra por evento o práctica: cuando la lista de compra
 -- sugiere llevar el paquete completo de un ingrediente (ej. pasta, queso —
 -- no se vende suelto en la cantidad exacta de la receta), aquí se guarda si

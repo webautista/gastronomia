@@ -116,7 +116,16 @@ $sobraCierre = $diferenciaCierre >= -0.005;
 // son y cuánto suman. Un gasto solo proyectado no cuenta (aún no es una factura).
 $facturasPendientes = array_values(array_filter($datos['gastos'], fn ($gp) => $gp['estado'] === 'confirmado'));
 $cantFacturasPendientes = count($facturasPendientes);
-$montoFacturasPendientes = array_sum(array_map('montoEfectivoGasto', $facturasPendientes));
+// Pagos parciales (abonos): lo ya abonado a un gasto pendiente se descuenta
+// de lo que falta. Se leen en vivo (los pagos no se congelan con el cierre).
+$abonosCierre = abonosPorGasto(db(), array_column($facturasPendientes, 'id'));
+$montoFacturasPendientes = 0.0;
+$abonadoFacturasPendientes = 0.0;
+foreach ($facturasPendientes as $gp) {
+    $abonadoGp = $abonosCierre[(int) $gp['id']]['total'] ?? 0.0;
+    $abonadoFacturasPendientes += min($abonadoGp, montoEfectivoGasto($gp));
+    $montoFacturasPendientes += max(0.0, montoEfectivoGasto($gp) - $abonadoGp);
+}
 ?>
 <div class="summary-grid">
   <div class="stat-tile stat-tile--wine">
@@ -172,7 +181,7 @@ $montoFacturasPendientes = array_sum(array_map('montoEfectivoGasto', $facturasPe
           <div class="stat-hint">monto total</div>
         </div>
       </div>
-      <div class="stat-hint" style="margin-top:10px;">Gastos ya confirmados que todavía no se han pagado ("Confirmado - Pendiente").</div>
+      <div class="stat-hint" style="margin-top:10px;">Gastos ya confirmados que todavía no se han pagado ("Confirmado - Pendiente").<?php if ($abonadoFacturasPendientes > 0.005): ?> El monto es lo que falta por pagar, descontando <b class="mono"><?= money($abonadoFacturasPendientes) ?></b> ya abonados en pagos parciales.<?php endif; ?></div>
     <?php else: ?>
       <div class="stat-value">0</div>
       <div class="stat-hint">No hay facturas pendientes de pago: todos los gastos confirmados ya están pagados.</div>
@@ -251,7 +260,7 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
           <td class="cell-muted"><?= fmtDate($g['fecha']) ?></td>
           <td>
             <?php if ($g['estado'] === 'pagado'): ?><span class="chip chip-success"><?= e(etiquetaEstadoGasto('pagado')) ?></span>
-            <?php elseif ($g['estado'] === 'confirmado'): ?><span class="chip chip-warning" title="Confirmado, pero todavía no se ha pagado"><?= e(etiquetaEstadoGasto('confirmado')) ?></span>
+            <?php elseif ($g['estado'] === 'confirmado'): ?><span class="chip chip-warning" title="Confirmado, pero todavía no se ha pagado"><?= e(etiquetaEstadoGasto('confirmado')) ?></span><?php $abonoFila = $abonosCierre[(int) $g['id']]['total'] ?? 0; if ($abonoFila > 0.005): ?><div style="font-size:.76rem;margin-top:3px;" class="cell-muted">Pago parcial: abonado <b class="mono"><?= money($abonoFila) ?></b> · falta <b class="mono"><?= money(max(0, montoEfectivoGasto($g) - $abonoFila)) ?></b></div><?php endif; ?>
             <?php else: ?><span class="chip chip-muted"><?= e(etiquetaEstadoGasto('proyectado')) ?></span><?php endif; ?>
           </td>
           <td class="mono" style="white-space:nowrap;text-align:right;"><?= money(montoEfectivoGasto($g)) ?></td>
@@ -262,7 +271,7 @@ if ($porMetodo['sin_especificar']['monto'] > 0.005 || $porMetodo['sin_especifica
     <tfoot>
       <?php if ($subtotalesGasto['confirmado'] > 0.005 || $subtotalesGasto['proyectado'] > 0.005): ?>
         <tr><td colspan="5" style="text-align:right;" class="cell-muted">Pagado</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['pagado']) ?></td></tr>
-        <?php if ($subtotalesGasto['confirmado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted"><?= e(etiquetaEstadoGasto('confirmado')) ?> (todavía sin pagar)</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['confirmado']) ?></td></tr><?php endif; ?>
+        <?php if ($subtotalesGasto['confirmado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted"><?= e(etiquetaEstadoGasto('confirmado')) ?> (todavía sin pagar<?= $abonadoFacturasPendientes > 0.005 ? '; ya abonado ' . money($abonadoFacturasPendientes) : '' ?>)</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['confirmado']) ?></td></tr><?php endif; ?>
         <?php if ($subtotalesGasto['proyectado'] > 0.005): ?><tr><td colspan="5" style="text-align:right;" class="cell-muted">Proyectado (sin confirmar)</td><td class="mono" style="white-space:nowrap;text-align:right;"><?= money($subtotalesGasto['proyectado']) ?></td></tr><?php endif; ?>
       <?php endif; ?>
       <tr><td colspan="5" style="text-align:right;"><b>Total</b></td><td class="mono" style="white-space:nowrap;text-align:right;"><b><?= money(array_sum($catTotales)) ?></b></td></tr>

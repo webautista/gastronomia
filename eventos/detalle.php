@@ -416,7 +416,10 @@ if ($puedeVerGastos) {
     // Estudiante que reportó cada gasto: solo lo ve quien puede editar gastos
     // (no el rol Padres, que consulta la pestaña en solo lectura).
     $nombresReportadoPor = $puedeEditarGasto ? nombresEstudiantesPorId(db(), array_column($gastosEvento, 'reportado_por_estudiante_id')) : [];
+    // Pagos parciales (abonos) de cada gasto: gasto_id => total y cantidad.
+    $abonosGasto = abonosPorGasto(db(), array_column($gastosEvento, 'id'));
 }
+$tablaPagosGastoOk = tablaGastosPagosExiste(db());
 
 // La cuota se calcula sola por defecto: costo de las recetas (o el gasto
 // real en materiales, el que sea mayor) más los "otros" gastos del evento,
@@ -962,6 +965,8 @@ require __DIR__ . '/../includes/layout_top.php';
       $estadoLabel = etiquetaEstadoGasto($g['estado']);
       $cantFacturasG = count(facturasDeGasto(db(), $g));
       $reportoG = $nombresReportadoPor[(int) ($g['reportado_por_estudiante_id'] ?? 0)] ?? null;
+      $abG = $abonosGasto[(int) $g['id']] ?? null;
+      $faltaG = max(0.0, montoEfectivoGasto($g) - (float) ($abG['total'] ?? 0));
     ?>
       <div class="dash-card">
         <div class="dash-card-head <?= $varianteGasto ?>">
@@ -994,12 +999,16 @@ require __DIR__ . '/../includes/layout_top.php';
             </div>
             <?php endif; ?>
           </div>
-          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || $g['estado'] === 'confirmado' || $reportoG): ?>
+          <?php if (!empty($g['es_material_receta']) || ($g['estado'] === 'pagado' && $g['fecha_pago']) || $g['estado'] === 'confirmado' || $reportoG || $abG): ?>
           <div class="cell-muted" style="font-size:.78rem;display:flex;flex-direction:column;gap:4px;">
             <?php if (!empty($g['es_material_receta'])): ?><span>Material de receta</span><?php endif; ?>
             <?php if ($g['estado'] === 'pagado' && $g['fecha_pago']): ?><span>Pagado: <?= fmtDate($g['fecha_pago']) ?></span><?php endif; ?>
             <?php if ($reportoG): ?><span><?= icon('users') ?> Reportó: <b><?= e($reportoG) ?></b></span><?php endif; ?>
-            <?php if ($g['estado'] === 'confirmado'): ?><span><b>Pendiente de pago</b> — todavía no se ha pagado</span><?php endif; ?>
+            <?php if ($g['estado'] === 'confirmado' && $abG): ?>
+              <span><b>Pago parcial</b> — abonado <b class="mono"><?= money($abG['total']) ?></b> de <?= money(montoEfectivoGasto($g)) ?> · falta <b class="mono"><?= money($faltaG) ?></b></span>
+              <div class="meter warn" style="margin-top:2px;"><span style="width:<?= (int) min(100, round($abG['total'] / max(0.01, montoEfectivoGasto($g)) * 100)) ?>%"></span></div>
+            <?php elseif ($g['estado'] === 'confirmado'): ?><span><b>Pendiente de pago</b> — todavía no se ha pagado</span><?php endif; ?>
+            <?php if ($g['estado'] === 'pagado' && $abG): ?><span>Pagado en <?= (int) $abG['cantidad'] ?> pago<?= (int) $abG['cantidad'] === 1 ? '' : 's' ?></span><?php endif; ?>
           </div>
           <?php endif; ?>
           <div class="dash-footer dash-footer-wrap">
@@ -1014,6 +1023,11 @@ require __DIR__ . '/../includes/layout_top.php';
             <?php endif; ?>
             <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto): ?>
               <a class="btn btn-primary btn-sm" href="gasto_pagar.php?id=<?= (int) $g['id'] ?>"><?= icon('receipt') ?> Marcar pagado</a>
+            <?php endif; ?>
+            <?php if ($g['estado'] === 'confirmado' && $puedeEditarGasto && $tablaPagosGastoOk): ?>
+              <a class="btn btn-secondary btn-sm" href="gasto_abonar.php?id=<?= (int) $g['id'] ?>"><?= icon('plus') ?> <?= $abG ? 'Pagos (' . (int) $abG['cantidad'] . ')' : 'Pago parcial' ?></a>
+            <?php elseif ($g['estado'] === 'pagado' && $abG): ?>
+              <a class="btn btn-secondary btn-sm" href="gasto_abonar.php?id=<?= (int) $g['id'] ?>"><?= icon('plus') ?> Pagos (<?= (int) $abG['cantidad'] ?>)</a>
             <?php endif; ?>
             <?php if ($puedeEditarGasto): ?>
               <a class="btn btn-secondary btn-sm" href="gasto_editar.php?id=<?= (int) $g['id'] ?>"><?= icon('edit') ?> Editar</a>

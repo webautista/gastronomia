@@ -702,12 +702,13 @@ function montoEfectivoGasto(array $gasto): float
 function resumenGastosVinculo(PDO $pdo, string $columna, int $id): array
 {
     $stmt = $pdo->prepare(
-        "SELECT estado, es_material_receta, monto, monto_confirmado, monto_pagado
+        "SELECT id, estado, es_material_receta, monto, monto_confirmado, monto_pagado
          FROM gastos WHERE $columna = ? AND eliminado_en IS NULL"
     );
     $stmt->execute([$id]);
 
     $out = ['material_proyectado' => 0.0, 'material_usado' => 0.0, 'otros_proyectado' => 0.0, 'otros_usado' => 0.0, 'pagado' => 0.0];
+    $idsConfirmados = [];
     foreach ($stmt->fetchAll() as $g) {
         $material = !empty($g['es_material_receta']);
         if ($g['estado'] === 'proyectado') {
@@ -716,8 +717,16 @@ function resumenGastosVinculo(PDO $pdo, string $columna, int $id): array
             $out[$material ? 'material_usado' : 'otros_usado'] += montoEfectivoGasto($g);
             if ($g['estado'] === 'pagado') {
                 $out['pagado'] += montoEfectivoGasto($g);
+            } elseif ($g['estado'] === 'confirmado') {
+                $idsConfirmados[] = (int) $g['id'];
             }
         }
+    }
+    // Lo abonado (pagos parciales) a gastos que todavía están "confirmado"
+    // ya es dinero pagado: cuenta en 'pagado' (el "Usado" del Panel) sin
+    // cambiar lo que cuenta como "usado" para la cuota.
+    foreach (abonosPorGasto($pdo, $idsConfirmados) as $abono) {
+        $out['pagado'] += $abono['total'];
     }
     return $out;
 }
@@ -768,6 +777,9 @@ function etiquetaCampoGastoHistorial(string $campo): string
         'factura_quitada'   => 'Factura quitada',
         'es_material_receta' => 'Material de receta',
         'reportado_por'     => 'Reportó el gasto',
+        'pago_parcial'      => 'Pago parcial registrado',
+        'pago_parcial_quitado' => 'Pago parcial eliminado',
+        'estado'            => 'Estado',
         default             => ucfirst($campo),
     };
 }
@@ -964,6 +976,93 @@ function gastosTieneReportadoPor(PDO $pdo): bool
         }
     }
     return $existe;
+}
+
+/**
+ * ¿Existe ya la tabla gastos_pagos (pagos parciales de un gasto)? La crea
+ * db/schema.sql al correr setup.php. Mientras tanto las pantallas ocultan
+ * los pagos parciales y todo sigue funcionando como siempre.
+ */
+function tablaGastosPagosExiste(PDO $pdo): bool
+{
+    static $existe = null;
+    if ($existe === null) {
+        try {
+            $existe = (bool) $pdo->query("SHOW TABLES LIKE 'gastos_pagos'")->fetchColumn();
+        } catch (Throwable $e) {
+            $existe = false;
+        }
+    }
+    return $existe;
+}
+
+/** Pagos parciales (abonos) de un gasto, del más antiguo al más reciente. Vacío si aún no existe la tabla. */
+function pagosDeGasto(PDO $pdo, int $gastoId): array
+{
+    if (!tablaGastosPagosExiste($pdo)) {
+        return [];
+    }
+    $stmt = $pdo->prepare('SELECT * FROM gastos_pagos WHERE gasto_id = ? ORDER BY fecha ASC, id ASC');
+    $stmt->execute([$gastoId]);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Total abonado y cantidad de abonos de varios gastos a la vez:
+ * gasto_id => ['total' => float, 'cantidad' => int]. Los gastos sin abonos
+ * no aparecen en el resultado.
+ */
+function abonosPorGasto(PDO $pdo, array $gastoIds): array
+{
+    $gastoIds = array_values(array_unique(array_filter(array_map('intval', $gastoIds))));
+    if (!$gastoIds || !tablaGastosPagosExiste($pdo)) {
+        return [];
+    }
+    $marcadores = implode(',', array_fill(0, count($gastoIds), '?'));
+    $stmt = $pdo->prepare("SELECT gasto_id, COALESCE(SUM(monto),0) AS total, COUNT(*) AS cantidad FROM gastos_pagos WHERE gasto_id IN ($marcadores) GROUP BY gasto_id");
+    $stmt->execute($gastoIds);
+    $mapa = [];
+    foreach ($stmt->fetchAll() as $fila) {
+        $mapa[(int) $fila['gasto_id']] = ['total' => (float) $fila['total'], 'cantidad' => (int) $fila['cantidad']];
+    }
+    return $mapa;
+}
+
+/**
+ * Registra un pago parcial (abono) a un gasto confirmado. Si con este abono
+ * la suma alcanza (o supera) el monto confirmado, el gasto pasa solo a
+ * "pagado": monto_pagado = suma de abonos y fecha_pago = fecha del último
+ * abono. Quien llama debe haber validado ya que existan facturas cuando el
+ * pago completa el monto (ver gasto_abonar.php). Devuelve
+ * ['completo' => bool, 'abonado' => float (suma incluyendo este abono)].
+ */
+function registrarAbonoGasto(PDO $pdo, array $gasto, float $monto, string $fecha, ?string $nota, int $usuarioId, string $usuarioNombre): array
+{
+    $gastoId = (int) $gasto['id'];
+    $confirmado = (float) ($gasto['monto_confirmado'] ?? $gasto['monto']);
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('INSERT INTO gastos_pagos (gasto_id, monto, fecha, nota, registrado_por, registrado_por_nombre) VALUES (?,?,?,?,?,?)')
+            ->execute([$gastoId, $monto, $fecha, $nota !== null && $nota !== '' ? $nota : null, $usuarioId, $usuarioNombre]);
+        $stmt = $pdo->prepare('SELECT COALESCE(SUM(monto),0) AS total, MAX(fecha) AS ultima FROM gastos_pagos WHERE gasto_id = ?');
+        $stmt->execute([$gastoId]);
+        $fila = $stmt->fetch();
+        $abonado = (float) $fila['total'];
+        registrarCambioGasto($pdo, $gastoId, 'pago_parcial', null, sprintf('%.2f', $monto) . ' (' . $fecha . ')' . ($nota ? ' — ' . $nota : ''), $usuarioId, $usuarioNombre);
+        $completo = $abonado >= $confirmado - 0.005;
+        if ($completo) {
+            $pdo->prepare("UPDATE gastos SET estado='pagado', monto_pagado=?, fecha_pago=? WHERE id=? AND estado='confirmado'")
+                ->execute([$abonado, $fila['ultima'], $gastoId]);
+            registrarCambioGasto($pdo, $gastoId, 'estado', 'Confirmado - Pendiente', 'Pagado (completado con pagos parciales)', $usuarioId, $usuarioNombre);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+    return ['completo' => $completo, 'abonado' => $abonado];
 }
 
 /** Estudiantes asignados a un evento ('evento') o práctica ('practica'), por nombre: id y nombre. */

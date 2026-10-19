@@ -123,6 +123,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($esPagado && (!$gasto['fecha_pago'] || !strtotime($gasto['fecha_pago']))) {
         $errores[] = 'La fecha de pago no es válida.';
     }
+    if ($estadoGasto === 'confirmado' && !$errores) {
+        // Con pagos parciales ya registrados, el monto confirmado tiene que
+        // seguir siendo mayor que lo abonado (si ya se pagó todo, el gasto
+        // se marca como pagado desde "Marcar pagado").
+        $abonadoGasto = (float) array_sum(array_column(pagosDeGasto(db(), $id), 'monto'));
+        if ($abonadoGasto > 0 && $gasto['monto_confirmado'] <= $abonadoGasto + 0.005) {
+            $errores[] = 'El monto confirmado debe ser mayor que lo ya abonado (' . money($abonadoGasto) . '). Si ya se pagó todo, usa "Marcar pagado"; si te equivocaste en un pago, elimínalo desde Pagos parciales.';
+        }
+    }
 
     if (!$errores) {
         $categoriaAnteriorNombre = $gastoActual['categoria'];
@@ -180,6 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $historial = historialGasto(db(), $id);
 $facturas = facturasDeGasto(db(), $gastoActual);
+$pagosParciales = $esConfirmadoOPagado ? pagosDeGasto(db(), $id) : [];
+$abonadoParcial = (float) array_sum(array_column($pagosParciales, 'monto'));
 
 $tituloEtapa = $esPagado ? 'pagado' : ($estadoGasto === 'confirmado' ? 'confirmado (pendiente de pago)' : 'proyectado');
 $pageTitle = 'Editar gasto ' . $tituloEtapa;
@@ -293,6 +304,21 @@ require __DIR__ . '/../includes/layout_top.php';
   <?php endif; ?>
   <a class="btn btn-secondary btn-sm" href="gasto_facturas.php?id=<?= $id ?>"><?= icon('receipt') ?> Agregar o quitar facturas</a>
 </div>
+
+<?php if ($esConfirmadoOPagado && tablaGastosPagosExiste(db())): ?>
+<div class="card card-pad" style="margin-top:16px;">
+  <div class="section-title-row" style="margin-bottom:10px;">
+    <div class="section-icon is-gold"><?= icon('receipt') ?></div>
+    <h2 class="section-title" style="margin:0;">Pagos parciales (<?= count($pagosParciales) ?>)</h2>
+  </div>
+  <?php if ($pagosParciales): ?>
+    <p class="cell-muted" style="margin-top:0;">Abonado <b class="mono"><?= money($abonadoParcial) ?></b> de <b class="mono"><?= money($gastoActual['monto_confirmado'] ?? $gastoActual['monto']) ?></b> confirmado.</p>
+  <?php else: ?>
+    <p class="cell-muted" style="margin-top:0;">Este gasto no tiene pagos parciales registrados.</p>
+  <?php endif; ?>
+  <a class="btn btn-secondary btn-sm" href="gasto_abonar.php?id=<?= $id ?>"><?= icon('receipt') ?> <?= $esPagado ? 'Ver pagos' : 'Ver o registrar pagos parciales' ?></a>
+</div>
+<?php endif; ?>
 
 <?php if ($historial): ?>
 <div class="card card-pad" style="margin-top:16px;">

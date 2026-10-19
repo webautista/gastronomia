@@ -38,6 +38,14 @@ $stmt->execute([$eventoId]);
 $evento = $stmt->fetch();
 
 $montoPagado = $gasto['monto_confirmado'] ?? $gasto['monto'];
+// Pagos parciales (abonos) ya registrados (ver gasto_abonar.php): si los hay,
+// el monto que se pide aquí es el PAGO FINAL (lo que falta), y el monto
+// pagado del gasto queda como abonos + pago final.
+$pagosPrevios = pagosDeGasto(db(), $id);
+$abonadoPrevio = array_sum(array_map(fn ($p) => (float) $p['monto'], $pagosPrevios));
+if ($abonadoPrevio > 0) {
+    $montoPagado = max(0.01, round((float) $montoPagado - $abonadoPrevio, 2));
+}
 $fechaPago = date('Y-m-d');
 $errores = [];
 
@@ -95,6 +103,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
     }
 
     if (!$errores) {
+        if ($abonadoPrevio > 0) {
+            // Con abonos previos, lo escrito es el pago final: se anota como
+            // un pago más y el monto pagado del gasto es la suma de todos.
+            db()->prepare('INSERT INTO gastos_pagos (gasto_id, monto, fecha, nota, registrado_por, registrado_por_nombre) VALUES (?,?,?,?,?,?)')
+                ->execute([$id, $montoPagado, $fechaPago, 'Pago final', (int) $usuarioActual['id'], $usuarioActual['nombre']]);
+            registrarCambioGasto(db(), $id, 'pago_parcial', null, sprintf('%.2f', $montoPagado) . ' (' . $fechaPago . ') — Pago final', (int) $usuarioActual['id'], $usuarioActual['nombre']);
+            $montoPagado = $abonadoPrevio + $montoPagado;
+        }
         db()->prepare("UPDATE gastos SET estado='pagado', monto_pagado=?, fecha_pago=? WHERE id=?")
             ->execute([$montoPagado, $fechaPago, $id]);
         foreach ($rutasNuevas as $rutaNueva) {
@@ -124,13 +140,13 @@ require __DIR__ . '/../includes/layout_top.php';
 <?php endif; ?>
 
 <div class="card card-pad form-card">
-  <p class="cell-muted" style="margin-top:0;">Monto confirmado: <b class="mono"><?= money($gasto['monto_confirmado'] ?? $gasto['monto']) ?></b></p>
+  <p class="cell-muted" style="margin-top:0;">Monto confirmado: <b class="mono"><?= money($gasto['monto_confirmado'] ?? $gasto['monto']) ?></b><?php if ($abonadoPrevio > 0): ?> · Ya abonado: <b class="mono"><?= money($abonadoPrevio) ?></b> en <?= count($pagosPrevios) ?> pago<?= count($pagosPrevios) === 1 ? '' : 's' ?> (<a href="gasto_abonar.php?id=<?= $id ?>">ver pagos</a>)<?php endif; ?></p>
   <form method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
 
     <div class="field-row">
       <div class="field">
-        <label for="monto_pagado">Monto pagado (RD$)</label>
+        <label for="monto_pagado"><?= $abonadoPrevio > 0 ? 'Pago final (RD$)' : 'Monto pagado (RD$)' ?></label>
         <input type="number" id="monto_pagado" name="monto_pagado" min="0.01" step="0.01" required value="<?= e((string) $montoPagado) ?>">
       </div>
       <div class="field">
