@@ -2688,7 +2688,7 @@ function completarPesoDensidad80(PDO $pdo, array $filas): void
  * setup.php. Cada línea: [catálogo|null, nombre, cantidad, unidad, costo
  * por unidad, acciones, al gusto, opcional, reemplazo].
  */
-function crearRecetaCarga80(PDO $pdo, string $categoria, string $nombre, string $descripcion, int $porcionesBase, string $preparacion, array $lineas): ?string
+function crearRecetaCarga80(PDO $pdo, string $categoria, string $nombre, string $descripcion, int $porcionesBase, string $preparacion, array $lineas, int $porcionesPrueba = 17): ?string
 {
     $yaExiste = $pdo->prepare('SELECT COUNT(*) FROM recetas WHERE nombre = ?');
     $yaExiste->execute([$nombre]);
@@ -2705,7 +2705,7 @@ function crearRecetaCarga80(PDO $pdo, string $categoria, string $nombre, string 
         $stmtR->execute([$nombre, $descripcion, $categoriaId, $porcionesBase, $preparacion]);
         $recetaId = (int) $pdo->lastInsertId();
         if (columnaExiste($pdo, 'recetas', 'porciones_prueba')) {
-            $pdo->prepare('UPDATE recetas SET porciones_prueba = 17 WHERE id = ?')->execute([$recetaId]);
+            $pdo->prepare('UPDATE recetas SET porciones_prueba = ? WHERE id = ?')->execute([$porcionesPrueba, $recetaId]);
         }
         if (columnaExiste($pdo, 'recetas', 'icono')) {
             $pdo->prepare('UPDATE recetas SET icono = ? WHERE id = ?')->execute([iconoSugeridoReceta($nombre, $categoria), $recetaId]);
@@ -2749,7 +2749,7 @@ function crearRecetaCarga80(PDO $pdo, string $categoria, string $nombre, string 
         }
         return "No se pudo crear la receta \"$nombre\": " . $e->getMessage();
     }
-    return "Receta \"$nombre\" creada ($porcionesBase porciones reales, 17 de prueba, " . count($lineas) . ' ingredientes).';
+    return "Receta \"$nombre\" creada ($porcionesBase porciones reales, $porcionesPrueba de prueba, " . count($lineas) . ' ingredientes).';
 }
 
 /** Id del ingrediente del catálogo por nombre (null si no hay catálogo o no existe). */
@@ -5047,6 +5047,459 @@ function sembrarRecetas80Tanda4(PDO $pdo): array
 }
 
 /**
+ * Unidad "Galón" (volumen, 3 785.41 ml) para recetas que miden jugos por
+ * galón. Se crea solo si falta; correrlo varias veces no duplica nada.
+ */
+function prepararUnidadGalon60(PDO $pdo): void
+{
+    if (idPorNombre($pdo, 'unidades_medida', 'nombre', 'Galón')) {
+        return;
+    }
+    $campos = ['nombre', 'abreviatura', 'orden'];
+    $valores = ['Galón', 'gal', 240];
+    if (columnaExiste($pdo, 'unidades_medida', 'es_entera')) {
+        $campos[] = 'es_entera';
+        $valores[] = 0;
+    }
+    if (columnaExiste($pdo, 'unidades_medida', 'tipo_medida') && columnaExiste($pdo, 'unidades_medida', 'factor_base')) {
+        $campos[] = 'tipo_medida';
+        $valores[] = 'volumen';
+        $campos[] = 'factor_base';
+        $valores[] = 3785.41;
+    }
+    $pdo->prepare(
+        'INSERT IGNORE INTO unidades_medida (' . implode(', ', $campos) . ') VALUES (' . implode(', ', array_fill(0, count($campos), '?')) . ')'
+    )->execute($valores);
+}
+
+/**
+ * Carga de las 9 recetas del menú de 60 porciones (pollo asado, cerdo
+ * horneado, pastelón de plátano maduro, pasteles en hojas, ensalada rusa,
+ * ensalada mediterránea, dulce de coco, tres leches y fruit punch). Cada
+ * receta se crea solo si su nombre no existe todavía (idempotente), con sus
+ * ingredientes enlazados al catálogo, 60 porciones reales y 60 de prueba.
+ *
+ * Supuestos (a revisar por Eyaelkys):
+ * - Las cantidades son las de las imágenes del menú, para 60 porciones.
+ * - Ingredientes que no estaban en el catálogo se crean con precio de
+ *   referencia (estimación de mercado RD, marcada en su nota de compra).
+ * - "Ajo majado" se crea aparte de "Ajo" (que se cuenta por diente a
+ *   RD$14.50): las recetas piden tazas de ajo majado.
+ * - Leche de coco: se compra en latas de 400 ml (2 litros = 5 latas).
+ * - Pasteles en hojas: 60 unidades (1 por persona); 70 hojas y 70 papeles
+ *   para tener margen de rotura.
+ * - Los pasteles y las ensaladas llevan sal, orégano y pimienta "al gusto"
+ *   (no suman al costo), como en el resto del recetario.
+ * - Pepino ≈250 g por unidad; naranja ≈200 g por unidad; azúcar glas ≈0.5 g/ml.
+ */
+function sembrarRecetasMenu60(PDO $pdo): array
+{
+    $mensajes = [];
+    prepararCargaRecetas80($pdo);
+    prepararUnidadGalon60($pdo);
+    sembrarIngredientesNuevos80($pdo, [
+        ['Ajo majado', 'Vegetal', '🧄', 'Taza', 'Taza', 1, 100.00, 'Ajo majado/picado: ≈3-4 cabezas por taza. Estimación de mercado RD (≈RD$100/taza). Ajusta si tienes el precio real.'],
+        ['Yautía blanca', 'Vívere', '🥔', 'Libra', 'Libra', 1, 45.00, 'Estimación de mercado RD (≈RD$45/libra). Ajusta si tienes el precio real.'],
+        ['Aceite con bija', 'Aceite y grasa', '🧴', 'Litro', 'Litro', 1, 165.00, 'Aceite vegetal achiotado (aceite + bija). Estimación ≈RD$165/litro. Ajusta si tienes el precio real.'],
+        ['Alcaparras', 'Enlatado y conserva', '🥫', 'Libra', 'Libra', 1, 650.00, 'Estimación de mercado RD (≈RD$650/libra). Ajusta si tienes el precio real.'],
+        ['Hojas de plátano', 'Vegetal', '🍃', 'Hoja', 'Hoja', 1, 8.00, 'Hojas de plátano para envolver pasteles. Estimación de mercado RD (≈RD$8 c/u). Ajusta si tienes el precio real.'],
+        ['Papel encerado para pasteles', 'Otro', '📄', 'Hoja', 'Paquete', 100, 250.00, 'Paquete de ≈100 hojas por ≈RD$250. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Hilo de cocina', 'Otro', '🧵', 'Unidad', 'Unidad', 1, 80.00, 'Un rollo de hilo de cocina (≈RD$80). Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Aceitunas verdes', 'Enlatado y conserva', '🥫', 'Libra', 'Libra', 1, 220.00, 'Estimación de mercado RD (≈RD$220/libra). Ajusta si tienes el precio real.'],
+        ['Aceitunas negras', 'Enlatado y conserva', '🥫', 'Libra', 'Libra', 1, 240.00, 'Estimación de mercado RD (≈RD$240/libra). Ajusta si tienes el precio real.'],
+        ['Guisantes enlatados', 'Enlatado y conserva', '🥫', 'Lata', 'Lata', 1, 60.00, 'Lata de ≈15 oz. Estimación de mercado RD (≈RD$60 por lata). Ajusta si tienes el precio real.'],
+        ['Lechuga romana', 'Vegetal', '🥬', 'Unidad', 'Unidad', 1, 80.00, 'Estimación de mercado RD (≈RD$80 por unidad grande). Ajusta si tienes el precio real.'],
+        ['Tomate cherry', 'Vegetal', '🍅', 'Libra', 'Libra', 1, 160.00, 'Estimación de mercado RD (≈RD$160/libra). Ajusta si tienes el precio real.'],
+        ['Pimiento amarillo', 'Vegetal', '🌶', 'Libra', 'Libra', 1, 180.00, 'Estimación de mercado RD (≈RD$180/libra). Ajusta si tienes el precio real.'],
+        ['Queso feta', 'Lácteo y huevo', '🧀', 'Libra', 'Libra', 1, 420.00, 'Estimación de mercado RD (≈RD$420/libra). Ajusta si tienes el precio real.'],
+        ['Coco fresco rallado', 'Fruta', '🥥', 'Libra', 'Libra', 1, 100.00, 'Coco fresco rallado. Estimación de mercado RD (≈RD$100/libra). Ajusta si tienes el precio real.'],
+        ['Azúcar glas', 'Edulcorante', '🍬', 'Libra', 'Libra', 1, 60.00, 'Azúcar en polvo (glas/impalpable). Estimación de mercado RD (≈RD$60/libra). Ajusta si tienes el precio real.'],
+        ['Jugo de naranja', 'Bebida para cocinar', '🍊', 'Litro', 'Litro', 1, 130.00, 'Estimación de mercado RD (≈RD$130/litro). Ajusta si tienes el precio real.'],
+        ['Jugo de piña', 'Bebida para cocinar', '🍍', 'Litro', 'Litro', 1, 120.00, 'Estimación de mercado RD (≈RD$120/litro). Ajusta si tienes el precio real.'],
+        ['Jugo de cranberry', 'Bebida para cocinar', '🍇', 'Litro', 'Litro', 1, 230.00, 'Estimación de mercado RD (≈RD$230/litro). Ajusta si tienes el precio real.'],
+        ['Jugo de chinola', 'Bebida para cocinar', '🍹', 'Litro', 'Litro', 1, 150.00, 'Estimación de mercado RD (≈RD$150/litro). Ajusta si tienes el precio real.'],
+        ['Granadina', 'Bebida para cocinar', '🍒', 'Mililitro', 'Unidad', 750, 320.00, 'Botella de ≈750 ml por ≈RD$320. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Refresco de limón', 'Bebida para cocinar', '🥤', 'Litro', 'Unidad', 2, 105.00, 'Botella de 2 litros por ≈RD$105. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Cerezas para decorar', 'Repostería', '🍒', 'Unidad', 'Paquete', 100, 180.00, 'Frasco de ≈100 cerezas por ≈RD$180. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+        ['Hielo', 'Otro', '🧊', 'Libra', 'Libra', 1, 10.00, 'Bolsa de hielo de ≈10 lb por ≈RD$100. Estimación de mercado RD. Ajusta si tienes el precio real.'],
+    ]);
+    // Peso/densidad de referencia SOLO si el catálogo no los tenía.
+    completarPesoDensidad80($pdo, [
+        ['Pepino', null, 250],
+        ['Naranja', null, 200],
+        ['Azúcar glas', 0.5, null],
+    ]);
+
+    // 1. Pollo asado
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pollo asado',
+        'Receta del menú de 60 porciones. Porción estimada: 1 pieza de pollo de 200–250 g en crudo, con hueso. Tiempo: 2–3 horas.',
+        60,
+        implode("\n\n", [
+            'Limpiar el pollo: Retirar el exceso de grasa, dividir los 8 pollos en piezas y secarlos con papel de cocina.',
+            'Preparar el adobo: Mezclar el ajo majado, naranja agria, orégano, sal, pimienta, paprika, salsa inglesa, tomillo y aceite vegetal.',
+            'Marinar: Distribuir el adobo sobre todas las piezas de pollo, asegurándose de cubrirlas completamente. Refrigerar entre 8 y 12 horas.',
+            'Preparar los vegetales: Cortar las cebollas, ajíes cubanela y pimientos morrones en julianas gruesas.',
+            'Organizar las bandejas: Colocar los vegetales en el fondo de bandejas para horno y distribuir las piezas de pollo encima, sin amontonarlas.',
+            'Hornear: Precalentar el horno a 180 °C (350 °F). Hornear aproximadamente 60–90 minutos, dependiendo del tamaño de las piezas.',
+            'Dorar: Durante los últimos 15 minutos, aumentar la temperatura a 200 °C (390 °F), vigilando que no se quemen.',
+            '⚠ Verificar la cocción: Comprobar que la temperatura interna del pollo alcance al menos 74 °C (165 °F).',
+            'Servir: Dejar reposar 10 minutos y servir acompañado de sus jugos de cocción.',
+        ]),
+        [
+            ['Pollo entero', 'Pollo entero (8 unidades de 4 lb aprox.)', 32, 'Libra', 95.00, [], false, false, null],
+            ['Ajo majado', 'Ajo majado', 1.5, 'Taza', 100.00, [], false, false, null],
+            ['Naranja agria', 'Naranja agria', 3, 'Taza', 45.00, [], false, false, null],
+            ['Orégano', 'Orégano seco', 0.25, 'Taza', 39.83, [], false, false, null],
+            ['Sal', 'Sal (½ taza aprox.)', 0.5, 'Taza', 9.46, [], false, false, null],
+            ['Pimienta negra molida', 'Pimienta negra', 3, 'Cucharada', 7.21, [], false, false, null],
+            ['Paprika (pimentón dulce)', 'Paprika', 0.25, 'Taza', 200.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite vegetal', 1.5, 'Taza', 35.28, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 3, 'Libra', 42.00, ['Cortado a la juliana'], false, false, null],
+            ['Ají cubanela', 'Ají cubanela', 2, 'Libra', 75.00, ['Cortado a la juliana'], false, false, null],
+            ['Ají morrón rojo', 'Pimiento morrón', 2, 'Libra', 74.00, ['Cortado a la juliana'], false, false, null],
+            ['Salsa inglesa (Worcestershire)', 'Salsa inglesa', 0.5, 'Taza', 239.97, [], false, false, null],
+            ['Tomillo (seco)', 'Tomillo', 0.25, 'Taza', 373.51, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 2. Cerdo horneado
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Cerdo horneado',
+        'Receta del menú de 60 porciones. Porción estimada: 150–180 g de carne cocida. Tiempo: 4–6 horas aprox.',
+        60,
+        implode("\n\n", [
+            'Preparar la carne: Retirar el exceso de grasa superficial de las piernas de cerdo, conservando una capa delgada para mantener la jugosidad.',
+            'Preparar el sazón: Mezclar ajo, naranja agria, orégano, sal, pimienta, aceite de oliva, romero y tomillo.',
+            'Mechar y sazonar: Realizar pequeñas incisiones en la carne e introducir parte del adobo. Cubrir completamente con el resto.',
+            'Marinar: Colocar en recipientes tapados y refrigerar durante 12–24 horas.',
+            'Preparar la bandeja: Colocar las cebollas y los ajíes cortados en el fondo, con la carne encima.',
+            'Hornear: Cubrir con papel aluminio y llevar al horno precalentado a 160–170 °C (320–340 °F). El tiempo dependerá del peso y grosor de cada pieza.',
+            'Humedecer: Durante la cocción, bañar periódicamente la carne con sus propios jugos.',
+            'Dorar: Retirar el papel aluminio al final y aumentar la temperatura a 200 °C (390 °F) hasta obtener una superficie dorada.',
+            '⚠ Verificar: Para un asado de cerdo entero, alcanzar al menos 63 °C (145 °F) en el centro y dejar reposar 3 minutos como mínimo; para una textura más tierna, puede cocinarse más tiempo.',
+            'Porcionar: Dejar reposar 15–20 minutos antes de cortar en 60 porciones y acompañar con la salsa de cocción.',
+        ]),
+        [
+            ['Carne de cerdo', 'Pierna de cerdo deshuesada', 30, 'Libra', 150.00, [], false, false, null],
+            ['Ajo majado', 'Ajo', 2, 'Taza', 100.00, [], false, false, null],
+            ['Naranja agria', 'Naranja agria', 5, 'Taza', 45.00, [], false, false, null],
+            ['Orégano', 'Orégano', 0.5, 'Taza', 39.83, [], false, false, null],
+            ['Sal', 'Sal (¾ taza aprox.)', 0.75, 'Taza', 9.46, [], false, false, null],
+            ['Pimienta negra molida', 'Pimienta negra', 0.25, 'Taza', 115.35, [], false, false, null],
+            ['Aceite de oliva', 'Aceite de oliva', 2, 'Taza', 108.00, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 4, 'Libra', 42.00, [], false, false, null],
+            ['Ají cubanela', 'Ají cubanela', 2, 'Libra', 75.00, [], false, false, null],
+            ['Romero (seco)', 'Romero', 0.25, 'Taza', 373.51, [], false, false, null],
+            ['Tomillo (seco)', 'Tomillo', 0.25, 'Taza', 373.51, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 4. Pastelón de plátano maduro
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pastelón de plátano maduro',
+        'Receta del menú de 60 porciones. Porción estimada: 1 cuadro de aproximadamente 180–200 g. Tiempo: 1 hora 45 minutos.',
+        60,
+        implode("\n\n", [
+            'Cocinar los plátanos: Pelar los 45 plátanos maduros, cortarlos en trozos y hervirlos en agua hasta que estén blandos, aproximadamente 15–20 minutos.',
+            'Preparar el puré: Escurrir y triturar los plátanos calientes con mantequilla y leche evaporada hasta conseguir una textura suave. Incorporar los huevos batidos cuando el puré esté tibio.',
+            'Preparar el relleno: Sofreír cebolla, ajo y ají cubanela con aceite vegetal.',
+            '⚠ Cocinar la carne: Agregar la carne molida y cocinar hasta que pierda su color rosado y alcance 71 °C (160 °F).',
+            'Sazonar: Incorporar pasta de tomate, aceitunas, orégano, sal y pimienta. Cocinar hasta obtener un relleno jugoso, pero sin exceso de líquido.',
+            'Preparar los moldes: Engrasar bandejas para horno.',
+            'Montar la primera capa: Distribuir la mitad del puré de plátano en el fondo de las bandejas.',
+            'Agregar el relleno: Colocar una capa uniforme de carne molida y parte del queso mozzarella.',
+            'Completar el pastelón: Cubrir con el puré restante y distribuir el resto del queso por encima.',
+            'Hornear: Llevar al horno a 180 °C (350 °F) durante 25–35 minutos, hasta que esté caliente y dorado.',
+            'Reposar y cortar: Esperar 15 minutos antes de dividir en 60 porciones uniformes.',
+        ]),
+        [
+            ['Plátano maduro', 'Plátanos maduros grandes', 45, 'Unidad', 20.00, [], false, false, null],
+            ['Carne de res molida', 'Carne molida de res', 12, 'Libra', 180.00, [], false, false, null],
+            ['Queso mozzarella', 'Queso mozzarella', 5, 'Libra', 235.00, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 2, 'Libra', 140.00, [], false, false, null],
+            ['Leche evaporada', 'Leche evaporada (latas de 12 oz)', 4, 'Lata', 70.00, [], false, false, null],
+            ['Huevo', 'Huevos', 12, 'Unidad', 6.50, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 2, 'Libra', 42.00, [], false, false, null],
+            ['Ají cubanela', 'Ají cubanela', 1.5, 'Libra', 75.00, [], false, false, null],
+            ['Ajo majado', 'Ajo', 0.5, 'Taza', 100.00, [], false, false, null],
+            ['Pasta de tomate', 'Pasta de tomate', 2, 'Taza', 68.57, [], false, false, null],
+            ['Aceitunas verdes', 'Aceitunas', 1, 'Libra', 220.00, [], false, false, null],
+            ['Aceite vegetal', 'Aceite vegetal', 1, 'Taza', 35.28, [], false, false, null],
+            ['Orégano', 'Orégano', 3, 'Cucharada', 2.49, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, false, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 5. Pasteles en hojas
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Plato fuerte',
+        'Pasteles en hojas',
+        'Receta del menú de 60 unidades. Porción estimada: 1 pastel mediano por persona. Tiempo: 4–5 horas.',
+        60,
+        implode("\n\n", [
+            'Preparar los víveres: Pelar los guineos verdes, plátanos verdes, yautía y auyama. Cortarlos en trozos pequeños.',
+            'Procesar la masa: Rallar finamente los víveres o procesarlos en tandas hasta obtener una mezcla homogénea.',
+            'Sazonar la masa: Agregar aceite con bija, mantequilla derretida, leche evaporada y sal. Mezclar hasta conseguir una masa suave y manejable.',
+            'Preparar el relleno: Cortar la carne de cerdo en cubos pequeños y sazonar con naranja agria, ajo, orégano, sal y pimienta.',
+            'Cocinar la carne: Sofreír cebolla y ají cubanela. Incorporar el cerdo y cocinar completamente, agregando pasta de tomate y un poco de agua si es necesario.',
+            'Agregar complementos: Incorporar aceitunas y alcaparras. Cocinar hasta obtener un guiso espeso, sin exceso de líquido.',
+            'Preparar las hojas: Lavar las hojas de plátano, secarlas y pasarlas brevemente por calor para hacerlas flexibles.',
+            'Formar los pasteles: Colocar una porción de masa en el centro de cada hoja, agregar el relleno y cubrir ligeramente con más masa.',
+            'Envolver: Doblar cuidadosamente las hojas, envolver con el papel correspondiente y amarrar con hilo de cocina.',
+            '⚠ Cocinar: Introducir los pasteles en agua hirviendo con sal y cocinar durante 45–60 minutos, o hasta que la masa esté firme y completamente cocida.',
+            'Servir: Escurrir, dejar reposar unos minutos y servir calientes.',
+        ]),
+        [
+            ['Guineo', 'Guineos verdes', 35, 'Unidad', 3.80, [], false, false, null],
+            ['Plátano verde', 'Plátanos verdes', 20, 'Unidad', 20.00, [], false, false, null],
+            ['Yautía blanca', 'Yautía blanca', 8, 'Libra', 45.00, [], false, false, null],
+            ['Auyama', 'Auyama', 5, 'Libra', 30.00, [], false, false, null],
+            ['Carne de cerdo', 'Carne de cerdo para relleno', 8, 'Libra', 150.00, [], false, false, null],
+            ['Leche evaporada', 'Leche evaporada (latas de 12 oz)', 3, 'Lata', 70.00, [], false, false, null],
+            ['Aceite con bija', 'Aceite con bija', 3, 'Taza', 39.60, [], false, false, null],
+            ['Mantequilla', 'Mantequilla', 1, 'Libra', 140.00, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 2, 'Libra', 42.00, [], false, false, null],
+            ['Ají cubanela', 'Ají cubanela', 1.5, 'Libra', 75.00, [], false, false, null],
+            ['Ajo majado', 'Ajo', 0.5, 'Taza', 100.00, [], false, false, null],
+            ['Pasta de tomate', 'Pasta de tomate', 1.5, 'Taza', 68.57, [], false, false, null],
+            ['Aceitunas verdes', 'Aceitunas', 1, 'Libra', 220.00, [], false, false, null],
+            ['Alcaparras', 'Alcaparras', 0.5, 'Libra', 650.00, [], false, false, null],
+            ['Naranja agria', 'Naranja agria', 1, 'Taza', 45.00, [], false, false, null],
+            ['Hojas de plátano', 'Hojas de plátano (piezas para envolver)', 70, 'Hoja', 8.00, [], false, false, null],
+            ['Papel encerado para pasteles', 'Papel encerado o para pasteles', 70, 'Hoja', 2.50, [], false, false, null],
+            ['Hilo de cocina', 'Hilo de cocina (1 rollo)', 1, 'Unidad', 80.00, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, false, null],
+            ['Orégano', 'Orégano al gusto', 0, 'Cucharadita', 0.83, [], true, false, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+        // El ícono sugerido los toma por un pastel de repostería; mejor la hoja.
+        if (columnaExiste($pdo, 'recetas', 'icono')) {
+            $pdo->prepare('UPDATE recetas SET icono = ? WHERE nombre = ?')->execute(['🍃', 'Pasteles en hojas']);
+        }
+    }
+
+    // 6. Ensalada rusa
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Guarnición',
+        'Ensalada rusa',
+        'Receta del menú de 60 porciones. Porción estimada: 150 g. Tiempo: 1 hora + refrigeración.',
+        60,
+        implode("\n\n", [
+            'Lavar los vegetales: Limpiar las papas, zanahorias y remolachas.',
+            'Cocinar por separado: Hervir las papas y zanahorias hasta que estén tiernas, pero firmes. Cocinar las remolachas aparte para evitar que tiñan los demás ingredientes antes de tiempo.',
+            'Cocinar los huevos: Hervir los huevos durante 10–12 minutos, enfriarlos, pelarlos y cortarlos.',
+            'Cortar los ingredientes: Pelar y cortar las papas, zanahorias y remolachas en cubos pequeños y uniformes.',
+            'Preparar el aderezo: Mezclar la mayonesa con el vinagre, sal y pimienta.',
+            'Integrar: Colocar los vegetales fríos en un recipiente grande, agregar los guisantes, cebolla y huevos.',
+            'Añadir el aderezo: Incorporar la mezcla de mayonesa cuidadosamente para no deshacer las papas.',
+            '⚠ Refrigerar: Mantener a 4 °C o menos durante al menos 1 hora antes del servicio.',
+            'Servir: Distribuir en 60 porciones, conservando la ensalada refrigerada hasta el momento de consumir.',
+        ]),
+        [
+            ['Papa', 'Papas', 12, 'Libra', 38.00, [], false, false, null],
+            ['Zanahoria', 'Zanahorias', 4, 'Libra', 31.00, [], false, false, null],
+            ['Remolacha', 'Remolacha', 4, 'Libra', 40.00, [], false, false, null],
+            ['Huevo', 'Huevos', 18, 'Unidad', 6.50, [], false, false, null],
+            ['Mayonesa', 'Mayonesa', 5, 'Taza', 75.44, [], false, false, null],
+            ['Guisantes enlatados', 'Guisantes escurridos (latas de 15 oz)', 2, 'Lata', 60.00, [], false, false, null],
+            ['Cebolla blanca', 'Cebolla', 1, 'Libra', 42.00, [], false, false, null],
+            ['Vinagre blanco', 'Vinagre blanco', 0.5, 'Taza', 6.83, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, false, null],
+            ['Pimienta negra molida', 'Pimienta', 2, 'Cucharadita', 2.40, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 7. Ensalada mediterránea
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Guarnición',
+        'Ensalada mediterránea',
+        'Receta del menú de 60 porciones. Porción estimada: 130–150 g. Tiempo: 30–40 minutos.',
+        60,
+        implode("\n\n", [
+            '⚠ Lavar y desinfectar: Lavar y desinfectar adecuadamente la lechuga, los tomates, pepinos y pimientos.',
+            'Preparar la lechuga: Escurrir completamente y cortar en trozos medianos.',
+            'Cortar los vegetales: Dividir los tomates cherry por la mitad, cortar los pepinos en medias lunas y los pimientos y cebollas en tiras finas.',
+            'Preparar el queso: Cortar el queso feta en cubos pequeños.',
+            'Preparar la vinagreta: Mezclar aceite de oliva, jugo de limón, orégano, sal y pimienta hasta emulsionar.',
+            'Montar la ensalada: Distribuir la lechuga en bandejas y agregar tomates, pepinos, pimientos y cebolla morada.',
+            'Incorporar complementos: Añadir aceitunas negras y queso feta.',
+            'Aderezar: Agregar la vinagreta inmediatamente antes del servicio para evitar que la lechuga pierda su textura.',
+            'Servir: Distribuir en 60 porciones.',
+        ]),
+        [
+            ['Lechuga romana', 'Lechuga romana (unidades grandes)', 8, 'Unidad', 80.00, [], false, false, null],
+            ['Tomate cherry', 'Tomates cherry', 5, 'Libra', 160.00, ['Cortado en mitades'], false, false, null],
+            ['Pepino', 'Pepino', 5, 'Libra', 45.36, [], false, false, null],
+            ['Cebolla roja', 'Cebolla morada', 2, 'Libra', 46.00, ['Cortado en tiras'], false, false, null],
+            ['Ají morrón rojo', 'Pimiento rojo', 2, 'Libra', 74.00, ['Cortado en tiras'], false, false, null],
+            ['Pimiento amarillo', 'Pimiento amarillo', 2, 'Libra', 180.00, ['Cortado en tiras'], false, false, null],
+            ['Aceitunas negras', 'Aceitunas negras', 2, 'Libra', 240.00, [], false, false, null],
+            ['Queso feta', 'Queso feta', 3, 'Libra', 420.00, ['Cortado en cubos'], false, false, null],
+            ['Aceite de oliva', 'Aceite de oliva', 2, 'Taza', 108.00, [], false, false, null],
+            ['Limón verde', 'Jugo de limón', 1, 'Taza', 83.69, [], false, false, null],
+            ['Orégano', 'Orégano seco', 0.25, 'Taza', 39.83, [], false, false, null],
+            ['Sal', 'Sal al gusto', 0, 'Cucharadita', 0.20, [], true, false, null],
+            ['Pimienta negra molida', 'Pimienta al gusto', 0, 'Cucharadita', 2.40, [], true, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 8. Dulce de coco
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Dulce de coco',
+        'Receta del menú de 60 porciones. Porción estimada: 100–120 g. Tiempo: 1–1½ horas.',
+        60,
+        implode("\n\n", [
+            'Preparar el coco: Retirar la cáscara y rallar finamente el coco fresco.',
+            'Preparar la base: En una olla grande, mezclar la leche entera, leche de coco y azúcar.',
+            'Aromatizar: Agregar las ramas de canela, clavos dulces y una pizca de sal.',
+            'Calentar: Cocinar a fuego medio, removiendo hasta que el azúcar se disuelva.',
+            'Agregar el coco: Incorporar el coco rallado y mezclar uniformemente.',
+            'Cocinar lentamente: Reducir el fuego y cocinar durante 45–60 minutos, removiendo frecuentemente para evitar que se pegue.',
+            'Concentrar: Continuar hasta obtener una consistencia cremosa y espesa.',
+            'Agregar vainilla: Incorporar la vainilla al final de la cocción.',
+            'Retirar especias: Extraer las ramas de canela y los clavos dulces.',
+            'Porcionar: Distribuir en 60 recipientes individuales y dejar enfriar. Refrigerar si no se servirá inmediatamente.',
+        ]),
+        [
+            ['Coco fresco rallado', 'Coco fresco rallado', 10, 'Libra', 100.00, [], false, false, null],
+            ['Leche entera', 'Leche entera', 2, 'Litro', 74.00, [], false, false, null],
+            ['Leche de coco', 'Leche de coco (5 latas de 400 ml ≈ 2 litros)', 5, 'Lata', 95.00, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar', 5, 'Libra', 35.00, [], false, false, null],
+            ['Canela en rama', 'Canela en rama', 10, 'Rama', 4.84, [], false, false, null],
+            ['Clavo de olor', 'Clavos dulces', 15, 'Unidad', 0.15, [], false, false, null],
+            ['Vainilla blanca', 'Vainilla', 0.25, 'Taza', 26.25, [], false, false, null],
+            ['Sal', 'Sal', 1, 'Cucharadita', 0.20, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 9. Tres leches
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Postre',
+        'Tres leches',
+        'Receta del menú de 60 porciones. Porción estimada: 1 cuadro de bizcocho, aproximadamente 130–150 g. Tiempo: 1½ horas + 4 horas de refrigeración.',
+        60,
+        implode("\n\n", [
+            'A. Elaboración del bizcocho',
+            'Precalentar el horno a 175 °C (350 °F).',
+            'Separar las claras de las yemas de los 30 huevos.',
+            'Batir las claras hasta formar espuma y agregar gradualmente parte del azúcar hasta conseguir picos firmes.',
+            'Batir las yemas con el azúcar restante y la vainilla hasta obtener una mezcla espumosa.',
+            'Incorporar las yemas a las claras con movimientos envolventes.',
+            'Tamizar la harina junto con el polvo de hornear.',
+            'Agregar los ingredientes secos gradualmente, mezclando suavemente para conservar el aire.',
+            'Distribuir la mezcla en moldes previamente engrasados y preparados.',
+            'Hornear durante 25–35 minutos, dependiendo del tamaño de cada molde, hasta que un palillo salga limpio.',
+            'Retirar del horno y dejar enfriar.',
+            'B. Preparación de las tres leches',
+            'Mezclar la leche evaporada, leche condensada y crema de leche hasta obtener un líquido uniforme.',
+            'Perforar toda la superficie del bizcocho frío con un tenedor o palillo.',
+            'Verter gradualmente la mezcla de leches sobre el bizcocho, permitiendo que se absorba.',
+            'Refrigerar durante al menos 4 horas, preferiblemente toda la noche.',
+            'C. Cobertura y presentación',
+            'Batir la crema para batir bien fría con el azúcar glas hasta conseguir picos firmes.',
+            'Distribuir la cobertura uniformemente sobre los bizcochos.',
+            'Espolvorear ligeramente con canela molida.',
+            '⚠ Cortar en 60 porciones iguales y mantener refrigerado a 4 °C o menos hasta servir.',
+        ]),
+        [
+            ['Harina de trigo', 'Harina de trigo', 5, 'Taza', 7.51, [], false, false, null],
+            ['Azúcar blanca', 'Azúcar para bizcocho', 5, 'Taza', 15.50, [], false, false, null],
+            ['Huevo', 'Huevos', 30, 'Unidad', 6.50, [], false, false, null],
+            ['Polvo de hornear', 'Polvo de hornear', 5, 'Cucharadita', 2.50, [], false, false, null],
+            ['Vainilla blanca', 'Vainilla', 0.25, 'Taza', 26.25, [], false, false, null],
+            ['Leche evaporada', 'Leche evaporada', 6, 'Lata', 70.00, [], false, false, null],
+            ['Leche condensada', 'Leche condensada', 6, 'Lata', 110.00, [], false, false, null],
+            ['Crema de leche', 'Crema de leche', 1.5, 'Litro', 488.89, [], false, false, null],
+            ['Crema para batir', 'Crema para batir (cobertura)', 1.5, 'Litro', 261.69, [], false, false, null],
+            ['Azúcar glas', 'Azúcar glas para cobertura', 1, 'Taza', 15.87, [], false, false, null],
+            ['Canela en polvo', 'Canela molida', 2, 'Cucharada', 11.40, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    // 11. Fruit punch
+    $m = crearRecetaCarga80(
+        $pdo,
+        'Bebida',
+        'Fruit punch',
+        'Receta del menú de 60 vasos de 8 oz. Tiempo: 20–30 minutos.',
+        60,
+        implode("\n\n", [
+            'Enfriar los jugos: Refrigerar el jugo de naranja, piña, cranberry y chinola antes de mezclarlos.',
+            'Preparar la base: En un recipiente grande, incorporar los cuatro jugos y mezclar.',
+            'Agregar la granadina: Verter lentamente la granadina y remover hasta conseguir un color uniforme.',
+            'Ajustar el sabor: Probar y ajustar el equilibrio entre acidez y dulzor.',
+            'Agregar el refresco: Incorporar el refresco de limón poco antes de servir para conservar su gas.',
+            'Preparar las decoraciones: Lavar las naranjas y cortarlas en rodajas o medias lunas. Preparar las cerezas.',
+            'Servir: Colocar hielo en los vasos y agregar el ponche frío.',
+            'Decorar: Colocar una rodaja de naranja y una cereza en cada vaso.',
+        ]),
+        [
+            ['Jugo de naranja', 'Jugo de naranja', 1, 'Galón', 492.10, [], false, false, null],
+            ['Jugo de piña', 'Jugo de piña', 1, 'Galón', 454.25, [], false, false, null],
+            ['Jugo de cranberry', 'Jugo de cranberry', 0.5, 'Galón', 870.64, [], false, false, null],
+            ['Jugo de chinola', 'Jugo de chinola', 0.5, 'Galón', 567.81, [], false, false, null],
+            ['Granadina', 'Granadina', 2, 'Taza', 102.40, [], false, false, null],
+            ['Refresco de limón', 'Refresco de limón', 2, 'Litro', 52.50, [], false, false, null],
+            ['Naranja', 'Naranjas para decorar', 6, 'Unidad', 33.07, [], false, false, null],
+            ['Cerezas para decorar', 'Cerezas', 60, 'Unidad', 1.80, [], false, false, null],
+            ['Hielo', 'Hielo (10 lb aprox.)', 10, 'Libra', 10.00, [], false, false, null],
+        ],
+        60
+    );
+    if ($m !== null) {
+        $mensajes[] = $m;
+    }
+
+    return $mensajes;
+}
+
+/**
  * Agrega eventos.fecha_tentativa (TINYINT(1) NOT NULL DEFAULT 0), a pedido
  * de Eyaelkys: "en la fecha del evento, quiero poder decir que la fecha sea
  * tentativa; en caso de tentativa que salga solo el mes". Con 1, todo el
@@ -5303,6 +5756,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mensajes = array_merge($mensajes, sembrarRecetas80Tanda2($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetas80Tanda3($pdo));
         $mensajes = array_merge($mensajes, sembrarRecetas80Tanda4($pdo));
+        $mensajes = array_merge($mensajes, sembrarRecetasMenu60($pdo));
         $mensajes = array_merge($mensajes, agregarFechaTentativaAEventos($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasAPrivado($pdo));
         $mensajes = array_merge($mensajes, migrarFacturasGastosATabla($pdo));
